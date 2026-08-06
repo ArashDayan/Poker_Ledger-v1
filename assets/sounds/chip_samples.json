@@ -1,0 +1,44 @@
+[
+  {
+    "file": "chip_1.wav",
+    "title": "Single Chip",
+    "description": "One clean chip set down",
+    "duration": 0.269,
+    "source_start": 20.386
+  },
+  {
+    "file": "chip_2.wav",
+    "title": "Chip Drop",
+    "description": "A handful of chips dropped",
+    "duration": 0.363,
+    "source_start": 35.638
+  },
+  {
+    "file": "chip_3.wav",
+    "title": "Chip Drop 2",
+    "description": "A handful of chips dropped",
+    "duration": 0.411,
+    "source_start": 39.35
+  },
+  {
+    "file": "chip_4.wav",
+    "title": "Chip Cascade",
+    "description": "A shorter pour, chips settling",
+    "duration": 0.648,
+    "source_start": 5.456
+  },
+  {
+    "file": "chip_5.wav",
+    "title": "Chip Pour",
+    "description": "A long cascade of chips onto the felt",
+    "duration": 0.831,
+    "source_start": 14.304
+  },
+  {
+    "file": "chip_6.wav",
+    "title": "Chip Pour 2",
+    "description": "A long cascade of chips onto the felt",
+    "duration": 1.039,
+    "source_start": 9.154
+  }
+]

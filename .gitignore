@@ -1,0 +1,59 @@
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+ios/Pods/
+ios/.symlinks/
+android/.gradle/
+*.iml
+.idea/
+.vscode/
+
+# Packaged release archives are committed deliberately as download links.
+*.zip
+!Poker_Ledger-v2-final.zip
+!PokerLedger-V2-Complete.zip
+!PokerLedger-Final.zip
+!PokerLedger-Licensed-Final.zip
+!PokerLedger-Licensed-Final-v2.zip
+!PokerLedger-Licensed-Production-Key.zip
+!PokerLedger-Licensed-Secure-v3.zip
+!PokerLedger-ChipBank-v4.zip
+!PokerLedger-ChipTracking-v5.zip
+
+# pubspec.lock is intentionally not committed here: audioplayers was added
+# after the original lock was generated, so the committed lock was stale
+# and would have blocked `flutter pub get`. Let pub resolve fresh.
+pubspec.lock
+
+# LICENSE SIGNING KEYS — NEVER COMMIT OR DISTRIBUTE.
+#
+# The production private key deliberately lives OUTSIDE this repository
+# (~/.pokerledger/signing/), so nothing here should ever match. These
+# rules are defence in depth: if a key is ever copied into the tree by
+# mistake, git refuses to stage it.
+#
+# Only the PUBLIC modulus — embedded in lib/license/license_keys.dart —
+# is safe to ship.
+*.pem
+*.key
+*.p8
+*.pkcs12
+*.pfx
+tool/license_keys/
+**/*private_key*
+**/*signing_key*
+
+# Local owner backup and artifacts
+OWNER_LICENSE_BACKUP.txt
+.artifacts/
+.gradle_home.FullName/
+.gradle_release/
+.android_release/
+temp_gradle/
+temp_android/
+android/.gradle_local/
+
