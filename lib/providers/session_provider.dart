@@ -387,6 +387,11 @@ class SessionProvider extends ChangeNotifier {
     required int seatNumber,
     List<PlayerTag>? tags,
     String? sampleSignatureBase64,
+    /// Second reference specimen, captured in the same Add Player step.
+    ///
+    /// Optional and defaulting to null so every existing caller keeps
+    /// working and players created with only one sample stay valid.
+    String? sampleSignature2Base64,
     String? tableId,
   }) async {
     if (_current == null) throw StateError('No active session.');
@@ -408,6 +413,20 @@ class SessionProvider extends ChangeNotifier {
           (sampleSignatureBase64 != null && sampleSignatureBase64.isNotEmpty)
               ? DateTime.now()
               : null,
+      // Sample 2 is persisted here for exactly the same reason as Sample
+      // 1: it is captured during Add Player, so it must reach the record
+      // at creation. Previously it was dropped, which left Timeline's
+      // "Sample 2" area blank until the banker re-signed it from Edit
+      // Player. Same null/empty guard, so an unsigned pad stays null
+      // rather than storing an empty string.
+      sampleSignature2Base64:
+          (sampleSignature2Base64 != null && sampleSignature2Base64.isNotEmpty)
+              ? sampleSignature2Base64
+              : null,
+      sampleSignature2At:
+          (sampleSignature2Base64 != null && sampleSignature2Base64.isNotEmpty)
+              ? DateTime.now()
+              : null,
     );
     await HiveService.players.put(player.id, player);
     notifyListeners();
@@ -427,6 +446,7 @@ class SessionProvider extends ChangeNotifier {
     String? photoPath,
     List<PlayerTag>? tags,
     String? sampleSignatureBase64,
+    String? sampleSignature2Base64,
     String? tableId,
   }) async {
     final player = await addPlayer(
@@ -435,6 +455,7 @@ class SessionProvider extends ChangeNotifier {
       photoPath: photoPath,
       tags: tags,
       sampleSignatureBase64: sampleSignatureBase64,
+      sampleSignature2Base64: sampleSignature2Base64,
       tableId: tableId,
     );
     if (buyInAmount != null && buyInAmount > 0) {

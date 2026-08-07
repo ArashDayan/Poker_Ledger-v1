@@ -272,6 +272,11 @@ class PlayersTab extends StatelessWidget {
                     final name = nameCtrl.text.trim();
                     final tagList = tags.toList();
                     final sample = sampleSignature.isEmpty ? null : sampleSignature;
+                    // Sample 2 is captured in this same sheet, so it has
+                    // to be carried into creation alongside Sample 1 —
+                    // otherwise it is discarded when the sheet closes.
+                    final sample2 =
+                        sampleSignature2.isEmpty ? null : sampleSignature2;
                     Navigator.pop(ctx); // close the config sheet first
 
                     if ((buyIn ?? 0) <= 0) {
@@ -283,6 +288,7 @@ class PlayersTab extends StatelessWidget {
                           buyInAmount: null,
                           hostSignatureBase64: null,
                           sampleSignatureBase64: sample,
+                          sampleSignature2Base64: sample2,
                         );
                         AppSounds.play(SoundEffect.addPlayer);
                       } catch (e) {
@@ -314,6 +320,7 @@ class PlayersTab extends StatelessWidget {
                         buyInAmount: result.amount,
                         hostSignatureBase64: result.signature,
                         sampleSignatureBase64: sample,
+                        sampleSignature2Base64: sample2,
                       );
                       AppSounds.play(SoundEffect.buyIn);
                     } catch (e) {
