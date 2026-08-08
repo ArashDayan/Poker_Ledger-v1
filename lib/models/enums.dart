@@ -140,5 +140,24 @@ extension SessionModeX on SessionMode {
 /// One-shot notices raised by the simple cash-game session timer.
 enum SessionTimerNotice { tenMinutes, finished }
 
+/// Raised once when an individual table's countdown reaches zero.
+///
+/// Carries the table's identity so the banker is told exactly WHICH
+/// table finished — with several tables running, "timer finished" on its
+/// own would be useless.
+class TableTimerNotice {
+  final String tableId;
+  final String tableName;
+
+  /// The duration that was configured, for the message text.
+  final int plannedMinutes;
+
+  const TableTimerNotice({
+    required this.tableId,
+    required this.tableName,
+    required this.plannedMinutes,
+  });
+}
+
 /// One-shot notices raised by the tournament blind timer.
 enum BlindTimerNotice { tenMinutes, fiveMinutes, oneMinute, levelFinished }

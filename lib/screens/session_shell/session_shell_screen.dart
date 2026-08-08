@@ -71,6 +71,10 @@ class _SessionShellScreenState extends State<SessionShellScreen> {
       if (notice != null) _showTimerNotice(notice);
       final blind = provider.consumeBlindNotice();
       if (blind != null) _showBlindNotice(blind);
+      // Per-table countdowns. Each table is evaluated independently, so
+      // one finishing never affects another's clock.
+      final tableNotice = provider.consumeTableTimerNotice();
+      if (tableNotice != null) _showTableTimerNotice(tableNotice);
     });
   }
 
@@ -131,6 +135,46 @@ class _SessionShellScreenState extends State<SessionShellScreen> {
   /// Shows the one-shot session-timer notice. Deliberately a snackbar
   /// plus haptic rather than a modal: it must never sit on top of a
   /// half-finished transaction the banker is in the middle of recording.
+  /// A specific table's countdown has run out.
+  ///
+  /// Names the table explicitly — with several tables running, a bare
+  /// "timer finished" would leave the banker guessing. Uses the dedicated
+  /// alarm chime rather than a chip sound so it is unmistakable in a
+  /// noisy room, and stays a snackbar rather than a dialog so it can
+  /// never land on top of a transaction being recorded.
+  void _showTableTimerNotice(TableTimerNotice notice) {
+    if (!mounted) return;
+    AppSounds.playTimerAlarmWithHaptic();
+    final messenger = ScaffoldMessenger.of(context);
+    // Two tables finishing seconds apart should queue as two distinct
+    // alerts, not overwrite one another.
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 10),
+        backgroundColor: AppColors.danger,
+        content: Row(
+          children: [
+            const Icon(Icons.alarm_on, color: Colors.black, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '${notice.tableName} — '
+                '${notice.plannedMinutes} ${tr('minute_timer_finished')}',
+                style: const TextStyle(
+                    color: Colors.black, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        action: SnackBarAction(
+          label: tr('view_table'),
+          textColor: Colors.black,
+          onPressed: () => _goTo(_tableIndex),
+        ),
+      ),
+    );
+  }
+
   void _showTimerNotice(SessionTimerNotice notice) {
     if (!mounted) return;
     final finished = notice == SessionTimerNotice.finished;

@@ -65,6 +65,20 @@ class PokerTable {
   final DateTime? runningSince;
   final int bankedSeconds;
 
+  /// Optional countdown target for THIS table, in minutes.
+  ///
+  /// Null means "no target" — the table simply counts up, which is the
+  /// pre-existing behaviour and what every table saved before this
+  /// feature reads as. Stored in the same table map as everything else,
+  /// so no Hive adapter, typeId or migration is involved.
+  final int? plannedMinutes;
+
+  /// Set once the countdown has hit zero and the alarm has been raised,
+  /// so the notice fires exactly once even though the shell polls every
+  /// second. Persisted for the same reason the session timer persists
+  /// its own flag: a rebuild or app restart must not re-trigger it.
+  final bool finishNoticeShown;
+
   const PokerTable({
     required this.id,
     required this.name,
@@ -74,6 +88,8 @@ class PokerTable {
     this.closedAt,
     this.runningSince,
     this.bankedSeconds = 0,
+    this.plannedMinutes,
+    this.finishNoticeShown = false,
   });
 
   /// Total time this table has been in play.
@@ -87,6 +103,23 @@ class PokerTable {
 
   bool get timerRunning => runningSince != null;
 
+  /// Whether a countdown target has been chosen for this table.
+  bool get hasTimer => plannedMinutes != null && plannedMinutes! > 0;
+
+  /// Time left on the countdown, or null when no target is set.
+  ///
+  /// Clamped at zero so a finished timer can never display negative
+  /// time, even if the clock kept running for a moment before the shell
+  /// noticed and paused it.
+  Duration? get timeRemaining {
+    if (!hasTimer) return null;
+    final left = Duration(minutes: plannedMinutes!) - elapsed;
+    return left.isNegative ? Duration.zero : left;
+  }
+
+  /// True once a targeted countdown has run out.
+  bool get isFinished => hasTimer && timeRemaining == Duration.zero;
+
   Map<String, dynamic> toMap() => {
         'id': id,
         'name': name,
@@ -96,6 +129,8 @@ class PokerTable {
         'closedAt': closedAt?.toIso8601String(),
         'runningSince': runningSince?.toIso8601String(),
         'bankedSeconds': bankedSeconds,
+        'plannedMinutes': plannedMinutes,
+        'finishNoticeShown': finishNoticeShown,
       };
 
   static PokerTable fromMap(Map m) => PokerTable(
@@ -111,6 +146,10 @@ class PokerTable {
             ? null
             : DateTime.tryParse(m['runningSince'] as String),
         bankedSeconds: (m['bankedSeconds'] as num?)?.toInt() ?? 0,
+        // Absent in every table saved before per-table durations existed,
+        // which correctly reads as "no countdown configured".
+        plannedMinutes: (m['plannedMinutes'] as num?)?.toInt(),
+        finishNoticeShown: (m['finishNoticeShown'] as bool?) ?? false,
       );
 
   PokerTable copyWith({
@@ -123,6 +162,9 @@ class PokerTable {
     DateTime? runningSince,
     bool clearRunningSince = false,
     int? bankedSeconds,
+    int? plannedMinutes,
+    bool clearPlannedMinutes = false,
+    bool? finishNoticeShown,
   }) =>
       PokerTable(
         id: id,
@@ -134,6 +176,12 @@ class PokerTable {
         runningSince:
             clearRunningSince ? null : (runningSince ?? this.runningSince),
         bankedSeconds: bankedSeconds ?? this.bankedSeconds,
+        // Explicit clear flag because null means "no target", which is a
+        // real value the caller may want to set — a plain nullable
+        // parameter could not express "remove the duration".
+        plannedMinutes:
+            clearPlannedMinutes ? null : (plannedMinutes ?? this.plannedMinutes),
+        finishNoticeShown: finishNoticeShown ?? this.finishNoticeShown,
       );
 }
 
@@ -431,7 +479,79 @@ class TableService {
     SessionService.assertSessionActive(session.id);
     final tables = tablesFor(session).map((t) {
       if (t.id != tableId || t.timerRunning) return t;
+      // Starting a clock that has already run out would immediately
+      // re-finish. Refusing here keeps the finished state stable; the
+      // banker resets or re-sets the duration to run it again.
+      if (t.isFinished) return t;
       return t.copyWith(runningSince: DateTime.now());
+    }).toList();
+    await _persist(session, tables);
+  }
+
+  /// Assigns (or clears) this table's countdown target.
+  ///
+  /// Passing null removes the target and the table reverts to counting
+  /// up, exactly as tables behaved before durations existed. Setting a
+  /// duration clears any previous finished state so the same table can be
+  /// timed again for the next level.
+  static Future<void> setTableTimerDuration(
+    PokerSession session,
+    String tableId,
+    int? minutes,
+  ) async {
+    SessionService.assertSessionActive(session.id);
+    final tables = tablesFor(session).map((t) {
+      if (t.id != tableId) return t;
+      if (minutes == null || minutes <= 0) {
+        return t.copyWith(
+          clearPlannedMinutes: true,
+          finishNoticeShown: false,
+        );
+      }
+      return t.copyWith(
+        plannedMinutes: minutes,
+        finishNoticeShown: false,
+      );
+    }).toList();
+    await _persist(session, tables);
+  }
+
+  /// Stops the clock and returns it to zero, keeping the chosen duration
+  /// so the banker can simply press play again.
+  ///
+  /// Deliberately does NOT touch [TableStatus]: a table can be active
+  /// with a stopped timer, or paused with one running. The two concepts
+  /// stay independent.
+  static Future<void> stopTableTimer(
+      PokerSession session, String tableId) async {
+    SessionService.assertSessionActive(session.id);
+    final tables = tablesFor(session).map((t) {
+      if (t.id != tableId) return t;
+      return t.copyWith(
+        bankedSeconds: 0,
+        clearRunningSince: true,
+        finishNoticeShown: false,
+      );
+    }).toList();
+    await _persist(session, tables);
+  }
+
+  /// Called by the provider the moment a countdown hits zero: banks the
+  /// exact elapsed time, stops the clock so it cannot drift negative, and
+  /// marks the notice as delivered so the alarm fires only once.
+  static Future<void> markTableTimerFinished(
+      PokerSession session, String tableId) async {
+    final tables = tablesFor(session).map((t) {
+      if (t.id != tableId) return t;
+      return t.copyWith(
+        // Clamp to exactly the planned duration rather than whatever the
+        // wall clock reached, so the display lands on 00:00:00.
+        bankedSeconds: t.hasTimer
+            ? Duration(minutes: t.plannedMinutes!).inSeconds
+            : t.elapsed.inSeconds,
+        clearRunningSince: true,
+        finishNoticeShown: true,
+      );
     }).toList();
     await _persist(session, tables);
   }
@@ -460,6 +580,8 @@ class TableService {
         bankedSeconds: 0,
         runningSince: t.timerRunning ? DateTime.now() : null,
         clearRunningSince: !t.timerRunning,
+        // A reset countdown must be able to finish (and alarm) again.
+        finishNoticeShown: false,
       );
     }).toList();
     await _persist(session, tables);

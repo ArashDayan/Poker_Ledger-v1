@@ -239,6 +239,39 @@ class _HistoryTabState extends State<HistoryTab> {
       }).toList();
     }
 
+    // ---- Per-table rake totals -------------------------------------
+    //
+    // A pure aggregation for display. It folds the amounts of the rake
+    // rows ALREADY in `txs`, so it inherits every active filter and can
+    // never disagree with the list the banker is looking at. No rake is
+    // recalculated, no threshold or cap is consulted, and
+    // SessionService.totalRake stays the single source of truth for the
+    // session figure on the Dashboard.
+    //
+    // Table attribution follows the project's existing rule verbatim
+    // (SessionService.transactionsForTable / the table filter above):
+    // a null tableId means "the first table", which is what everything
+    // recorded before multi-table support stored. No new fallback is
+    // invented here.
+    final rakeRows =
+        txs.where((t) => t.type == TransactionType.rakeCollection).toList();
+    final rakeByTable = <String, double>{};
+    for (final t in rakeRows) {
+      final id = t.tableId ?? firstTableId;
+      if (id == null) continue;
+      rakeByTable[id] = (rakeByTable[id] ?? 0) + t.amount;
+    }
+    // Ordered by the session's own table order so the summary reads the
+    // same way as the filter chips above it. Tables with no rake are
+    // omitted entirely rather than shown as a misleading zero.
+    final rakeTotals = [
+      for (final t in allTables)
+        if ((rakeByTable[t.id] ?? 0) != 0)
+          MapEntry(t.name, rakeByTable[t.id]!),
+    ];
+    final rakeShownTotal =
+        rakeRows.fold<double>(0, (sum, t) => sum + t.amount);
+
     return Column(
       children: [
         Padding(
@@ -350,6 +383,18 @@ class _HistoryTabState extends State<HistoryTab> {
             ],
           ),
         ),
+        // Rake summary. Appears only when the current view actually
+        // contains rake rows, so it never adds noise to a timeline the
+        // banker is using for something else.
+        if (rakeRows.isNotEmpty)
+          _RakeSummary(
+            perTable: rakeTotals,
+            shownTotal: rakeShownTotal,
+            fmt: fmt,
+            // With one table there is nothing to break down — a single
+            // "Total Rake" line answers the question completely.
+            showBreakdown: multi && rakeTotals.isNotEmpty,
+          ),
         const SizedBox(height: 8),
         Expanded(
           child: txs.isEmpty
@@ -532,6 +577,104 @@ class _TransactionTile extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Rake totals for the transactions currently visible in the timeline.
+///
+/// Display only. Every figure here is a fold over rake transactions that
+/// are already on screen — nothing is recalculated from rake rules, and
+/// the Dashboard's session-wide total is untouched and still authoritative.
+class _RakeSummary extends StatelessWidget {
+  /// Table name -> rake total, in the session's own table order.
+  /// Only tables that actually produced rake appear.
+  final List<MapEntry<String, double>> perTable;
+
+  /// Total across everything currently shown. With no filters applied
+  /// this equals the session rake; with a filter active it is the total
+  /// of what the banker can see, which is what they are asking about.
+  final double shownTotal;
+
+  final CurrencyFormatter fmt;
+  final bool showBreakdown;
+
+  const _RakeSummary({
+    required this.perTable,
+    required this.shownTotal,
+    required this.fmt,
+    required this.showBreakdown,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.gold.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.gold.withOpacity(0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (showBreakdown) ...[
+            for (final entry in perTable)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  children: [
+                    const Icon(Icons.percent, size: 13, color: AppColors.gold),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        entry.key,
+                        style: const TextStyle(
+                            fontSize: 12.5, color: AppColors.textPrimary),
+                      ),
+                    ),
+                    Text(
+                      fmt.format(entry.value),
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.gold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            const Divider(height: 12),
+          ],
+          Row(
+            children: [
+              if (!showBreakdown) ...[
+                const Icon(Icons.percent, size: 13, color: AppColors.gold),
+                const SizedBox(width: 8),
+              ],
+              Expanded(
+                child: Text(
+                  tr('total_rake'),
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              Text(
+                fmt.format(shownTotal),
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.gold,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

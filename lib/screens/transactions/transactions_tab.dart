@@ -8,6 +8,7 @@ import '../../models/player.dart';
 import '../../providers/session_provider.dart';
 import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
+import '../../services/table_service.dart';
 import '../../widgets/quick_rake_sheet.dart';
 import '../../widgets/quick_transaction_sheet.dart';
 
@@ -21,6 +22,14 @@ class TransactionsTab extends StatelessWidget {
 
   Future<Player?> _pickPlayer(BuildContext context, List<Player> players) {
     if (players.isEmpty) return Future.value(null);
+    final provider = context.read<SessionProvider>();
+    final session = provider.current;
+    // Seat numbers are per-table, so "Seat 3" alone is ambiguous once a
+    // second table is open. Naming the table makes it impossible to
+    // record a buy-in against the wrong person by mistake. Single-table
+    // sessions keep the original, uncluttered row.
+    final showTable = provider.isMultiTable && session != null;
+
     return showModalBottomSheet<Player>(
       context: context,
       builder: (ctx) => SafeArea(
@@ -33,6 +42,19 @@ class TransactionsTab extends StatelessWidget {
             ),
             ...players.map((p) => ListTile(
                   title: Text('Seat ${p.seatNumber} · ${p.name}'),
+                  subtitle: showTable
+                      // tableById() resolves a null tableId to the first
+                      // table, which is exactly how playersAt() treats
+                      // legacy players — so the label always matches the
+                      // list the player was drawn from.
+                      ? Text(
+                          TableService.tableById(session, p.tableId).name,
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            color: AppColors.textSecondary,
+                          ),
+                        )
+                      : null,
                   onTap: () => Navigator.pop(ctx, p),
                 )),
             const SizedBox(height: 8),
@@ -46,7 +68,15 @@ class TransactionsTab extends StatelessWidget {
     final provider = context.read<SessionProvider>();
     final session = provider.current!;
     final fmt = CurrencyFormatter(session.currency);
-    final player = await _pickPlayer(context, provider.players);
+    // Evaluated at TAP time, so the list is always current — a player
+    // seated a moment ago is already here without leaving the screen.
+    // Scoped to the active table when multi-table, mirroring build().
+    final player = await _pickPlayer(
+      context,
+      provider.isMultiTable
+          ? provider.playersAtActiveTable
+          : provider.players,
+    );
     if (player == null || !context.mounted) return;
 
     if (type == TransactionType.rebuy) {
@@ -128,7 +158,21 @@ class TransactionsTab extends StatelessWidget {
     final session = provider.current!;
     final fmt = CurrencyFormatter(session.currency);
     final recent = provider.transactions.reversed.take(8).toList();
+    // SESSION-WIDE list. Deliberately not narrowed: `recent` above is
+    // session-wide too, and the name lookup further down resolves a
+    // transaction's playerId against this list. Scoping it would show
+    // the wrong name for another table's transaction — and its
+    // `orElse: players.first` would throw once the active table is empty.
     final players = provider.players;
+    // ACTION list — who the banker may act on right now.
+    //
+    // Scoped to the selected table in a multi-table session, matching
+    // PlayersTab. Seat numbers repeat across tables, so a session-wide
+    // picker let "Seat 3" mean two different people and a buy-in could
+    // land on the wrong player. A single-table session gets the exact
+    // same list as before.
+    final actionPlayers =
+        provider.isMultiTable ? provider.playersAtActiveTable : players;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
@@ -144,18 +188,24 @@ class TransactionsTab extends StatelessWidget {
           childAspectRatio: 2.4,
           children: [
             _actionButton(context, 'Buy-in', Icons.add_card, AppColors.accentGreen,
-                players.isEmpty ? null : () => _playerTransaction(context, TransactionType.buyIn)),
+                actionPlayers.isEmpty
+                    ? null
+                    : () => _playerTransaction(context, TransactionType.buyIn)),
             _actionButton(context, 'Rebuy', Icons.refresh, AppColors.accentGreen,
-                players.isEmpty ? null : () => _playerTransaction(context, TransactionType.rebuy)),
+                actionPlayers.isEmpty
+                    ? null
+                    : () => _playerTransaction(context, TransactionType.rebuy)),
             _actionButton(context, 'Cash-out', Icons.logout, AppColors.danger,
-                players.isEmpty ? null : () => _playerTransaction(context, TransactionType.cashOut)),
+                actionPlayers.isEmpty
+                    ? null
+                    : () => _playerTransaction(context, TransactionType.cashOut)),
             _actionButton(context, 'Collect Rake', Icons.percent, AppColors.gold,
                 () => _collectRake(context)),
             _actionButton(context, 'Cash Drop', Icons.lock_outline, AppColors.textSecondary,
                 () => _cashDrop(context)),
           ],
         ),
-        if (players.isEmpty) ...[
+        if (actionPlayers.isEmpty) ...[
           const SizedBox(height: 8),
           Text(tr('add_player_first'),
               style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),

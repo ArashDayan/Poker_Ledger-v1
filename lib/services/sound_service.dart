@@ -266,6 +266,35 @@ class AppSounds {
     }();
   }
 
+  /// Asset for the table-timer alarm.
+  ///
+  /// A distinct three-note ascending chime, deliberately NOT one of the
+  /// chip recordings: an alarm that sounded like a buy-in would be
+  /// ambiguous in a noisy room, which defeats the point.
+  static const String timerAlarmAsset = 'sounds/timer_alarm.wav';
+
+  /// Plays the table-timer alarm.
+  ///
+  /// Separate entry point rather than a [SoundEffect] value, because
+  /// [play] deliberately routes every effect to the chip recording. This
+  /// bypasses that mapping without altering it, so no existing chip
+  /// behaviour changes. Fire-and-forget and fully guarded, like the rest.
+  static void playTimerAlarm({double volume = 1.0}) {
+    if (!_enabled) return;
+    _playAsset(timerAlarmAsset, volume: volume);
+  }
+
+  /// The alarm plus a stronger haptic than the chip tick — a finished
+  /// timer is a "look at your phone" event.
+  static void playTimerAlarmWithHaptic() {
+    playTimerAlarm();
+    try {
+      HapticFeedback.heavyImpact();
+    } catch (_) {
+      // Haptics are optional garnish; a device without them is fine.
+    }
+  }
+
   /// A light haptic tick alongside the sound, for when the banker's phone
   /// is face-down on the table or the room is loud.
   static void playWithHaptic(SoundEffect effect) {

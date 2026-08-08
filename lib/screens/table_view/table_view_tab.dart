@@ -222,8 +222,12 @@ class TableViewTab extends StatelessWidget {
                     return;
                   }
                   if (seat.player == null) {
+                    // Pass the table being viewed explicitly, so the new
+                    // player is seated HERE rather than wherever the
+                    // provider would otherwise infer.
                     PlayersTab.showAddPlayerSheet(context,
-                        presetSeat: seat.seatNumber);
+                        presetSeat: seat.seatNumber,
+                        presetTableId: table.id);
                   } else {
                     _seatSheet(context, provider, seat.player!);
                   }

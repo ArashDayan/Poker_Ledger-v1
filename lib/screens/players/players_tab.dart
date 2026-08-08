@@ -26,8 +26,19 @@ import '../player_history/player_history_screen.dart';
 class PlayersTab extends StatelessWidget {
   const PlayersTab({super.key});
 
+  /// Opens the add/edit player sheet.
+  ///
+  /// [presetTableId] is the table the banker was actually looking at when
+  /// they tapped an empty seat. Passing it makes the destination explicit
+  /// rather than inferred: without it the provider had to guess from
+  /// `isMultiTable`, which reads false whenever `session.tables` has not
+  /// been materialised yet, and the player was then stored with a null
+  /// tableId and vanished from the table the banker was standing at.
+  ///
+  /// Null means "no specific table" (the Players tab / app-bar entry
+  /// points), where the provider's existing default is correct.
   static Future<void> showAddPlayerSheet(BuildContext context,
-      {Player? existing, int? presetSeat}) async {
+      {Player? existing, int? presetSeat, String? presetTableId}) async {
     final provider = context.read<SessionProvider>();
     final isEdit = existing != null;
     final nameCtrl = TextEditingController(text: existing?.name ?? '');
@@ -226,11 +237,20 @@ class PlayersTab extends StatelessWidget {
                   spacing: 8,
                   children: PlayerTag.values.map((tag) {
                     final selected = tags.contains(tag);
-                    return FilterChip(
+                    return ChoiceChip(
                       label: Text(tag.label),
                       selected: selected,
+                      // Classification is mutually exclusive: at most ONE
+                      // may be held at a time. Clearing the set before
+                      // adding is what enforces that — and it also
+                      // normalises any legacy record that was saved with
+                      // several tags, the moment the banker touches it.
+                      //
+                      // Re-tapping the selected chip clears it, so "no
+                      // classification" stays a reachable, valid state.
                       onSelected: (v) => setSheetState(() {
-                        v ? tags.add(tag) : tags.remove(tag);
+                        tags.clear();
+                        if (v) tags.add(tag);
                       }),
                     );
                   }).toList(),
@@ -289,6 +309,9 @@ class PlayersTab extends StatelessWidget {
                           hostSignatureBase64: null,
                           sampleSignatureBase64: sample,
                           sampleSignature2Base64: sample2,
+                          // Explicit destination when the sheet was
+                          // opened from a table's empty seat.
+                          tableId: presetTableId,
                         );
                         AppSounds.play(SoundEffect.addPlayer);
                       } catch (e) {
@@ -321,6 +344,7 @@ class PlayersTab extends StatelessWidget {
                         hostSignatureBase64: result.signature,
                         sampleSignatureBase64: sample,
                         sampleSignature2Base64: sample2,
+                        tableId: presetTableId,
                       );
                       AppSounds.play(SoundEffect.buyIn);
                     } catch (e) {
