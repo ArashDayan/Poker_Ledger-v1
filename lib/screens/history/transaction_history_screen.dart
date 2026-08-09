@@ -10,6 +10,8 @@ import '../../models/player.dart';
 import '../../models/transaction.dart';
 import '../../providers/session_provider.dart';
 import '../../services/session_service.dart';
+import '../../widgets/chip_composition_editor.dart';
+import '../../widgets/chip_flow.dart';
 import '../../widgets/confirm_action_dialog.dart';
 import '../../widgets/signature_compare_sheet.dart';
 import '../../widgets/signature_pad.dart';
@@ -48,6 +50,10 @@ class _HistoryTabState extends State<HistoryTab> {
         return Icons.percent;
       case TransactionType.cashDrop:
         return Icons.lock_outline;
+      case TransactionType.transferOut:
+        return Icons.logout;
+      case TransactionType.transferIn:
+        return Icons.login;
     }
   }
 
@@ -162,6 +168,24 @@ class _HistoryTabState extends State<HistoryTab> {
     }
   }
 
+  /// Opens the physical chip breakdown for a money transaction.
+  ///
+  /// Entirely separate from [_editTransaction], which edits the MONEY.
+  /// This one cannot change the amount, and the money editor cannot
+  /// change the chips — keeping them apart means a banker correcting a
+  /// denomination can never accidentally move the ledger.
+  Future<void> _editChips(LedgerTransaction tx) async {
+    final session = context.read<SessionProvider>().current;
+    if (session == null) return;
+    await showChipCompositionEditor(
+      context,
+      transaction: tx,
+      currency: session.currency,
+      tableId: tx.tableId,
+    );
+    if (mounted) setState(() {});
+  }
+
   Future<void> _voidOrRestore(LedgerTransaction tx) async {
     final provider = context.read<SessionProvider>();
     if (tx.isVoided) {
@@ -238,6 +262,39 @@ class _HistoryTabState extends State<HistoryTab> {
             (t.note ?? '').toLowerCase().contains(_query.toLowerCase());
       }).toList();
     }
+
+    // ---- Per-table rake totals -------------------------------------
+    //
+    // A pure aggregation for display. It folds the amounts of the rake
+    // rows ALREADY in `txs`, so it inherits every active filter and can
+    // never disagree with the list the banker is looking at. No rake is
+    // recalculated, no threshold or cap is consulted, and
+    // SessionService.totalRake stays the single source of truth for the
+    // session figure on the Dashboard.
+    //
+    // Table attribution follows the project's existing rule verbatim
+    // (SessionService.transactionsForTable / the table filter above):
+    // a null tableId means "the first table", which is what everything
+    // recorded before multi-table support stored. No new fallback is
+    // invented here.
+    final rakeRows =
+        txs.where((t) => t.type == TransactionType.rakeCollection).toList();
+    final rakeByTable = <String, double>{};
+    for (final t in rakeRows) {
+      final id = t.tableId ?? firstTableId;
+      if (id == null) continue;
+      rakeByTable[id] = (rakeByTable[id] ?? 0) + t.amount;
+    }
+    // Ordered by the session's own table order so the summary reads the
+    // same way as the filter chips above it. Tables with no rake are
+    // omitted entirely rather than shown as a misleading zero.
+    final rakeTotals = [
+      for (final t in allTables)
+        if ((rakeByTable[t.id] ?? 0) != 0)
+          MapEntry(t.name, rakeByTable[t.id]!),
+    ];
+    final rakeShownTotal =
+        rakeRows.fold<double>(0, (sum, t) => sum + t.amount);
 
     return Column(
       children: [
@@ -350,6 +407,18 @@ class _HistoryTabState extends State<HistoryTab> {
             ],
           ),
         ),
+        // Rake summary. Appears only when the current view actually
+        // contains rake rows, so it never adds noise to a timeline the
+        // banker is using for something else.
+        if (rakeRows.isNotEmpty)
+          _RakeSummary(
+            perTable: rakeTotals,
+            shownTotal: rakeShownTotal,
+            fmt: fmt,
+            // With one table there is nothing to break down — a single
+            // "Total Rake" line answers the question completely.
+            showBreakdown: multi && rakeTotals.isNotEmpty,
+          ),
         const SizedBox(height: 8),
         Expanded(
           child: txs.isEmpty
@@ -379,6 +448,7 @@ class _HistoryTabState extends State<HistoryTab> {
                       playerName: playerName,
                       tableName: tableNameFor(tx),
                       onEdit: () => _editTransaction(tx, fmt),
+                      onEditChips: () => _editChips(tx),
                       onVoidOrRestore: () => _voidOrRestore(tx),
                       onDelete: () => _delete(tx),
                     );
@@ -414,6 +484,10 @@ class _TransactionTile extends StatelessWidget {
   /// session.
   final String? tableName;
   final VoidCallback onEdit;
+
+  /// Opens the chip-composition editor. Only offered for the transaction
+  /// types that physically move chips.
+  final VoidCallback onEditChips;
   final VoidCallback onVoidOrRestore;
   final VoidCallback onDelete;
 
@@ -426,6 +500,7 @@ class _TransactionTile extends StatelessWidget {
     required this.playerName,
     required this.tableName,
     required this.onEdit,
+    required this.onEditChips,
     required this.onVoidOrRestore,
     required this.onDelete,
   });
@@ -517,6 +592,7 @@ class _TransactionTile extends StatelessWidget {
                 onSelected: (v) {
                   if (v == 'verify') _showSignature(context);
                   if (v == 'edit') onEdit();
+                  if (v == 'chips') onEditChips();
                   if (v == 'void') onVoidOrRestore();
                   if (v == 'delete') onDelete();
                 },
@@ -525,6 +601,21 @@ class _TransactionTile extends StatelessWidget {
                     PopupMenuItem(
                         value: 'verify', child: Text(tr('verify_signature'))),
                   PopupMenuItem(value: 'edit', child: Text(tr('edit'))),
+                  // Cash drop never involves chips, so offering the
+                  // editor there would be a dead end.
+                  //
+                  // Hidden on a VOIDED row as well. A void has already
+                  // reversed every chip leg, so the editor would open
+                  // blank and then re-issue chips against a transaction
+                  // that has no money effect — leaving a player holding
+                  // chips for a buy-in that officially never happened,
+                  // and silently blocking a later Restore (which skips
+                  // when it finds movements already in force). Restore
+                  // it first, then correct the composition.
+                  if (ChipFlow.appliesTo(tx.type) && !tx.isVoided)
+                    PopupMenuItem(
+                        value: 'chips',
+                        child: Text(tr('edit_chip_composition'))),
                   PopupMenuItem(value: 'void', child: Text(tx.isVoided ? 'Restore' : 'Void')),
                   PopupMenuItem(value: 'delete', child: Text(tr('delete_permanently'))),
                 ],
@@ -532,6 +623,104 @@ class _TransactionTile extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Rake totals for the transactions currently visible in the timeline.
+///
+/// Display only. Every figure here is a fold over rake transactions that
+/// are already on screen — nothing is recalculated from rake rules, and
+/// the Dashboard's session-wide total is untouched and still authoritative.
+class _RakeSummary extends StatelessWidget {
+  /// Table name -> rake total, in the session's own table order.
+  /// Only tables that actually produced rake appear.
+  final List<MapEntry<String, double>> perTable;
+
+  /// Total across everything currently shown. With no filters applied
+  /// this equals the session rake; with a filter active it is the total
+  /// of what the banker can see, which is what they are asking about.
+  final double shownTotal;
+
+  final CurrencyFormatter fmt;
+  final bool showBreakdown;
+
+  const _RakeSummary({
+    required this.perTable,
+    required this.shownTotal,
+    required this.fmt,
+    required this.showBreakdown,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.gold.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.gold.withOpacity(0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (showBreakdown) ...[
+            for (final entry in perTable)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  children: [
+                    const Icon(Icons.percent, size: 13, color: AppColors.gold),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        entry.key,
+                        style: const TextStyle(
+                            fontSize: 12.5, color: AppColors.textPrimary),
+                      ),
+                    ),
+                    Text(
+                      fmt.format(entry.value),
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.gold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            const Divider(height: 12),
+          ],
+          Row(
+            children: [
+              if (!showBreakdown) ...[
+                const Icon(Icons.percent, size: 13, color: AppColors.gold),
+                const SizedBox(width: 8),
+              ],
+              Expanded(
+                child: Text(
+                  tr('total_rake'),
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              Text(
+                fmt.format(shownTotal),
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.gold,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

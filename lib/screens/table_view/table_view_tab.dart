@@ -10,6 +10,7 @@ import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/table_service.dart';
 import '../../widgets/quick_transaction_sheet.dart';
+import '../../widgets/chip_flow.dart';
 import '../../widgets/poker_table_view.dart';
 import '../../widgets/quick_rake_sheet.dart';
 import '../../widgets/table_selector_bar.dart';
@@ -64,13 +65,28 @@ class TableViewTab extends StatelessWidget {
       sessionId: session.id,
     );
     if (result == null) return;
+    // Optional chip composition, asked BEFORE the money is written so
+    // cancelling out of it cancels nothing.
+    final dist = ChipFlow.appliesTo(type)
+        ? await ChipFlow.ask(context,
+            amount: result.amount, currency: session.currency)
+        : null;
+    if (!context.mounted) return;
     try {
-      await provider.recordTransaction(
+      final tx = await provider.recordTransaction(
         playerId: player.id,
         type: type,
         amount: result.amount,
         hostSignatureBase64: result.signature ?? '',
       );
+      if (context.mounted) {
+        await ChipFlow.apply(context,
+            distribution: dist,
+            type: type,
+            sessionId: session.id,
+            transactionId: tx.id,
+            playerId: player.id);
+      }
       AppSounds.play(AppSounds.forTransaction(type));
     } catch (e) {
       if (context.mounted) {
@@ -169,8 +185,13 @@ class TableViewTab extends StatelessWidget {
 
     // Seat data is assembled here so PokerTableView stays pure layout —
     // it draws what it is given and owns no business logic.
+    // ALWAYS ten seats, because the table artwork always shows ten
+    // printed positions. A table configured for fewer marks the surplus
+    // seats locked rather than omitting them — the pods stay in their
+    // own fixed anchors, dimmed and non-tappable, so the geometry is
+    // identical for a 6-, 8-, 9- or 10-seat table.
     final seats = [
-      for (var n = 1; n <= table.seatCount; n++)
+      for (var n = 1; n <= TableAnchors.maxSeats; n++)
         SeatData(
           seatNumber: n,
           player: bySeat[n],
@@ -178,6 +199,14 @@ class TableViewTab extends StatelessWidget {
               ? 0
               : SessionService.playerProfitLoss(session.id, bySeat[n]!.id),
           settled: bySeat[n] != null && !bySeat[n]!.isActive,
+          // STRICTLY the seat-count boundary. Deliberately NOT widened
+          // for a seat that happens to hold a player: a seat outside the
+          // configured count is locked, full stop. If a table was shrunk
+          // while someone sat beyond the new limit, their pod renders
+          // locked and the banker must raise the seat count to reach
+          // them again — which is the honest signal that the table
+          // configuration and the seating disagree.
+          enabled: n <= table.seatCount,
           moneyLabel: bySeat[n] == null
               ? null
               : fmt.format(
@@ -215,6 +244,15 @@ class TableViewTab extends StatelessWidget {
                     ? null
                     : () => provider.moveDealerAt(table.id),
                 onSeatTap: (seat) {
+                  // Seat-count boundary, enforced in BEHAVIOUR and not
+                  // only in appearance. SeatWidget already refuses to
+                  // deliver the tap for a locked seat, so this is the
+                  // second of two independent gates: if the pod is ever
+                  // made tappable again by a later change, a locked seat
+                  // still cannot open the Add Player sheet or the seat
+                  // sheet. Silent by design — a locked seat does
+                  // absolutely nothing, per spec.
+                  if (!seat.enabled) return;
                   if (table.status.isClosed) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(content: Text(tr('table_closed_hint'))),
@@ -222,8 +260,12 @@ class TableViewTab extends StatelessWidget {
                     return;
                   }
                   if (seat.player == null) {
+                    // Pass the table being viewed explicitly, so the new
+                    // player is seated HERE rather than wherever the
+                    // provider would otherwise infer.
                     PlayersTab.showAddPlayerSheet(context,
-                        presetSeat: seat.seatNumber);
+                        presetSeat: seat.seatNumber,
+                        presetTableId: table.id);
                   } else {
                     _seatSheet(context, provider, seat.player!);
                   }

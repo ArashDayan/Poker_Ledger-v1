@@ -13,6 +13,7 @@ import '../../widgets/player_card.dart';
 import '../../widgets/signature_compare_sheet.dart';
 import '../../widgets/signature_pad.dart';
 import '../../widgets/table_selector_bar.dart';
+import '../../widgets/chip_flow.dart';
 import '../../widgets/quick_transaction_sheet.dart';
 import '../player_action/player_action_screen.dart';
 import '../player_action/player_ledger_screen.dart';
@@ -26,8 +27,19 @@ import '../player_history/player_history_screen.dart';
 class PlayersTab extends StatelessWidget {
   const PlayersTab({super.key});
 
+  /// Opens the add/edit player sheet.
+  ///
+  /// [presetTableId] is the table the banker was actually looking at when
+  /// they tapped an empty seat. Passing it makes the destination explicit
+  /// rather than inferred: without it the provider had to guess from
+  /// `isMultiTable`, which reads false whenever `session.tables` has not
+  /// been materialised yet, and the player was then stored with a null
+  /// tableId and vanished from the table the banker was standing at.
+  ///
+  /// Null means "no specific table" (the Players tab / app-bar entry
+  /// points), where the provider's existing default is correct.
   static Future<void> showAddPlayerSheet(BuildContext context,
-      {Player? existing, int? presetSeat}) async {
+      {Player? existing, int? presetSeat, String? presetTableId}) async {
     final provider = context.read<SessionProvider>();
     final isEdit = existing != null;
     final nameCtrl = TextEditingController(text: existing?.name ?? '');
@@ -226,11 +238,20 @@ class PlayersTab extends StatelessWidget {
                   spacing: 8,
                   children: PlayerTag.values.map((tag) {
                     final selected = tags.contains(tag);
-                    return FilterChip(
+                    return ChoiceChip(
                       label: Text(tag.label),
                       selected: selected,
+                      // Classification is mutually exclusive: at most ONE
+                      // may be held at a time. Clearing the set before
+                      // adding is what enforces that — and it also
+                      // normalises any legacy record that was saved with
+                      // several tags, the moment the banker touches it.
+                      //
+                      // Re-tapping the selected chip clears it, so "no
+                      // classification" stays a reachable, valid state.
                       onSelected: (v) => setSheetState(() {
-                        v ? tags.add(tag) : tags.remove(tag);
+                        tags.clear();
+                        if (v) tags.add(tag);
                       }),
                     );
                   }).toList(),
@@ -272,6 +293,11 @@ class PlayersTab extends StatelessWidget {
                     final name = nameCtrl.text.trim();
                     final tagList = tags.toList();
                     final sample = sampleSignature.isEmpty ? null : sampleSignature;
+                    // Sample 2 is captured in this same sheet, so it has
+                    // to be carried into creation alongside Sample 1 —
+                    // otherwise it is discarded when the sheet closes.
+                    final sample2 =
+                        sampleSignature2.isEmpty ? null : sampleSignature2;
                     Navigator.pop(ctx); // close the config sheet first
 
                     if ((buyIn ?? 0) <= 0) {
@@ -283,6 +309,10 @@ class PlayersTab extends StatelessWidget {
                           buyInAmount: null,
                           hostSignatureBase64: null,
                           sampleSignatureBase64: sample,
+                          sampleSignature2Base64: sample2,
+                          // Explicit destination when the sheet was
+                          // opened from a table's empty seat.
+                          tableId: presetTableId,
                         );
                         AppSounds.play(SoundEffect.addPlayer);
                       } catch (e) {
@@ -306,15 +336,44 @@ class PlayersTab extends StatelessWidget {
                       sessionId: provider.current!.id,
                     );
                     if (result == null) return;
+                    // Chip composition for the opening buy-in, asked
+                    // before the player is created so cancelling it
+                    // cancels nothing.
+                    final openingDist = await ChipFlow.ask(
+                      context,
+                      amount: result.amount,
+                      currency: provider.current!.currency,
+                    );
+                    if (!context.mounted) return;
                     try {
-                      await provider.addPlayerWithBuyIn(
+                      final created = await provider.addPlayerWithBuyIn(
                         name: name,
                         seatNumber: seat,
                         tags: tagList,
                         buyInAmount: result.amount,
                         hostSignatureBase64: result.signature,
                         sampleSignatureBase64: sample,
+                        sampleSignature2Base64: sample2,
+                        tableId: presetTableId,
                       );
+                      if (context.mounted) {
+                        // The opening buy-in is the last transaction the
+                        // provider wrote for this player.
+                        final tx = SessionService.transactionsFor(
+                                provider.current!.id)
+                            .where((t) => t.playerId == created.id)
+                            .toList();
+                        if (tx.isNotEmpty) {
+                          await ChipFlow.apply(
+                            context,
+                            distribution: openingDist,
+                            type: TransactionType.buyIn,
+                            sessionId: provider.current!.id,
+                            transactionId: tx.last.id,
+                            playerId: created.id,
+                          );
+                        }
+                      }
                       AppSounds.play(SoundEffect.buyIn);
                     } catch (e) {
                       if (context.mounted) {
@@ -373,13 +432,26 @@ class PlayersTab extends StatelessWidget {
     );
     if (result == null) return;
 
+    final dist = ChipFlow.appliesTo(type)
+        ? await ChipFlow.ask(context,
+            amount: result.amount, currency: session.currency)
+        : null;
+    if (!context.mounted) return;
     try {
-      await provider.recordTransaction(
+      final tx = await provider.recordTransaction(
         playerId: player.id,
         type: type,
         amount: result.amount,
         hostSignatureBase64: result.signature ?? '',
       );
+      if (context.mounted) {
+        await ChipFlow.apply(context,
+            distribution: dist,
+            type: type,
+            sessionId: session.id,
+            transactionId: tx.id,
+            playerId: player.id);
+      }
       AppSounds.play(AppSounds.forTransaction(type));
     } catch (e) {
       if (context.mounted) {

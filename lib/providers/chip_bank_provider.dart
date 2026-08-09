@@ -1,9 +1,20 @@
 import 'package:flutter/foundation.dart';
+import 'package:hive/hive.dart';
 
 import '../models/chip_movement.dart';
 import '../models/chip_type.dart';
 import '../services/chip_bank_service.dart';
 import '../services/chip_tracking_service.dart';
+import '../services/hive_service.dart';
+
+/// Severity of a low-inventory warning.
+enum ChipBankAlert {
+  /// Half the starting inventory is gone.
+  low,
+
+  /// Only 30% or less remains — the banker may be unable to pay out.
+  critical,
+}
 
 /// Exposes the chip inventory to the widget tree.
 ///
@@ -32,6 +43,64 @@ class ChipBankProvider extends ChangeNotifier {
 
   Map<String, ChipHolding> playerHoldings({String? sessionId}) =>
       ChipTrackingService.allPlayerHoldings(sessionId: sessionId);
+
+  // ---- Low-inventory alerts -------------------------------------
+  //
+  // Fired when the Bank's CURRENT total chip value crosses down through
+  // 50% and then 30% of its STARTING value. Measured by value, not chip
+  // count, so a case full of $5s cannot mask a drained bank.
+
+  static const warnThreshold = 0.50;
+  static const criticalThreshold = 0.30;
+
+  static const _warnKey = 'chip_bank_warn_fired';
+  static const _critKey = 'chip_bank_crit_fired';
+
+  /// One-shot alert to show, or null. Consuming it clears it, so a
+  /// rebuild cannot re-raise the same alert — the flag is persisted, so
+  /// even an app restart will not spam the banker.
+  ///
+  /// If inventory later rises back above a threshold the flag resets, so
+  /// crossing down again legitimately alerts again.
+  /// Deliberately reads the fraction LIVE rather than from the cached
+  /// [_summary]. Void, undo and edit apply their chip reversals through
+  /// the service directly, without going via this provider, so the
+  /// cached summary can legitimately be stale at the moment the ticker
+  /// polls. Missing a genuine low-inventory crossing is a far worse
+  /// failure than recomputing a fold over the movement log once a
+  /// second on a home-game-sized dataset.
+  ChipBankAlert? consumeAlert() {
+    final fraction = ChipTrackingService.bankRemainingFraction();
+    if (fraction == null) return null;
+
+    final box = _settings;
+    final warnFired = box?.get(_warnKey, defaultValue: false) as bool? ?? false;
+    final critFired = box?.get(_critKey, defaultValue: false) as bool? ?? false;
+
+    // Recovered above a threshold: re-arm it.
+    if (fraction > warnThreshold && warnFired) box?.put(_warnKey, false);
+    if (fraction > criticalThreshold && critFired) box?.put(_critKey, false);
+
+    if (fraction <= criticalThreshold && !critFired) {
+      box?.put(_critKey, true);
+      // Crossing straight past 50% to 30% should not queue two alerts.
+      box?.put(_warnKey, true);
+      return ChipBankAlert.critical;
+    }
+    if (fraction <= warnThreshold && !warnFired) {
+      box?.put(_warnKey, true);
+      return ChipBankAlert.low;
+    }
+    return null;
+  }
+
+  Box? get _settings {
+    try {
+      return HiveService.settings;
+    } catch (_) {
+      return null; // boxes not open (unit tests) — alerts simply idle
+    }
+  }
 
   void refresh() {
     _chips = ChipBankService.allChips();

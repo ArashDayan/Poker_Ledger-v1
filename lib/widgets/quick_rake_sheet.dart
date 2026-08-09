@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../core/house_rules.dart';
 import '../core/localization/app_localizations.dart';
+import 'chip_flow.dart';
 import '../core/rake_calculator.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/currency_formatter.dart';
@@ -196,11 +197,34 @@ Future<void> showQuickRakeSheet(
 
   // Sound fires on the confirmed write, not on the chip tap, so a
   // cancelled sheet never sounds like money was taken.
-  await provider.recordTransaction(
+  // Rake in this app is always collected in physical chips, never cash,
+  // so those chips must physically enter the Bank. Asked before the money
+  // is written so cancelling the sheet cancels nothing.
+  final dist = await ChipFlow.ask(
+    context,
+    amount: amount,
+    currency: session.currency,
+  );
+  if (!context.mounted) return;
+
+  final tx = await provider.recordTransaction(
     playerId: player?.id,
     type: TransactionType.rakeCollection,
     amount: amount,
     hostSignatureBase64: '',
   );
+  if (context.mounted) {
+    // Player -> Bank when the rake came from a named player, otherwise
+    // Table -> Bank. Never 'removed': these chips are now the house's.
+    await ChipFlow.apply(
+      context,
+      distribution: dist,
+      type: TransactionType.rakeCollection,
+      sessionId: session.id,
+      transactionId: tx.id,
+      playerId: player?.id,
+      tableId: player == null ? provider.activeTableId : null,
+    );
+  }
   AppSounds.play(SoundEffect.rake);
 }

@@ -29,6 +29,29 @@ enum TransactionType {
   rakeCollection,
   @HiveField(4)
   cashDrop, // money moved from the table float to the safe/owner
+
+  /// Money physically carried OUT of a table when a player moves to
+  /// another table. Paired with a [transferIn] of the same amount.
+  ///
+  /// WHY THESE ARE THEIR OWN TYPES AND NOT A CASH-OUT + BUY-IN
+  /// Recording a table move as a cash-out at the source and a buy-in at
+  /// the destination would be catastrophic: it would inflate the
+  /// session's totalBuyIn and totalCashOut, corrupt every player's
+  /// profit/loss, and make `hasCashedOut` believe the player had left.
+  /// A transfer is not revenue and not a settlement — it is the same
+  /// physical money changing seats.
+  ///
+  /// Being distinct types is also what makes them SESSION-NEUTRAL for
+  /// free: every session-level total (`totalBuyIn`, `totalCashOut`,
+  /// `totalRake`, `checkBalance`, `moneyStillInPlay`, `playerProfitLoss`)
+  /// filters on one explicit type, so none of them can ever see these.
+  @HiveField(5)
+  transferOut,
+
+  /// Money physically carried INTO a table by an arriving player.
+  /// Always the mirror of a [transferOut] of the same amount.
+  @HiveField(6)
+  transferIn,
 }
 
 @HiveType(typeId: 2)
@@ -103,18 +126,39 @@ extension TransactionTypeX on TransactionType {
         return 'Rake Collected';
       case TransactionType.cashDrop:
         return 'Cash Drop';
+      case TransactionType.transferOut:
+        return 'Transfer Out';
+      case TransactionType.transferIn:
+        return 'Transfer In';
     }
   }
 
   /// Money moving INTO the host's box/table float.
+  ///
+  /// [transferIn] counts as an inflow for DISPLAY only (it decides the
+  /// +/- sign and colour in the timeline). No money calculation reads
+  /// this getter — verified across the codebase — so including the
+  /// transfer types here cannot affect any total.
   bool get isInflow =>
       this == TransactionType.buyIn ||
       this == TransactionType.rebuy ||
-      this == TransactionType.rakeCollection;
+      this == TransactionType.rakeCollection ||
+      this == TransactionType.transferIn;
 
   /// Money moving OUT of the host's box/table float.
   bool get isOutflow =>
-      this == TransactionType.cashOut || this == TransactionType.cashDrop;
+      this == TransactionType.cashOut ||
+      this == TransactionType.cashDrop ||
+      this == TransactionType.transferOut;
+
+  /// True for the two legs of a table-to-table move.
+  ///
+  /// These are internal movements of money that is already in the
+  /// session, so they must never be counted as session revenue or as a
+  /// player settling up.
+  bool get isTableTransfer =>
+      this == TransactionType.transferOut ||
+      this == TransactionType.transferIn;
 }
 
 /// Whether a session is a cash game or a tournament.
@@ -139,6 +183,25 @@ extension SessionModeX on SessionMode {
 
 /// One-shot notices raised by the simple cash-game session timer.
 enum SessionTimerNotice { tenMinutes, finished }
+
+/// Raised once when an individual table's countdown reaches zero.
+///
+/// Carries the table's identity so the banker is told exactly WHICH
+/// table finished — with several tables running, "timer finished" on its
+/// own would be useless.
+class TableTimerNotice {
+  final String tableId;
+  final String tableName;
+
+  /// The duration that was configured, for the message text.
+  final int plannedMinutes;
+
+  const TableTimerNotice({
+    required this.tableId,
+    required this.tableName,
+    required this.plannedMinutes,
+  });
+}
 
 /// One-shot notices raised by the tournament blind timer.
 enum BlindTimerNotice { tenMinutes, fiveMinutes, oneMinute, levelFinished }

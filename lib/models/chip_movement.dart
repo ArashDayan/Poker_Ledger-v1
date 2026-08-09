@@ -105,13 +105,30 @@ enum ChipMovementReason {
   /// Bank stocking a table's tray, or pulling it back.
   tableFloat,
 
-  /// Chips taken out of play as rake.
+  /// Chips physically handed to the banker as rake.
+  ///
+  /// Rake in this app is always collected in chips, never cash, so those
+  /// chips physically enter the Bank — the destination is
+  /// [ChipLocationKind.bank], never `removed`.
   rake,
 
   /// Banker correcting a count, or writing off damaged chips.
   adjustment,
 
-  /// Chips physically moved between two places for any other reason.
+  /// One leg of a denomination exchange. Both legs share an
+  /// `exchange:<uuid>` tag in [ChipMovement.note] and carry equal total
+  /// value, so an exchange nets to zero for both sides.
+  exchange,
+
+  /// Undoes an earlier movement, e.g. when a transaction is voided or a
+  /// chip composition is corrected.
+  ///
+  /// Appended rather than deleting the original, so the audit trail
+  /// still shows what happened and why it was undone.
+  reversal,
+
+  /// Chips physically moved between two places for any other reason,
+  /// including player-to-player winnings.
   transfer;
 
   static ChipMovementReason parse(String? raw) {

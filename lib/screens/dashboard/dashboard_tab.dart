@@ -7,9 +7,11 @@ import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
 import '../../models/session.dart';
 import '../../providers/session_provider.dart';
+import '../../services/table_service.dart';
 import '../../widgets/balance_check_banner.dart';
 import '../../widgets/balance_indicator.dart';
 import '../../widgets/confirm_action_dialog.dart';
+import '../chip_bank/session_reconciliation_screen.dart';
 import '../house_rules/house_rules_screen.dart';
 import '../reports/reports_screen.dart';
 
@@ -56,7 +58,26 @@ class DashboardTab extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 BalanceCheckBanner(result: balance, formatter: fmt),
-                const SizedBox(height: 20),
+                const SizedBox(height: 12),
+                // The money check above and the chip check here answer
+                // two different questions: the banner proves the LEDGER
+                // balances, this proves the PHYSICAL CHIPS do. A session
+                // can settle perfectly on paper while chips are missing
+                // from the case, so the banker is offered the count
+                // before closing rather than after.
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => SessionReconciliationScreen(
+                        sessionId: provider.current!.id,
+                        currency: provider.current!.currency,
+                      ),
+                    ),
+                  ),
+                  icon: const Icon(Icons.fact_check_outlined, size: 18),
+                  label: Text(tr('reconcile_chips_before_closing')),
+                ),
+                const SizedBox(height: 16),
                 ElevatedButton(
                   onPressed: closing
                       ? null
@@ -380,62 +401,46 @@ class DashboardTab extends StatelessWidget {
             ],
           ),
         ),
-        // Per-table breakdown, only once a second table exists. These are
-        // informational splits of the same session-wide money — the
-        // balance check stays session-level, because the host settles one
-        // bank at the end of the night.
-        if (provider.isMultiTable) ...[
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              color: AppColors.surfaceElevated,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.divider),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(tr('tables_upper'),
-                    style: TextStyle(
-                        fontSize: 10,
-                        letterSpacing: 1.1,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textSecondary)),
-                const SizedBox(height: 8),
-                ...provider.tableSummaries.map((t) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(t.table.name,
-                                style: const TextStyle(
-                                    fontSize: 12.5,
-                                    fontWeight: FontWeight.bold)),
-                          ),
-                          Text(
-                            '${t.playerCount}/${t.table.seatCount} seated',
-                            style: const TextStyle(
-                                fontSize: 11, color: AppColors.textSecondary),
-                          ),
-                          const SizedBox(width: 12),
-                          Text(fmt.format(t.moneyInPlay),
-                              style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                  color: AppColors.gold)),
-                        ],
-                      ),
-                    )),
-                const SizedBox(height: 4),
-                Text(
-                  tr('per_table_note'),
+        // Per-table financial breakdown — one card per table, in the same
+        // visual language as the session summary above.
+        //
+        // Shown for EVERY session, including single-table ones: a banker
+        // running one table still wants that table's takings stated
+        // explicitly rather than having to infer that it equals the
+        // session total.
+        //
+        // These are informational splits of the same money. The balance
+        // check stays session-level, because the host settles one bank at
+        // the end of the night, not one per table.
+        if (provider.tableSummaries.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Text(tr('tables_upper'),
                   style: TextStyle(
-                      fontSize: 9.5,
-                      color: AppColors.textSecondary.withValues(alpha: 0.85)),
-                ),
-              ],
+                      fontSize: 10,
+                      letterSpacing: 1.1,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textSecondary)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Divider(
+                    color: AppColors.divider.withValues(alpha: 0.6)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ...provider.tableSummaries.map(
+            (t) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _TableFinancialCard(summary: t, fmt: fmt),
             ),
+          ),
+          Text(
+            tr('per_table_note'),
+            style: TextStyle(
+                fontSize: 9.5,
+                color: AppColors.textSecondary.withValues(alpha: 0.85)),
           ),
         ],
         if (provider.totalCashDrop > 0) ...[
@@ -469,6 +474,155 @@ class DashboardTab extends StatelessWidget {
           ),
         const SizedBox(height: 24),
       ],
+    );
+  }
+}
+
+/// One table's financial summary, in the same shape as the session
+/// header above it: Money In / Money Out / Current Pot on the first row,
+/// Rake and Host Profit on the second.
+///
+/// EVERY FIGURE HERE IS TRANSACTION-DERIVED. [TableSummary] folds the
+/// amounts of transactions whose `tableId` is this table (plus legacy
+/// null-tableId rows for the first table). It deliberately does NOT use
+/// the player-derived `moneyInPlay`, because a player who moves tables
+/// would otherwise drag their whole buy-in history to the new table and
+/// misstate both tables' takings.
+///
+/// Display only. No settlement rule reads any of it, and the session
+/// totals above are computed independently and remain authoritative.
+class _TableFinancialCard extends StatelessWidget {
+  final TableSummary summary;
+  final CurrencyFormatter fmt;
+
+  const _TableFinancialCard({required this.summary, required this.fmt});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = summary.table;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceElevated,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header: name, seated count, status.
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  t.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.bold),
+                ),
+              ),
+              if (!t.status.isActive) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: t.status.isClosed
+                          ? AppColors.danger
+                          : AppColors.warning,
+                    ),
+                  ),
+                  child: Text(
+                    t.status.isClosed ? 'CLOSED' : 'PAUSED',
+                    style: TextStyle(
+                      fontSize: 8.5,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.8,
+                      color: t.status.isClosed
+                          ? AppColors.danger
+                          : AppColors.warning,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Text(
+                '${summary.playerCount}/${t.seatCount} seated',
+                style: const TextStyle(
+                    fontSize: 11, color: AppColors.textSecondary),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              _cell('Money In', fmt.format(summary.moneyIn)),
+              _cell('Money Out', fmt.format(summary.moneyOut)),
+              // A CLOSED table no longer holds a pool of money, so it has
+              // no Current Pot to state. Showing the arithmetic here
+              // would be actively misleading: a settled table that took
+              // rake computes a negative figure, which reads as though
+              // the house owes the table money.
+              //
+              // Display only — the underlying Money In, Money Out and
+              // Rake transactions are untouched and still reconcile as
+              // Money In = Money Out + Rake.
+              _cell(
+                'Current Pot',
+                t.status.isClosed ? '—' : fmt.format(summary.currentPot),
+                color: t.status.isClosed ? AppColors.textSecondary : null,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              _cell('Rake', fmt.format(summary.rake), color: AppColors.gold),
+              _cell('Host Profit', fmt.format(summary.hostProfit),
+                  color: AppColors.accentGreen),
+              // Third slot keeps the two rows on the same grid so the
+              // columns line up with the session summary above.
+              summary.cashDrop > 0
+                  ? _cell('Cash Drop', fmt.format(summary.cashDrop),
+                      color: AppColors.textSecondary)
+                  : const Expanded(child: SizedBox.shrink()),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Mirrors the session summary's `_miniStat` so the two blocks read as
+  /// one family. Kept local rather than shared because the session
+  /// version animates its value; a per-table figure changing under the
+  /// banker's eye would be noise, not confirmation.
+  Widget _cell(String label, String value, {Color? color}) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 10, color: AppColors.textSecondary)),
+          const SizedBox(height: 3),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              value,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: color ?? AppColors.textPrimary,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

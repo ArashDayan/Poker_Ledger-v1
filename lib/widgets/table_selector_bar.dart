@@ -1,5 +1,3 @@
-import 'dart:ui' show FontFeature;
-
 import 'package:flutter/material.dart';
 import '../core/localization/app_localizations.dart';
 import 'package:provider/provider.dart';
@@ -7,8 +5,10 @@ import 'package:provider/provider.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/currency_formatter.dart';
 import '../models/player.dart';
+import '../models/session.dart';
 import '../providers/session_provider.dart';
 import '../services/table_service.dart';
+import 'table_timer_display.dart';
 
 /// Horizontal table switcher shown above the seating screens.
 ///
@@ -334,6 +334,115 @@ class _TableManagerSheet extends StatelessWidget {
   }
 }
 
+/// Asks how much money the player physically carries to the new table.
+///
+/// Returns the amount, or null if the banker cancelled — which aborts the
+/// move entirely, so seating and accounting can never disagree.
+///
+/// DELIBERATELY EMPTY, WITH NO SUGGESTION AND NO LIMIT.
+/// The app does not track how many chips are in front of a player, and
+/// must not pretend to. Buy-ins, rebuys and the chip log all describe
+/// money that passed through the house — none of them can see chips won
+/// from or lost to another player. Prefilling any of those figures would
+/// invite the banker to accept a number that is simply wrong.
+///
+/// So the field starts blank, the banker counts the stack, and whatever
+/// they type is recorded verbatim.
+Future<double?> _askTransferAmount(
+  BuildContext context, {
+  required Player player,
+  required PokerTable from,
+  required PokerTable to,
+}) async {
+  final ctrl = TextEditingController();
+
+  return showModalBottomSheet<double>(
+    context: context,
+    isScrollControlled: true,
+    builder: (ctx) => Padding(
+      padding: EdgeInsets.only(
+        left: 18,
+        right: 18,
+        top: 18,
+        bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Money moving with ${player.name}',
+              style: const TextStyle(
+                  fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Text(
+            '${from.name} → ${to.name}. '
+            'This amount leaves ${from.name} and arrives at ${to.name}. '
+            'The session total is unchanged — the money has only changed '
+            'table.',
+            style: const TextStyle(
+                fontSize: 11, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: ctrl,
+            autofocus: true,
+            keyboardType:
+                const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(
+              labelText: 'Amount taking from this table',
+              helperText: 'Count the chips the player is carrying.',
+              prefixIcon: Icon(Icons.swap_horiz),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text(tr('cancel')),
+                ),
+              ),
+              const SizedBox(width: 10),
+              // A dry seat change is legitimate — a player who has
+              // already cashed out, or is simply being reseated.
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx, 0.0),
+                  child: const Text('No money'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 2,
+                child: ElevatedButton(
+                  onPressed: () {
+                    // The ONLY validation: it must be a real,
+                    // non-negative number. No cap, no comparison against
+                    // any derived balance — whatever the banker counted
+                    // is what gets recorded.
+                    final v =
+                        double.tryParse(ctrl.text.trim().replaceAll(',', ''));
+                    if (v == null || v < 0) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                        const SnackBar(
+                            content: Text('Enter a valid amount.')),
+                      );
+                      return;
+                    }
+                    Navigator.pop(ctx, v);
+                  },
+                  child: Text(tr('confirm')),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 /// Moves one player to another table, choosing a free seat.
 Future<void> showMovePlayerSheet(BuildContext context, Player player) {
   return showModalBottomSheet(
@@ -357,8 +466,9 @@ Future<void> showMovePlayerSheet(BuildContext context, Player player) {
               const SizedBox(height: 4),
               Text(
                 'Currently ${currentTable.name}, seat ${player.seatNumber}. '
-                'Moving a player changes seating only — their buy-ins, '
-                'rebuys and cash-outs are untouched.',
+                'You will be asked how much money they carry across. '
+                'Their existing buy-ins, rebuys and cash-outs are never '
+                'rewritten.',
                 style: const TextStyle(
                     fontSize: 11, color: AppColors.textSecondary),
               ),
@@ -378,9 +488,20 @@ Future<void> showMovePlayerSheet(BuildContext context, Player player) {
                   onTap: free == null
                       ? null
                       : () async {
+                          // Ask how much money travels with the player
+                          // BEFORE moving them. Cancelling here aborts
+                          // the whole move, so a banker can never move a
+                          // player and then abandon the accounting.
+                          final amount = await _askTransferAmount(
+                            ctx,
+                            player: player,
+                            from: currentTable,
+                            to: t,
+                          );
+                          if (amount == null) return;
                           try {
                             await provider.movePlayerToTable(player, t.id,
-                                seat: free);
+                                seat: free, amount: amount);
                             if (ctx.mounted) Navigator.pop(ctx);
                           } catch (e) {
                             if (ctx.mounted) {
@@ -465,16 +586,21 @@ class TableStatusBar extends StatelessWidget {
                   : AppColors.textSecondary,
             ),
             const SizedBox(width: 4),
-            Text(
-              _fmtElapsed(table.elapsed),
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                fontFeatures: const [FontFeature.tabularFigures()],
-                color: table.timerRunning
-                    ? AppColors.textPrimary
+            // Live-refreshing clock. Only THIS widget repaints each
+            // second; the felt and seats beside it are left alone.
+            TableTimerDisplay(table: table),
+            // Duration picker: 60 / 90 / 120 / custom, per table.
+            IconButton(
+              tooltip: tr('set_duration'),
+              visualDensity: VisualDensity.compact,
+              icon: Icon(
+                Icons.timelapse_outlined,
+                size: 18,
+                color: table.hasTimer
+                    ? AppColors.gold
                     : AppColors.textSecondary,
               ),
+              onPressed: () => showTableDurationSheet(context, table),
             ),
             IconButton(
               tooltip: table.timerRunning ? tr('pause') : tr('start_timer'),
@@ -484,14 +610,58 @@ class TableStatusBar extends StatelessWidget {
                     ? Icons.pause_circle_outline
                     : Icons.play_circle_outline,
                 size: 20,
-                color: table.timerRunning
-                    ? AppColors.warning
-                    : AppColors.accentGreen,
+                color: table.isFinished
+                    ? AppColors.divider
+                    : (table.timerRunning
+                        ? AppColors.warning
+                        : AppColors.accentGreen),
               ),
-              onPressed: () => table.timerRunning
-                  ? provider.pauseTableTimer(table.id)
-                  : provider.startTableTimer(table.id),
+              // A finished countdown cannot be resumed into negative
+              // time; the banker resets or re-sets the duration.
+              onPressed: table.isFinished
+                  ? null
+                  : () => table.timerRunning
+                      ? provider.pauseTableTimer(table.id)
+                      : provider.startTableTimer(table.id),
             ),
+            // Stop: back to zero, keeping the chosen duration.
+            IconButton(
+              tooltip: tr('stop_timer'),
+              visualDensity: VisualDensity.compact,
+              icon: Icon(
+                Icons.stop_circle_outlined,
+                size: 20,
+                color: (table.timerRunning ||
+                        table.elapsed > Duration.zero ||
+                        table.isFinished)
+                    ? AppColors.danger
+                    : AppColors.divider,
+              ),
+              onPressed: (table.timerRunning ||
+                      table.elapsed > Duration.zero ||
+                      table.isFinished)
+                  ? () => provider.stopTableTimer(table.id)
+                  : null,
+            ),
+            if (table.isFinished)
+              Container(
+                margin: const EdgeInsetsDirectional.only(start: 2),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.danger.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: AppColors.danger),
+                ),
+                child: Text(
+                  tr('timer_finished'),
+                  style: const TextStyle(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.danger,
+                  ),
+                ),
+              ),
           ],
           const Spacer(),
           if (status.isClosed)
@@ -526,13 +696,6 @@ class TableStatusBar extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  static String _fmtElapsed(Duration d) {
-    final h = d.inHours;
-    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final sec = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return h > 0 ? '$h:$m:$sec' : '$m:$sec';
   }
 
   Future<void> _confirmClose(
@@ -577,4 +740,119 @@ class TableStatusBar extends StatelessWidget {
     );
     if (ok == true) await provider.closeTable(table.id);
   }
+}
+
+/// Per-table countdown duration picker: 60 / 90 / 120 minutes, a custom
+/// value, or none.
+///
+/// Purely a timer control — it never touches the table's Active/Paused/
+/// Closed status, which stays an independent concept.
+Future<void> showTableDurationSheet(
+    BuildContext context, PokerTable table) async {
+  final provider = context.read<SessionProvider>();
+  final customCtrl = TextEditingController(
+    text: (table.hasTimer && !const [60, 90, 120].contains(table.plannedMinutes))
+        ? table.plannedMinutes.toString()
+        : '',
+  );
+
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
+        decoration: const BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 38,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.divider,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              '${table.name} · ${tr('set_duration')}',
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              tr('table_duration_desc'),
+              style: const TextStyle(
+                  fontSize: 11.5, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final mins in const [60, 90, 120])
+                  ChoiceChip(
+                    label: Text('$mins ${tr('minutes')}'),
+                    selected: table.plannedMinutes == mins,
+                    selectedColor: AppColors.gold.withOpacity(0.25),
+                    onSelected: (_) {
+                      provider.setTableTimerDuration(table.id, mins);
+                      Navigator.pop(ctx);
+                    },
+                  ),
+                ChoiceChip(
+                  label: Text(tr('no_timer')),
+                  selected: !table.hasTimer,
+                  selectedColor: AppColors.divider,
+                  onSelected: (_) {
+                    provider.setTableTimerDuration(table.id, null);
+                    Navigator.pop(ctx);
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: customCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: tr('custom_minutes'),
+                      isDense: true,
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                ElevatedButton(
+                  onPressed: () {
+                    final mins = int.tryParse(customCtrl.text.trim());
+                    if (mins == null || mins <= 0) return;
+                    provider.setTableTimerDuration(table.id, mins);
+                    Navigator.pop(ctx);
+                  },
+                  child: Text(tr('save')),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+  customCtrl.dispose();
 }

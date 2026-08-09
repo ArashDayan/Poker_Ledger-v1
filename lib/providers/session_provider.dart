@@ -7,6 +7,7 @@ import '../models/session.dart';
 import '../models/transaction.dart';
 import '../services/hive_service.dart';
 import '../services/session_service.dart';
+import '../services/chip_tracking_service.dart';
 import '../services/table_service.dart';
 import '../services/tournament_service.dart';
 
@@ -269,6 +270,55 @@ class SessionProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Stops this table's clock and returns it to zero, keeping the chosen
+  /// duration so it can simply be started again.
+  Future<void> stopTableTimer(String tableId) async {
+    if (_current == null) return;
+    await TableService.materialise(_current!);
+    await TableService.stopTableTimer(_current!, tableId);
+    notifyListeners();
+  }
+
+  /// Sets (or clears, with null) this table's countdown duration.
+  Future<void> setTableTimerDuration(String tableId, int? minutes) async {
+    if (_current == null) return;
+    await TableService.materialise(_current!);
+    await TableService.setTableTimerDuration(_current!, tableId, minutes);
+    notifyListeners();
+  }
+
+  /// Returns a notice for ONE table whose countdown has just run out, or
+  /// null. Polled by the session shell's existing one-second ticker, so
+  /// no additional timer is introduced.
+  ///
+  /// Each table is evaluated independently: finishing table 1 has no
+  /// effect on tables 2 and 3, which keep running and will raise their
+  /// own notices when their own targets are reached. One notice is
+  /// returned per tick so two simultaneous expiries produce two separate,
+  /// correctly-labelled alerts rather than one merged message.
+  ///
+  /// Touches nothing but the table map — no money, no transactions.
+  TableTimerNotice? consumeTableTimerNotice() {
+    final session = _current;
+    if (session == null || session.status == SessionStatus.ended) return null;
+
+    for (final table in TableService.tablesFor(session)) {
+      if (!table.hasTimer || table.finishNoticeShown) continue;
+      if (!table.isFinished) continue;
+
+      // Stop the clock at exactly the planned duration and flag the
+      // notice as delivered, so this fires once and never goes negative.
+      TableService.markTableTimerFinished(session, table.id);
+      _scheduleNotify();
+      return TableTimerNotice(
+        tableId: table.id,
+        tableName: table.name,
+        plannedMinutes: table.plannedMinutes!,
+      );
+    }
+    return null;
+  }
+
   Future<void> removeTable(String tableId) async {
     if (_current == null) return;
     await TableService.removeTable(_current!, tableId);
@@ -278,11 +328,14 @@ class SessionProvider extends ChangeNotifier {
 
   /// Moves a player between tables. Seating only — their transactions and
   /// the session balance are untouched.
+  /// Moves a player to another table, carrying [amount] of money with
+  /// them. See [TableService.movePlayer] for the accounting model.
   Future<void> movePlayerToTable(Player player, String tableId,
-      {int? seat}) async {
+      {int? seat, double? amount}) async {
     if (_current == null) return;
     await TableService.materialise(_current!);
-    await TableService.movePlayer(_current!, player, tableId, seat: seat);
+    await TableService.movePlayer(_current!, player, tableId,
+        seat: seat, amount: amount);
     notifyListeners();
   }
 
@@ -387,18 +440,49 @@ class SessionProvider extends ChangeNotifier {
     required int seatNumber,
     List<PlayerTag>? tags,
     String? sampleSignatureBase64,
+    /// Second reference specimen, captured in the same Add Player step.
+    ///
+    /// Optional and defaulting to null so every existing caller keeps
+    /// working and players created with only one sample stay valid.
+    String? sampleSignature2Base64,
     String? tableId,
   }) async {
     if (_current == null) throw StateError('No active session.');
+
+    // Materialise BEFORE any table inference.
+    //
+    // `tablesFor()` synthesises a single table for a session whose
+    // `tables` list was never written, WITHOUT persisting it — so
+    // `isMultiTable` reported false even when the banker had already
+    // opened a second table, and the player below was stored with a null
+    // tableId. A null tableId is only ever visible on the FIRST table, so
+    // the player silently vanished from the table the banker was
+    // standing at. Every other table mutator already materialises first;
+    // this path was the one that did not.
+    //
+    // Cheap and idempotent: it returns immediately once tables exist.
+    if (tableId == null) {
+      await TableService.materialise(_current!);
+    }
+
+    // Resolve the destination ONCE, so the value written is the value
+    // that was reasoned about.
+    //
+    // An explicitly supplied tableId always wins — when Add Player was
+    // opened from a specific table, that table is the answer and nothing
+    // should be inferred. Only the table-less entry points (Players tab,
+    // app-bar button) fall back to the previous behaviour, which keeps
+    // single-table sessions writing null exactly as before.
+    final resolvedTableId =
+        tableId ?? (isMultiTable ? activeTableId : null);
+
     final player = Player(
       id: _uuid.v4(),
       sessionId: _current!.id,
       name: name,
       photoPath: photoPath,
       seatNumber: seatNumber,
-      // New players are seated at whichever table the banker is looking
-      // at. Single-table sessions pass null and keep the legacy shape.
-      tableId: tableId ?? (isMultiTable ? activeTableId : null),
+      tableId: resolvedTableId,
       tags: tags,
       sampleSignatureBase64:
           (sampleSignatureBase64 != null && sampleSignatureBase64.isNotEmpty)
@@ -406,6 +490,20 @@ class SessionProvider extends ChangeNotifier {
               : null,
       sampleSignatureAt:
           (sampleSignatureBase64 != null && sampleSignatureBase64.isNotEmpty)
+              ? DateTime.now()
+              : null,
+      // Sample 2 is persisted here for exactly the same reason as Sample
+      // 1: it is captured during Add Player, so it must reach the record
+      // at creation. Previously it was dropped, which left Timeline's
+      // "Sample 2" area blank until the banker re-signed it from Edit
+      // Player. Same null/empty guard, so an unsigned pad stays null
+      // rather than storing an empty string.
+      sampleSignature2Base64:
+          (sampleSignature2Base64 != null && sampleSignature2Base64.isNotEmpty)
+              ? sampleSignature2Base64
+              : null,
+      sampleSignature2At:
+          (sampleSignature2Base64 != null && sampleSignature2Base64.isNotEmpty)
               ? DateTime.now()
               : null,
     );
@@ -427,6 +525,7 @@ class SessionProvider extends ChangeNotifier {
     String? photoPath,
     List<PlayerTag>? tags,
     String? sampleSignatureBase64,
+    String? sampleSignature2Base64,
     String? tableId,
   }) async {
     final player = await addPlayer(
@@ -435,6 +534,7 @@ class SessionProvider extends ChangeNotifier {
       photoPath: photoPath,
       tags: tags,
       sampleSignatureBase64: sampleSignatureBase64,
+      sampleSignature2Base64: sampleSignature2Base64,
       tableId: tableId,
     );
     if (buyInAmount != null && buyInAmount > 0) {
@@ -699,6 +799,26 @@ class SessionProvider extends ChangeNotifier {
     final voided = SessionService.undoLast(_current!.id);
     if (voided != null) {
       _redoStack.add(voided.id);
+      // Undo is a void by another name — the chips must come back too.
+      //
+      // This method is deliberately synchronous: callers use its return
+      // value to name the transaction they just undid. The chip reversal
+      // is asynchronous, so it is sequenced with `then` rather than
+      // dropped — notifying again on completion means the Bank figure
+      // refreshes once the movements are actually on disk, instead of
+      // the UI reading a half-written ledger. Errors are surfaced in
+      // debug rather than silently swallowed; the money undo has already
+      // succeeded by this point and is never rolled back by a chip
+      // failure.
+      // `ignore: discarded_futures` is not used: the future IS handled,
+      // just not awaited. Written with unawaited-style chaining that
+      // needs no extra import for the movement type.
+      ChipTrackingService.reverseForTransaction(voided.id, note: 'undo')
+          .then(
+        (_) => notifyListeners(),
+        onError: (Object e) => debugPrint(
+            'Chip reversal failed for undo of ${voided.id}: $e'),
+      );
       notifyListeners();
     }
     return voided;
@@ -708,6 +828,8 @@ class SessionProvider extends ChangeNotifier {
     if (_current == null || _redoStack.isEmpty) return;
     final id = _redoStack.removeLast();
     await SessionService.redo(_current!.id, id);
+    // Redo un-voids, so the chips it took back must go out again.
+    await ChipTrackingService.reapplyForTransaction(id);
     notifyListeners();
   }
 
@@ -745,18 +867,34 @@ class SessionProvider extends ChangeNotifier {
     return tx;
   }
 
+  /// Voids a transaction AND reverses its physical chip movements.
+  ///
+  /// Leaving the chips in place would make the Bank wrong: the money is
+  /// gone from the ledger but the chips would still read as handed out.
+  /// The reversal is appended, never deleted, so the history still shows
+  /// the original movement and the correction.
   Future<void> voidTransactionById(String transactionId) async {
     await SessionService.voidTransaction(transactionId);
+    await ChipTrackingService.reverseForTransaction(transactionId,
+        note: 'void');
     notifyListeners();
   }
 
+  /// Restores a voided transaction and re-applies the exact chip
+  /// composition that was reversed, denomination for denomination.
   Future<void> unvoidTransactionById(String transactionId) async {
     await SessionService.unvoidTransaction(transactionId);
+    await ChipTrackingService.reapplyForTransaction(transactionId);
     notifyListeners();
   }
 
+  /// Permanent removal. Unlike void this is not an audit event the
+  /// banker will revisit, so the chip records go with it rather than
+  /// leaving orphaned movements pointing at a transaction that no
+  /// longer exists.
   Future<void> deleteTransaction(String transactionId) async {
     await SessionService.deleteTransactionPermanently(transactionId);
+    await ChipTrackingService.deleteForTransaction(transactionId);
     notifyListeners();
   }
 

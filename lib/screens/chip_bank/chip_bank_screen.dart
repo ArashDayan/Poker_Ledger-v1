@@ -103,6 +103,22 @@ class ChipBankScreen extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
         children: [
           _SummaryCard(summary: summary, fmt: fmt),
+          // Persistent counterpart to the in-session snackbar. The
+          // snackbar fires once per threshold crossing and then it is
+          // gone; a banker who opens this screen ten minutes later still
+          // needs to see that the case is running low. Purely derived
+          // from the current fraction, so it carries no fired-flag state
+          // and cannot interfere with the one-shot alerting.
+          if (summary.remainingFraction != null &&
+              summary.remainingFraction! <= ChipBankProvider.warnThreshold)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: _LowInventoryBanner(
+                fraction: summary.remainingFraction!,
+                fmt: fmt,
+                summary: summary,
+              ),
+            ),
           const SizedBox(height: 12),
           if (!provider.isEmpty) ...[
             _LocationBreakdown(fmt: fmt),
@@ -223,6 +239,72 @@ class _SummaryCard extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shown on the Chip Bank screen whenever the Bank is at or below the
+/// 50% warning threshold, escalating in colour at 30%.
+class _LowInventoryBanner extends StatelessWidget {
+  final double fraction;
+  final CurrencyFormatter fmt;
+  final ChipBankSummary summary;
+
+  const _LowInventoryBanner({
+    required this.fraction,
+    required this.fmt,
+    required this.summary,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final critical = fraction <= ChipBankProvider.criticalThreshold;
+    final colour = critical ? AppColors.danger : AppColors.warning;
+    final pct = (fraction * 100).clamp(0, 100).toStringAsFixed(0);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colour.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: colour.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            critical ? Icons.warning_amber_rounded : Icons.info_outline,
+            size: 18,
+            color: colour,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  critical
+                      ? tr('chip_bank_critical_alert')
+                      : tr('chip_bank_low_alert'),
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.bold,
+                    color: colour,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '$pct% ${tr('of_starting_inventory_remains')} · '
+                  '${fmt.format(summary.totalValue)} / '
+                  '${fmt.format(summary.startingValue)}',
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.textSecondary),
+                ),
+              ],
+            ),
           ),
         ],
       ),

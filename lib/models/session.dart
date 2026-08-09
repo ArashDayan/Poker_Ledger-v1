@@ -288,10 +288,41 @@ class PokerSession extends HiveObject {
     return left != null && left == Duration.zero;
   }
 
+  /// Wall-clock time the session has actually been RUNNING.
+  ///
+  /// Break handling has two halves, and only one of them used to be here:
+  ///
+  ///   * [totalBreakSeconds] banks breaks that have already FINISHED.
+  ///     `endBreak()` adds the completed break to it.
+  ///   * [breakStartedAt] marks a break that is still IN PROGRESS.
+  ///
+  /// Subtracting only the banked total meant the clock kept advancing
+  /// while the session sat ON BREAK, then snapped backwards the moment
+  /// the banker resumed and the break was finally banked. Subtracting the
+  /// in-progress break as well is what makes the display freeze.
+  ///
+  /// Deliberately derived from timestamps rather than a stored counter,
+  /// exactly as before — so the value stays correct across rebuilds,
+  /// navigation, and the app being backgrounded. Nothing needs to tick
+  /// for this to be right; the UI only has to re-read it.
+  ///
+  /// Clamped at zero so a clock skew (or a break started before the
+  /// session's own start time in old data) can never render negative.
   Duration get elapsed {
     final end = endedAt ?? DateTime.now();
-    final total = end.difference(dateTime);
-    return total - Duration(seconds: totalBreakSeconds);
+    var total = end.difference(dateTime) -
+        Duration(seconds: totalBreakSeconds);
+
+    final onBreakSince = breakStartedAt;
+    if (onBreakSince != null) {
+      // Freeze at the moment the break began. `end` is used rather than
+      // "now" so an ended session that was left on break still reports
+      // the time it was actually played.
+      final inProgress = end.difference(onBreakSince);
+      if (!inProgress.isNegative) total -= inProgress;
+    }
+
+    return total.isNegative ? Duration.zero : total;
   }
 
   /// Serialization for local backup/restore (JSON file, not Firestore —
