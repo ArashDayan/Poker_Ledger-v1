@@ -1,3 +1,4 @@
+import '../models/enums.dart';
 import '../models/player.dart';
 import '../models/session.dart';
 import 'hive_service.dart';
@@ -597,17 +598,45 @@ class TableService {
     return null;
   }
 
-  /// Moves a player to another table.
+  /// Moves a player to another table, accounting for the money they
+  /// physically carry with them.
   ///
-  /// Only touches seating — the player's transactions are untouched and
-  /// stay attached to the session, so the ledger and balance check are
-  /// unaffected by a table change mid-game. Throws if the target seat is
-  /// taken, which the UI prevents by only offering free seats.
+  /// THE AMOUNT IS ALWAYS MANUAL, BY DESIGN.
+  /// The app deliberately does not model how many chips sit in front of
+  /// a player. Chips change hands between players on every hand and none
+  /// of that touches the ledger, so any figure derived from buy-ins,
+  /// rebuys, cash-outs or the chip log would be a guess dressed up as a
+  /// fact. The banker physically counts the stack the player carries
+  /// away; that count is the only authority, and [amount] is recorded
+  /// exactly as entered — never adjusted, capped or second-guessed.
+  ///
+  /// THE ACCOUNTING MODEL
+  /// A table move is an internal transfer, so it is recorded as two
+  /// mirrored legs of the SAME amount:
+  ///
+  ///   transferOut  @ source table       transferIn  @ destination table
+  ///
+  /// Source: Money Out +X, Current Pot −X.
+  /// Destination: Money In +X, Current Pot +X.
+  /// Session: unchanged — see [TransactionType.transferOut] for why these
+  /// are their own types rather than a cash-out plus a buy-in.
+  ///
+  /// LEG ORDER MATTERS AND IS DELIBERATE.
+  /// `SessionService.recordTransaction` attributes a player transaction
+  /// to `player.tableId` — where the player is sitting *at that moment*.
+  /// So the OUT leg is written while they are still at the source table,
+  /// and the IN leg only after the seat has been reassigned. That is what
+  /// lands each leg on the correct table without touching the protected
+  /// recording logic.
+  ///
+  /// [amount] null means "no money carried" (a dry seat change), which
+  /// writes no transactions at all.
   static Future<void> movePlayer(
     PokerSession session,
     Player player,
     String targetTableId, {
     int? seat,
+    double? amount,
   }) async {
     SessionService.assertSessionActive(session.id);
     final blocked = seatingBlocker(session, targetTableId);
@@ -631,11 +660,52 @@ class TableService {
       throw StateError('Seat $chosen at ${target.name} is already taken.');
     }
 
+    if (amount != null && amount < 0) {
+      throw ArgumentError('Transfer amount cannot be negative.');
+    }
+    final carried = (amount ?? 0) > 0 ? amount! : 0.0;
+
+    // Where they are RIGHT NOW — captured before the seat is reassigned,
+    // because that is the table losing the money.
+    final sourceTableId = tableForPlayer(session, player).id;
+    if (carried > 0 && sourceTableId == targetTableId) {
+      throw StateError('Cannot transfer money to the same table.');
+    }
+
+    // LEG 1 — out of the source table, written while the player is still
+    // seated there so recordTransaction files it against that table.
+    if (carried > 0) {
+      await SessionService.recordTransaction(
+        sessionId: session.id,
+        playerId: player.id,
+        type: TransactionType.transferOut,
+        amount: carried,
+        tableId: sourceTableId,
+        note: 'Moved to ${target.name}',
+      );
+    }
+
     // Normalise: a player at the first table stores that table's id
     // explicitly from now on, so seating is unambiguous going forward.
     player.tableId = targetTableId;
     player.seatNumber = chosen;
     await player.save();
+
+    // LEG 2 — into the destination table, written only after the seat
+    // has moved, so it is attributed to the new table.
+    //
+    // Both legs carry the identical amount, so no money can be created
+    // or destroyed by a move.
+    if (carried > 0) {
+      await SessionService.recordTransaction(
+        sessionId: session.id,
+        playerId: player.id,
+        type: TransactionType.transferIn,
+        amount: carried,
+        tableId: targetTableId,
+        note: 'Moved from ${tableById(session, sourceTableId).name}',
+      );
+    }
 
     // NOTE ON HISTORY: the player's existing transactions deliberately
     // keep the tableId they were recorded with. A buy-in taken at Table 1
@@ -643,6 +713,18 @@ class TableService {
     // later moved would falsify the audit trail and make a per-table
     // timeline lie about where money actually changed hands. Only future
     // transactions follow them to the new table.
+    //
+    // NOTE ON CHIPS: deliberately no ChipMovement is written here.
+    // Physical chips are tracked against ChipLocation.player(id), not
+    // against a table — a buy-in moves chips bank -> player, a cash-out
+    // player -> bank. The player's holding is therefore already correct
+    // the instant they stand up, and it travels with them.
+    //
+    // Writing a chip movement for a table change would be wrong twice
+    // over: it would invent a player -> table leg that never happens
+    // anywhere else in the chip model, and it would make the same chips
+    // appear to exist in two locations. The invariant "no chips are
+    // created or destroyed by a transfer" is satisfied by doing nothing.
   }
 
   /// Ensures the session has an explicit table list. Called before the
@@ -664,22 +746,122 @@ class TableSummary {
   final double moneyInPlay;
   final double totalIn;
 
+  /// Buy-ins + rebuys recorded AT THIS TABLE.
+  ///
+  /// WHY THESE ARE TRANSACTION-DERIVED AND [moneyInPlay] IS NOT
+  /// [moneyInPlay] and [totalIn] above sum the CURRENT occupants'
+  /// player totals, so a player who moves tables carries their whole
+  /// history with them to the new table. That is the right answer for
+  /// "how much is sitting at this table right now", which is what the
+  /// table selector bar uses them for.
+  ///
+  /// It is the wrong answer for a financial summary. A buy-in taken at
+  /// Table 1 belongs to Table 1's takings for the night even if the
+  /// player later moved. So every figure below is folded from the
+  /// transactions themselves via [SessionService.transactionsForTable],
+  /// keyed on [LedgerTransaction.tableId].
+  ///
+  /// Both are kept: they answer different questions and neither is
+  /// derivable from the other.
+  final double moneyIn;
+
+  /// Cash-outs + rake recorded at this table. Mirrors the session-level
+  /// `BalanceResult.moneyOut`, which is also cash-out plus rake.
+  final double moneyOut;
+
+  final double cashOut;
+  final double rake;
+  final double cashDrop;
+
+  /// Money carried onto / off this table by players changing seats.
+  /// Already included in [moneyIn] / [moneyOut]; kept separately so the
+  /// UI can explain a table whose figures moved without a buy-in.
+  final double transferIn;
+  final double transferOut;
+
+  /// True once this table is settled: everything that came in has either
+  /// been paid out, raked, or carried to another table.
+  ///
+  ///   Money In = Money Out + Rake      (rake is inside Money Out)
+  ///
+  /// Tolerance absorbs floating-point noise only.
+  bool get isSettled => currentPot.abs() < 0.005;
+
+  /// Money still in play at this table: in − out − rake. Same formula as
+  /// [SessionService.moneyStillInPlay], scoped to one table.
+  final double currentPot;
+
+  /// The house's take from this table. Mirrors
+  /// [SessionService.hostProfit], which is rake.
+  double get hostProfit => rake;
+
   const TableSummary({
     required this.table,
     required this.playerCount,
     required this.moneyInPlay,
     required this.totalIn,
+    this.moneyIn = 0,
+    this.moneyOut = 0,
+    this.cashOut = 0,
+    this.rake = 0,
+    this.cashDrop = 0,
+    this.transferIn = 0,
+    this.transferOut = 0,
+    this.currentPot = 0,
   });
 
   static List<TableSummary> forSession(PokerSession session) {
-    return TableService.tablesFor(session)
-        .map((t) => TableSummary(
-              table: t,
-              playerCount: TableService.playerCountAt(session, t.id),
-              moneyInPlay: TableService.moneyInPlayAt(session, t.id),
-              totalIn: TableService.buyInsAt(session, t.id),
-            ))
-        .toList();
+    final tables = TableService.tablesFor(session);
+    final firstId = tables.isEmpty ? null : tables.first.id;
+
+    return tables.map((t) {
+      // Legacy rows carry a null tableId meaning "the first table", so
+      // the first table must absorb them or a pre-multi-table session
+      // would report zero for everything.
+      final txs = SessionService.transactionsForTable(
+        session.id,
+        t.id,
+        isFirstTable: firstId == t.id,
+      );
+
+      double sum(TransactionType type) => txs
+          .where((x) => x.type == type)
+          .fold(0.0, (s, x) => s + x.amount);
+
+      final buyIn = sum(TransactionType.buyIn);
+      final rebuy = sum(TransactionType.rebuy);
+      final cashOut = sum(TransactionType.cashOut);
+      final rake = sum(TransactionType.rakeCollection);
+      final drop = sum(TransactionType.cashDrop);
+      // Money arriving with, and leaving with, players who changed table.
+      final transferIn = sum(TransactionType.transferIn);
+      final transferOut = sum(TransactionType.transferOut);
+
+      // Money entering this table: bought in here, or carried in.
+      final moneyIn = buyIn + rebuy + transferIn;
+      // Money leaving this table: paid out to players, retained by the
+      // house as rake, or carried away to another table.
+      final moneyOut = cashOut + rake + transferOut;
+
+      return TableSummary(
+        table: t,
+        playerCount: TableService.playerCountAt(session, t.id),
+        moneyInPlay: TableService.moneyInPlayAt(session, t.id),
+        totalIn: TableService.buyInsAt(session, t.id),
+        moneyIn: moneyIn,
+        moneyOut: moneyOut,
+        cashOut: cashOut,
+        rake: rake,
+        cashDrop: drop,
+        transferIn: transferIn,
+        transferOut: transferOut,
+        // What is still physically on this table. Once the table is
+        // fully settled this reaches zero, which is the reconciliation
+        // rule: Money In = Money Out + Rake, with rake already inside
+        // Money Out.
+        currentPot: moneyIn - moneyOut,
+      );
+    }).toList();
   }
 }
 

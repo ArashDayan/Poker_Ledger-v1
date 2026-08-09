@@ -4,6 +4,7 @@ import '../models/chip_type.dart';
 import '../models/player.dart';
 import '../models/session.dart';
 import '../models/transaction.dart';
+import 'chip_tracking_service.dart';
 
 /// Thrown when local storage genuinely cannot be initialized even after
 /// attempting per-box recovery — surfaced to the UI as a clear, honest
@@ -69,6 +70,11 @@ class HiveService {
     await _openBoxSafely<dynamic>(settingsBox, typed: false);
     await _openBoxSafely<ChipType>(chipsBox, typed: true);
     await _openBoxSafely<ChipMovement>(chipMovementsBox, typed: true);
+
+    // The Chip Bank screen must show what is LEFT in the case, not the
+    // starting count. This teaches ChipBankService to fold the movement
+    // log; done here (rather than by an import) to avoid a cycle.
+    ChipTrackingService.installBankResolver();
   }
 
   static Future<void> _openBoxSafely<T>(String name, {required bool typed}) async {

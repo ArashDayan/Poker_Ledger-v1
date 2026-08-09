@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/currency_formatter.dart';
 import '../models/player.dart';
+import '../models/session.dart';
 import '../providers/session_provider.dart';
 import '../services/table_service.dart';
 import 'table_timer_display.dart';
@@ -333,6 +334,115 @@ class _TableManagerSheet extends StatelessWidget {
   }
 }
 
+/// Asks how much money the player physically carries to the new table.
+///
+/// Returns the amount, or null if the banker cancelled — which aborts the
+/// move entirely, so seating and accounting can never disagree.
+///
+/// DELIBERATELY EMPTY, WITH NO SUGGESTION AND NO LIMIT.
+/// The app does not track how many chips are in front of a player, and
+/// must not pretend to. Buy-ins, rebuys and the chip log all describe
+/// money that passed through the house — none of them can see chips won
+/// from or lost to another player. Prefilling any of those figures would
+/// invite the banker to accept a number that is simply wrong.
+///
+/// So the field starts blank, the banker counts the stack, and whatever
+/// they type is recorded verbatim.
+Future<double?> _askTransferAmount(
+  BuildContext context, {
+  required Player player,
+  required PokerTable from,
+  required PokerTable to,
+}) async {
+  final ctrl = TextEditingController();
+
+  return showModalBottomSheet<double>(
+    context: context,
+    isScrollControlled: true,
+    builder: (ctx) => Padding(
+      padding: EdgeInsets.only(
+        left: 18,
+        right: 18,
+        top: 18,
+        bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Money moving with ${player.name}',
+              style: const TextStyle(
+                  fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Text(
+            '${from.name} → ${to.name}. '
+            'This amount leaves ${from.name} and arrives at ${to.name}. '
+            'The session total is unchanged — the money has only changed '
+            'table.',
+            style: const TextStyle(
+                fontSize: 11, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: ctrl,
+            autofocus: true,
+            keyboardType:
+                const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(
+              labelText: 'Amount taking from this table',
+              helperText: 'Count the chips the player is carrying.',
+              prefixIcon: Icon(Icons.swap_horiz),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text(tr('cancel')),
+                ),
+              ),
+              const SizedBox(width: 10),
+              // A dry seat change is legitimate — a player who has
+              // already cashed out, or is simply being reseated.
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx, 0.0),
+                  child: const Text('No money'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 2,
+                child: ElevatedButton(
+                  onPressed: () {
+                    // The ONLY validation: it must be a real,
+                    // non-negative number. No cap, no comparison against
+                    // any derived balance — whatever the banker counted
+                    // is what gets recorded.
+                    final v =
+                        double.tryParse(ctrl.text.trim().replaceAll(',', ''));
+                    if (v == null || v < 0) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                        const SnackBar(
+                            content: Text('Enter a valid amount.')),
+                      );
+                      return;
+                    }
+                    Navigator.pop(ctx, v);
+                  },
+                  child: Text(tr('confirm')),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 /// Moves one player to another table, choosing a free seat.
 Future<void> showMovePlayerSheet(BuildContext context, Player player) {
   return showModalBottomSheet(
@@ -356,8 +466,9 @@ Future<void> showMovePlayerSheet(BuildContext context, Player player) {
               const SizedBox(height: 4),
               Text(
                 'Currently ${currentTable.name}, seat ${player.seatNumber}. '
-                'Moving a player changes seating only — their buy-ins, '
-                'rebuys and cash-outs are untouched.',
+                'You will be asked how much money they carry across. '
+                'Their existing buy-ins, rebuys and cash-outs are never '
+                'rewritten.',
                 style: const TextStyle(
                     fontSize: 11, color: AppColors.textSecondary),
               ),
@@ -377,9 +488,20 @@ Future<void> showMovePlayerSheet(BuildContext context, Player player) {
                   onTap: free == null
                       ? null
                       : () async {
+                          // Ask how much money travels with the player
+                          // BEFORE moving them. Cancelling here aborts
+                          // the whole move, so a banker can never move a
+                          // player and then abandon the accounting.
+                          final amount = await _askTransferAmount(
+                            ctx,
+                            player: player,
+                            from: currentTable,
+                            to: t,
+                          );
+                          if (amount == null) return;
                           try {
                             await provider.movePlayerToTable(player, t.id,
-                                seat: free);
+                                seat: free, amount: amount);
                             if (ctx.mounted) Navigator.pop(ctx);
                           } catch (e) {
                             if (ctx.mounted) {

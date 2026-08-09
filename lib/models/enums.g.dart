@@ -59,6 +59,10 @@ class TransactionTypeAdapter extends TypeAdapter<TransactionType> {
         return TransactionType.rakeCollection;
       case 4:
         return TransactionType.cashDrop;
+      case 5:
+        return TransactionType.transferOut;
+      case 6:
+        return TransactionType.transferIn;
       default:
         return TransactionType.buyIn;
     }
@@ -81,6 +85,12 @@ class TransactionTypeAdapter extends TypeAdapter<TransactionType> {
         break;
       case TransactionType.cashDrop:
         writer.writeByte(4);
+        break;
+      case TransactionType.transferOut:
+        writer.writeByte(5);
+        break;
+      case TransactionType.transferIn:
+        writer.writeByte(6);
         break;
     }
   }

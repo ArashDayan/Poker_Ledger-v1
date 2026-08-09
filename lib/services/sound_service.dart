@@ -160,6 +160,9 @@ class AppSounds {
         return SoundEffect.rake;
       case TransactionType.cashDrop:
         return SoundEffect.cashDrop;
+      case TransactionType.transferOut:
+      case TransactionType.transferIn:
+        return SoundEffect.addPlayer;
     }
   }
 

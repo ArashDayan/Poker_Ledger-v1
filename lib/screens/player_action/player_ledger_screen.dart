@@ -441,6 +441,12 @@ class PlayerLedgerScreen extends StatelessWidget {
         return AppColors.gold;
       case TransactionType.cashDrop:
         return AppColors.textSecondary;
+      // A table move is not a win or a loss for the player — it is the
+      // same money in a different seat — so it is deliberately neutral
+      // rather than green/red.
+      case TransactionType.transferOut:
+      case TransactionType.transferIn:
+        return AppColors.textSecondary;
     }
   }
 }

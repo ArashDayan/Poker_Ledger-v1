@@ -7,20 +7,42 @@ const _uuid = Uuid();
 
 /// Aggregate totals for the whole chip bank.
 class ChipBankSummary {
-  /// Sum of value x quantity across every chip type.
+  /// Value of the chips physically IN THE BANK right now.
+  ///
+  /// Derived: starting inventory plus everything returned, minus
+  /// everything handed out. This is what the banker sees on the Chip
+  /// Bank screen, so it has to move the moment chips leave or come back.
   final double totalValue;
 
-  /// Total number of physical chips owned.
+  /// Number of chips physically in the Bank right now.
   final int totalChips;
 
   /// How many distinct denominations are defined.
   final int typeCount;
 
+  /// The Bank's starting inventory value, before any movement. Kept
+  /// alongside the live figure so the screen can show both, and so the
+  /// low-inventory thresholds have a stable baseline to measure against.
+  final double startingValue;
+
+  /// Chips owned in total, ignoring movements.
+  final int startingChips;
+
   const ChipBankSummary({
     required this.totalValue,
     required this.totalChips,
     required this.typeCount,
+    this.startingValue = 0,
+    this.startingChips = 0,
   });
+
+  /// Value currently out of the Bank — with players or on tables.
+  double get outValue => startingValue - totalValue;
+
+  /// Fraction of the starting inventory still in the Bank, or null when
+  /// no inventory has been configured.
+  double? get remainingFraction =>
+      startingValue <= 0 ? null : totalValue / startingValue;
 
   static const empty =
       ChipBankSummary(totalValue: 0, totalChips: 0, typeCount: 0);
@@ -146,22 +168,61 @@ class ChipBankService {
   static Future<void> clearAll() => HiveService.chips.clear();
 
   /// Totals across the whole bank.
+  /// Totals for the bank.
+  ///
+  /// [ChipBankSummary.totalValue] is LIVE — it folds the movement log so
+  /// handing chips to a player lowers it immediately. [ChipType.quantity]
+  /// stays the untouched STARTING count; deducting from it as well would
+  /// double-count, because quantityAt() already starts from it.
+  ///
+  /// The live figure is resolved through a callback so this service does
+  /// not import the tracking service (which imports this one).
   static ChipBankSummary summary() {
     final chips = _all;
     if (chips.isEmpty) return ChipBankSummary.empty;
 
-    var totalValue = 0.0;
-    var totalChips = 0;
+    var startingValue = 0.0;
+    var startingChips = 0;
     for (final c in chips) {
-      totalValue += c.totalValue;
-      totalChips += c.quantity;
+      startingValue += c.totalValue;
+      startingChips += c.quantity;
+    }
+
+    final resolver = liveQuantityResolver;
+    if (resolver == null) {
+      // No resolver installed (e.g. a unit test touching only the bank):
+      // fall back to the starting counts rather than reporting zero.
+      return ChipBankSummary(
+        totalValue: startingValue,
+        totalChips: startingChips,
+        typeCount: chips.length,
+        startingValue: startingValue,
+        startingChips: startingChips,
+      );
+    }
+
+    var liveValue = 0.0;
+    var liveChips = 0;
+    for (final c in chips) {
+      final q = resolver(c.id);
+      liveValue += c.value * q;
+      liveChips += q;
     }
     return ChipBankSummary(
-      totalValue: totalValue,
-      totalChips: totalChips,
+      totalValue: liveValue,
+      totalChips: liveChips,
       typeCount: chips.length,
+      startingValue: startingValue,
+      startingChips: startingChips,
     );
   }
+
+  /// Supplies the live in-bank quantity for a chip type.
+  ///
+  /// Injected by ChipTrackingService at startup. This indirection exists
+  /// purely to avoid a circular import: the tracking service already
+  /// depends on this one for the baseline count.
+  static int Function(String chipTypeId)? liveQuantityResolver;
 
   // -----------------------------------------------------------------
   // FUTURE SESSION / TABLE INTEGRATION

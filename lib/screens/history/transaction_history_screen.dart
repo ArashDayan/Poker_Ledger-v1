@@ -10,6 +10,8 @@ import '../../models/player.dart';
 import '../../models/transaction.dart';
 import '../../providers/session_provider.dart';
 import '../../services/session_service.dart';
+import '../../widgets/chip_composition_editor.dart';
+import '../../widgets/chip_flow.dart';
 import '../../widgets/confirm_action_dialog.dart';
 import '../../widgets/signature_compare_sheet.dart';
 import '../../widgets/signature_pad.dart';
@@ -48,6 +50,10 @@ class _HistoryTabState extends State<HistoryTab> {
         return Icons.percent;
       case TransactionType.cashDrop:
         return Icons.lock_outline;
+      case TransactionType.transferOut:
+        return Icons.logout;
+      case TransactionType.transferIn:
+        return Icons.login;
     }
   }
 
@@ -160,6 +166,24 @@ class _HistoryTabState extends State<HistoryTab> {
     if (confirmed == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr('transaction_updated'))));
     }
+  }
+
+  /// Opens the physical chip breakdown for a money transaction.
+  ///
+  /// Entirely separate from [_editTransaction], which edits the MONEY.
+  /// This one cannot change the amount, and the money editor cannot
+  /// change the chips — keeping them apart means a banker correcting a
+  /// denomination can never accidentally move the ledger.
+  Future<void> _editChips(LedgerTransaction tx) async {
+    final session = context.read<SessionProvider>().current;
+    if (session == null) return;
+    await showChipCompositionEditor(
+      context,
+      transaction: tx,
+      currency: session.currency,
+      tableId: tx.tableId,
+    );
+    if (mounted) setState(() {});
   }
 
   Future<void> _voidOrRestore(LedgerTransaction tx) async {
@@ -424,6 +448,7 @@ class _HistoryTabState extends State<HistoryTab> {
                       playerName: playerName,
                       tableName: tableNameFor(tx),
                       onEdit: () => _editTransaction(tx, fmt),
+                      onEditChips: () => _editChips(tx),
                       onVoidOrRestore: () => _voidOrRestore(tx),
                       onDelete: () => _delete(tx),
                     );
@@ -459,6 +484,10 @@ class _TransactionTile extends StatelessWidget {
   /// session.
   final String? tableName;
   final VoidCallback onEdit;
+
+  /// Opens the chip-composition editor. Only offered for the transaction
+  /// types that physically move chips.
+  final VoidCallback onEditChips;
   final VoidCallback onVoidOrRestore;
   final VoidCallback onDelete;
 
@@ -471,6 +500,7 @@ class _TransactionTile extends StatelessWidget {
     required this.playerName,
     required this.tableName,
     required this.onEdit,
+    required this.onEditChips,
     required this.onVoidOrRestore,
     required this.onDelete,
   });
@@ -562,6 +592,7 @@ class _TransactionTile extends StatelessWidget {
                 onSelected: (v) {
                   if (v == 'verify') _showSignature(context);
                   if (v == 'edit') onEdit();
+                  if (v == 'chips') onEditChips();
                   if (v == 'void') onVoidOrRestore();
                   if (v == 'delete') onDelete();
                 },
@@ -570,6 +601,21 @@ class _TransactionTile extends StatelessWidget {
                     PopupMenuItem(
                         value: 'verify', child: Text(tr('verify_signature'))),
                   PopupMenuItem(value: 'edit', child: Text(tr('edit'))),
+                  // Cash drop never involves chips, so offering the
+                  // editor there would be a dead end.
+                  //
+                  // Hidden on a VOIDED row as well. A void has already
+                  // reversed every chip leg, so the editor would open
+                  // blank and then re-issue chips against a transaction
+                  // that has no money effect — leaving a player holding
+                  // chips for a buy-in that officially never happened,
+                  // and silently blocking a later Restore (which skips
+                  // when it finds movements already in force). Restore
+                  // it first, then correct the composition.
+                  if (ChipFlow.appliesTo(tx.type) && !tx.isVoided)
+                    PopupMenuItem(
+                        value: 'chips',
+                        child: Text(tr('edit_chip_composition'))),
                   PopupMenuItem(value: 'void', child: Text(tx.isVoided ? 'Restore' : 'Void')),
                   PopupMenuItem(value: 'delete', child: Text(tr('delete_permanently'))),
                 ],

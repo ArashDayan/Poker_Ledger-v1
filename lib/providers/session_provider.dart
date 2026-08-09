@@ -7,6 +7,7 @@ import '../models/session.dart';
 import '../models/transaction.dart';
 import '../services/hive_service.dart';
 import '../services/session_service.dart';
+import '../services/chip_tracking_service.dart';
 import '../services/table_service.dart';
 import '../services/tournament_service.dart';
 
@@ -327,11 +328,14 @@ class SessionProvider extends ChangeNotifier {
 
   /// Moves a player between tables. Seating only — their transactions and
   /// the session balance are untouched.
+  /// Moves a player to another table, carrying [amount] of money with
+  /// them. See [TableService.movePlayer] for the accounting model.
   Future<void> movePlayerToTable(Player player, String tableId,
-      {int? seat}) async {
+      {int? seat, double? amount}) async {
     if (_current == null) return;
     await TableService.materialise(_current!);
-    await TableService.movePlayer(_current!, player, tableId, seat: seat);
+    await TableService.movePlayer(_current!, player, tableId,
+        seat: seat, amount: amount);
     notifyListeners();
   }
 
@@ -795,6 +799,26 @@ class SessionProvider extends ChangeNotifier {
     final voided = SessionService.undoLast(_current!.id);
     if (voided != null) {
       _redoStack.add(voided.id);
+      // Undo is a void by another name — the chips must come back too.
+      //
+      // This method is deliberately synchronous: callers use its return
+      // value to name the transaction they just undid. The chip reversal
+      // is asynchronous, so it is sequenced with `then` rather than
+      // dropped — notifying again on completion means the Bank figure
+      // refreshes once the movements are actually on disk, instead of
+      // the UI reading a half-written ledger. Errors are surfaced in
+      // debug rather than silently swallowed; the money undo has already
+      // succeeded by this point and is never rolled back by a chip
+      // failure.
+      // `ignore: discarded_futures` is not used: the future IS handled,
+      // just not awaited. Written with unawaited-style chaining that
+      // needs no extra import for the movement type.
+      ChipTrackingService.reverseForTransaction(voided.id, note: 'undo')
+          .then(
+        (_) => notifyListeners(),
+        onError: (Object e) => debugPrint(
+            'Chip reversal failed for undo of ${voided.id}: $e'),
+      );
       notifyListeners();
     }
     return voided;
@@ -804,6 +828,8 @@ class SessionProvider extends ChangeNotifier {
     if (_current == null || _redoStack.isEmpty) return;
     final id = _redoStack.removeLast();
     await SessionService.redo(_current!.id, id);
+    // Redo un-voids, so the chips it took back must go out again.
+    await ChipTrackingService.reapplyForTransaction(id);
     notifyListeners();
   }
 
@@ -841,18 +867,34 @@ class SessionProvider extends ChangeNotifier {
     return tx;
   }
 
+  /// Voids a transaction AND reverses its physical chip movements.
+  ///
+  /// Leaving the chips in place would make the Bank wrong: the money is
+  /// gone from the ledger but the chips would still read as handed out.
+  /// The reversal is appended, never deleted, so the history still shows
+  /// the original movement and the correction.
   Future<void> voidTransactionById(String transactionId) async {
     await SessionService.voidTransaction(transactionId);
+    await ChipTrackingService.reverseForTransaction(transactionId,
+        note: 'void');
     notifyListeners();
   }
 
+  /// Restores a voided transaction and re-applies the exact chip
+  /// composition that was reversed, denomination for denomination.
   Future<void> unvoidTransactionById(String transactionId) async {
     await SessionService.unvoidTransaction(transactionId);
+    await ChipTrackingService.reapplyForTransaction(transactionId);
     notifyListeners();
   }
 
+  /// Permanent removal. Unlike void this is not an audit event the
+  /// banker will revisit, so the chip records go with it rather than
+  /// leaving orphaned movements pointing at a transaction that no
+  /// longer exists.
   Future<void> deleteTransaction(String transactionId) async {
     await SessionService.deleteTransactionPermanently(transactionId);
+    await ChipTrackingService.deleteForTransaction(transactionId);
     notifyListeners();
   }
 

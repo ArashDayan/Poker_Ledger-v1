@@ -9,6 +9,7 @@ import '../../providers/session_provider.dart';
 import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/table_service.dart';
+import '../../widgets/chip_flow.dart';
 import '../../widgets/quick_rake_sheet.dart';
 import '../../widgets/quick_transaction_sheet.dart';
 
@@ -112,13 +113,26 @@ class TransactionsTab extends StatelessWidget {
     );
     if (result == null || !context.mounted) return;
 
+    final dist = ChipFlow.appliesTo(type)
+        ? await ChipFlow.ask(context,
+            amount: result.amount, currency: session.currency)
+        : null;
+    if (!context.mounted) return;
     try {
-      await provider.recordTransaction(
+      final tx = await provider.recordTransaction(
         playerId: player.id,
         type: type,
         amount: result.amount,
         hostSignatureBase64: result.signature ?? '',
       );
+      if (context.mounted) {
+        await ChipFlow.apply(context,
+            distribution: dist,
+            type: type,
+            sessionId: session.id,
+            transactionId: tx.id,
+            playerId: player.id);
+      }
       AppSounds.play(AppSounds.forTransaction(type));
     } catch (e) {
       if (context.mounted) {

@@ -6,12 +6,16 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
 import '../../models/session.dart';
+import '../../providers/chip_bank_provider.dart';
 import '../../providers/session_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/hive_service.dart';
 import '../../services/sound_service.dart';
+import '../../widgets/chip_exchange_sheet.dart';
+import '../../widgets/chip_transfer_sheet.dart';
 import '../../widgets/poker_chip_logo.dart';
 import '../../widgets/table_selector_bar.dart';
+import '../chip_bank/session_reconciliation_screen.dart';
 import '../dashboard/dashboard_tab.dart';
 import '../history/transaction_history_screen.dart';
 import '../house_rules/house_rules_screen.dart';
@@ -75,6 +79,11 @@ class _SessionShellScreenState extends State<SessionShellScreen> {
       // one finishing never affects another's clock.
       final tableNotice = provider.consumeTableTimerNotice();
       if (tableNotice != null) _showTableTimerNotice(tableNotice);
+      // Low chip inventory. Polled on the same tick rather than pushed
+      // from the chip provider so a chip write can never trigger a
+      // rebuild of the money ledger — the two stay fully decoupled.
+      final chipAlert = context.read<ChipBankProvider>().consumeAlert();
+      if (chipAlert != null) _showChipBankAlert(chipAlert);
     });
   }
 
@@ -172,6 +181,91 @@ class _SessionShellScreenState extends State<SessionShellScreen> {
           onPressed: () => _goTo(_tableIndex),
         ),
       ),
+    );
+  }
+
+  /// Low chip inventory in the Bank.
+  ///
+  /// NOT SPAMMED, AND CORRECTLY RE-ARMED
+  /// [ChipBankProvider.consumeAlert] returns each threshold crossing at
+  /// most once and persists the fired flag, so the banker is told once
+  /// per crossing even across an app restart. If inventory recovers back
+  /// above the threshold the flag resets, so a later crossing alerts
+  /// again. All of that logic lives in the provider; this method only
+  /// renders whatever it is handed.
+  ///
+  /// Deliberately a snackbar, never a dialog: a chip warning must not
+  /// land on top of a buy-in the banker is mid-way through recording.
+  void _showChipBankAlert(ChipBankAlert alert) {
+    if (!mounted) return;
+    final critical = alert == ChipBankAlert.critical;
+    AppSounds.playWithHaptic(SoundEffect.rake);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: Duration(seconds: critical ? 10 : 6),
+        backgroundColor: critical ? AppColors.danger : AppColors.warning,
+        content: Row(
+          children: [
+            Icon(
+              critical
+                  ? Icons.warning_amber_rounded
+                  : Icons.info_outline,
+              color: Colors.black,
+              size: 20,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                critical
+                    ? tr('chip_bank_critical_alert')
+                    : tr('chip_bank_low_alert'),
+                style: const TextStyle(
+                    color: Colors.black, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        action: SnackBarAction(
+          label: tr('view'),
+          textColor: Colors.black,
+          onPressed: () => _openReconciliation(),
+        ),
+      ),
+    );
+  }
+
+  void _openReconciliation() {
+    final session = context.read<SessionProvider>().current;
+    if (session == null) return;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => SessionReconciliationScreen(
+        sessionId: session.id,
+        currency: session.currency,
+      ),
+    ));
+  }
+
+  Future<void> _openExchange() async {
+    final provider = context.read<SessionProvider>();
+    final session = provider.current;
+    if (session == null) return;
+    await showChipExchangeSheet(
+      context,
+      players: provider.players,
+      currency: session.currency,
+      sessionId: session.id,
+    );
+  }
+
+  Future<void> _openTransfer() async {
+    final provider = context.read<SessionProvider>();
+    final session = provider.current;
+    if (session == null) return;
+    await showChipTransferSheet(
+      context,
+      players: provider.players,
+      currency: session.currency,
+      sessionId: session.id,
     );
   }
 
@@ -295,6 +389,15 @@ class _SessionShellScreenState extends State<SessionShellScreen> {
                 case 'tables':
                   showTableManagerSheet(context);
                   break;
+                case 'chip_exchange':
+                  _openExchange();
+                  break;
+                case 'chip_transfer':
+                  _openTransfer();
+                  break;
+                case 'chip_reconcile':
+                  _openReconciliation();
+                  break;
                 case 'house_rules':
                   Navigator.of(context)
                       .push(MaterialPageRoute(builder: (_) => const HouseRulesScreen()));
@@ -342,6 +445,33 @@ class _SessionShellScreenState extends State<SessionShellScreen> {
                   contentPadding: EdgeInsets.zero,
                 ),
               ),
+              PopupMenuItem(
+                value: 'chip_exchange',
+                enabled: provider.players.isNotEmpty,
+                child: ListTile(
+                  leading: const Icon(Icons.swap_horiz),
+                  title: Text(tr('chip_exchange')),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'chip_transfer',
+                enabled: provider.players.length > 1,
+                child: ListTile(
+                  leading: const Icon(Icons.swap_calls),
+                  title: Text(tr('player_chip_transfer')),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'chip_reconcile',
+                child: ListTile(
+                  leading: const Icon(Icons.fact_check_outlined),
+                  title: Text(tr('session_chip_reconciliation')),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              const PopupMenuDivider(),
               PopupMenuItem(
                 value: 'house_rules',
                 child: ListTile(

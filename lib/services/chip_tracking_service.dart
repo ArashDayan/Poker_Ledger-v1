@@ -47,6 +47,75 @@ class ChipHolding {
       stacks.where((s) => s.quantity != 0).toList();
 }
 
+/// Whole-session physical chip reconciliation.
+///
+/// The identity being checked:
+///   starting bank = current bank + with players + on tables + removed
+///
+/// Every chip that left the Bank must be somewhere. [discrepancy] is the
+/// part that is NOT explained by any known location — which means a real
+/// movement was never written down. It is reported, never auto-corrected:
+/// silently inventing chips to force a zero would destroy the only signal
+/// the banker has.
+class ChipReconciliation {
+  final double startingBankValue;
+
+  /// What the log says should be in the Bank.
+  final double currentBankValue;
+
+  /// What the banker actually counted in the case, when they counted.
+  /// Null means not verified this session.
+  final double? countedBankValue;
+
+  final double withPlayers;
+  final double onTables;
+  final double removed;
+  final double rakeReturnedToBank;
+
+  const ChipReconciliation({
+    required this.startingBankValue,
+    required this.currentBankValue,
+    required this.withPlayers,
+    required this.onTables,
+    required this.removed,
+    required this.rakeReturnedToBank,
+    this.countedBankValue,
+  });
+
+  /// Physical chip value across every known location, per the log.
+  double get totalAccountedFor =>
+      currentBankValue + withPlayers + onTables + removed;
+
+  /// True once the banker has physically counted the case.
+  bool get wasVerified => countedBankValue != null;
+
+  /// Unexplained value: what the log expects in the Bank minus what is
+  /// actually there. Positive means chips are missing.
+  ///
+  /// IMPORTANT — why this needs a physical count.
+  /// `totalAccountedFor` is derived from the same baseline as
+  /// [startingBankValue], so subtracting one from the other is an
+  /// identity that is always zero. It would report "balanced" even after
+  /// a genuine loss. Only comparing the derived expectation against a
+  /// real count can detect a movement nobody wrote down.
+  ///
+  /// Without a count this returns 0 and [wasVerified] is false — the
+  /// report says where everything is, but claims nothing it cannot know.
+  double get discrepancy =>
+      countedBankValue == null ? 0 : currentBankValue - countedBankValue!;
+
+  /// Tolerance absorbs floating-point noise only, never a real chip.
+  bool get balances => discrepancy.abs() < 0.005;
+
+  /// Chip value currently out of the Bank and in play.
+  double get inPlay => withPlayers + onTables;
+
+  /// The money-side identity the banker checks at close:
+  /// chips issued out should equal chips still in play plus chips
+  /// returned. Descriptive only; never feeds settlement.
+  double get issuedOut => startingBankValue - currentBankValue + rakeReturnedToBank;
+}
+
 /// One line of the reconciliation report, for a single denomination.
 ///
 /// HOW A DISCREPANCY CAN ARISE — worth being precise about.
@@ -164,6 +233,17 @@ class ChipAuditReport {
 /// decorative.
 class ChipTrackingService {
   ChipTrackingService._();
+
+  /// Teaches ChipBankService how to read the LIVE in-bank quantity.
+  ///
+  /// Called once from HiveService.init(), and idempotent so tests that
+  /// re-open boxes can call it again safely. Without it the Chip Bank
+  /// screen would keep showing the starting inventory instead of what is
+  /// actually left in the case.
+  static void installBankResolver() {
+    ChipBankService.liveQuantityResolver =
+        (chipTypeId) => quantityAt(ChipLocation.bank, chipTypeId);
+  }
 
   static List<ChipMovement> get _all => HiveService.chipMovements.values.toList();
 
@@ -289,6 +369,227 @@ class ChipTrackingService {
       await HiveService.chipMovements.delete(id);
     }
     return ids.length;
+  }
+
+  // -----------------------------------------------------------------
+  // Reversal, edit, exchange, transfer
+  //
+  // All of these are expressed as ORDINARY movements appended to the log.
+  // Nothing is ever mutated or deleted, so the audit trail stays intact
+  // and every derived balance keeps folding the same records.
+  // -----------------------------------------------------------------
+
+  /// Movements belonging to one money transaction that are still in
+  /// force — i.e. the originals minus anything already reversed.
+  ///
+  /// Reversals are matched by count per (chipType, from, to) triple, so
+  /// reversing twice cannot double-count and a partially-reversed
+  /// transaction still reports the remainder correctly.
+  static List<ChipMovement> activeMovementsForTransaction(
+      String transactionId) {
+    final all = _all.where((m) => m.transactionId == transactionId).toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+    // Count reversal legs by their (chipType, direction) signature.
+    final reversedCounts = <String, int>{};
+    for (final m in all) {
+      if (m.reasonEnum != ChipMovementReason.reversal) continue;
+      // A reversal runs opposite to the movement it undoes.
+      final key = '${m.chipTypeId}|${m.toLocation}|${m.fromLocation}';
+      reversedCounts[key] = (reversedCounts[key] ?? 0) + m.quantity;
+    }
+
+    final active = <ChipMovement>[];
+    for (final m in all) {
+      if (m.reasonEnum == ChipMovementReason.reversal) continue;
+      final key = '${m.chipTypeId}|${m.fromLocation}|${m.toLocation}';
+      final cancelled = reversedCounts[key] ?? 0;
+      if (cancelled >= m.quantity) {
+        reversedCounts[key] = cancelled - m.quantity;
+        continue;
+      }
+      if (cancelled > 0) reversedCounts[key] = 0;
+      active.add(m);
+    }
+    return active;
+  }
+
+  /// True when a transaction still has chip movements in force.
+  static bool hasActiveChips(String transactionId) =>
+      activeMovementsForTransaction(transactionId).isNotEmpty;
+
+  /// Appends compensating movements that undo everything currently in
+  /// force for [transactionId].
+  ///
+  /// Used by void/undo and as the first half of an edit. Deliberately
+  /// additive: the original records stay visible in the movement history
+  /// so the banker can see what happened and why it was undone.
+  ///
+  /// Safe to call twice — the second call finds nothing active and does
+  /// nothing.
+  static Future<List<ChipMovement>> reverseForTransaction(
+    String transactionId, {
+    String? note,
+  }) async {
+    final active = activeMovementsForTransaction(transactionId);
+    final made = <ChipMovement>[];
+    for (final m in active) {
+      made.add(await record(
+        chipTypeId: m.chipTypeId,
+        quantity: m.quantity,
+        // Swapped: this is the mirror image of the original.
+        from: m.to,
+        to: m.from,
+        reason: ChipMovementReason.reversal,
+        sessionId: m.sessionId,
+        transactionId: transactionId,
+        note: note,
+        chipValueOverride: m.chipValue,
+      ));
+    }
+    return made;
+  }
+
+  /// Replaces a transaction's chip composition.
+  ///
+  /// Reverses whatever is currently in force, then applies the new
+  /// composition. The end state is mathematically identical to having
+  /// entered [distribution] in the first place, while the log still
+  /// shows the original, the correction, and the corrected values.
+  ///
+  /// [from]/[to] describe the direction of the CORRECTED movement (e.g.
+  /// bank -> player for a buy-in).
+  static Future<List<ChipMovement>> editDistribution({
+    required String transactionId,
+    required Map<String, int> distribution,
+    required ChipLocation from,
+    required ChipLocation to,
+    required ChipMovementReason reason,
+    String? sessionId,
+    String? note,
+  }) async {
+    await reverseForTransaction(transactionId, note: note ?? 'edit');
+    if (distribution.isEmpty) return const [];
+    return recordDistribution(
+      distribution: distribution,
+      from: from,
+      to: to,
+      reason: reason,
+      sessionId: sessionId,
+      transactionId: transactionId,
+      note: note,
+    );
+  }
+
+  /// Re-applies a previously reversed composition, for unvoid/redo.
+  ///
+  /// Rebuilds the distribution from the reversal legs so the restored
+  /// movement matches exactly what was undone, denomination for
+  /// denomination.
+  static Future<List<ChipMovement>> reapplyForTransaction(
+      String transactionId) async {
+    if (hasActiveChips(transactionId)) return const [];
+
+    final all = _all.where((m) => m.transactionId == transactionId).toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final originals =
+        all.where((m) => m.reasonEnum != ChipMovementReason.reversal).toList();
+    if (originals.isEmpty) return const [];
+
+    final made = <ChipMovement>[];
+    for (final m in originals) {
+      made.add(await record(
+        chipTypeId: m.chipTypeId,
+        quantity: m.quantity,
+        from: m.from,
+        to: m.to,
+        reason: m.reasonEnum,
+        sessionId: m.sessionId,
+        transactionId: transactionId,
+        note: 'restored',
+        chipValueOverride: m.chipValue,
+      ));
+    }
+    return made;
+  }
+
+  /// A denomination exchange: chips in from a player, different chips
+  /// out to them, at exactly equal value.
+  ///
+  /// Creates NO money transaction and cannot affect settlement. Both
+  /// legs share an `exchange:<uuid>` tag in [ChipMovement.note], which is
+  /// why no new Hive field is needed.
+  ///
+  /// Throws if the two sides are not exactly equal in value — unlike a
+  /// buy-in there is no money leg to fall back on, so an unbalanced
+  /// exchange would silently create or destroy chips.
+  static Future<List<ChipMovement>> recordExchange({
+    required ChipLocation counterparty,
+    required Map<String, int> chipsIn,
+    required Map<String, int> chipsOut,
+    String? sessionId,
+    ChipLocation? bank,
+  }) async {
+    final valueIn = valueOf(chipsIn);
+    final valueOut = valueOf(chipsOut);
+    if ((valueIn - valueOut).abs() > 0.005) {
+      throw ArgumentError(
+        'Exchange must balance: received $valueIn, given $valueOut',
+      );
+    }
+    if (valueIn == 0) {
+      throw ArgumentError('Exchange cannot be empty');
+    }
+
+    final target = bank ?? ChipLocation.bank;
+    final tag = 'exchange:${_uuid.v4()}';
+    final made = <ChipMovement>[];
+
+    // Leg 1: the denominations the player hands over.
+    made.addAll(await recordDistribution(
+      distribution: chipsIn,
+      from: counterparty,
+      to: target,
+      reason: ChipMovementReason.exchange,
+      sessionId: sessionId,
+      note: tag,
+    ));
+    // Leg 2: the denominations they get back.
+    made.addAll(await recordDistribution(
+      distribution: chipsOut,
+      from: target,
+      to: counterparty,
+      reason: ChipMovementReason.exchange,
+      sessionId: sessionId,
+      note: tag,
+    ));
+    return made;
+  }
+
+  /// Physical chips moving straight from one player to another — a pot
+  /// being pushed, or settling up between themselves.
+  ///
+  /// The Bank is not involved, so bank inventory is unchanged; only the
+  /// two players' derived holdings move. No money transaction is created,
+  /// because no money changed hands.
+  static Future<List<ChipMovement>> recordPlayerTransfer({
+    required String fromPlayerId,
+    required String toPlayerId,
+    required Map<String, int> distribution,
+    String? sessionId,
+    String? note,
+  }) async {
+    if (fromPlayerId == toPlayerId) {
+      throw ArgumentError('Cannot transfer chips to the same player');
+    }
+    return recordDistribution(
+      distribution: distribution,
+      from: ChipLocation.player(fromPlayerId),
+      to: ChipLocation.player(toPlayerId),
+      reason: ChipMovementReason.transfer,
+      sessionId: sessionId,
+      note: note,
+    );
   }
 
   // -----------------------------------------------------------------
@@ -480,6 +781,102 @@ class ChipTrackingService {
       }
     }
     return ids;
+  }
+
+  // -----------------------------------------------------------------
+  // Bank inventory + session reconciliation
+  // -----------------------------------------------------------------
+
+  /// The Bank's STARTING inventory value — the physical count the banker
+  /// entered on the Chip Bank screen, before any movement.
+  ///
+  /// This is the baseline the low-inventory thresholds are measured
+  /// against. It deliberately ignores movements.
+  static double startingBankValue() {
+    var total = 0.0;
+    for (final c in ChipBankService.allChips()) {
+      total += c.value * c.quantity;
+    }
+    return total;
+  }
+
+  /// The Bank's CURRENT chip value: starting inventory plus everything
+  /// that has come back, minus everything handed out.
+  ///
+  /// Derived from the movement log every time. There is deliberately no
+  /// stored "current quantity" counter anywhere — a second copy could
+  /// drift away from the log, and then neither number could be trusted.
+  static double currentBankValue() {
+    var total = 0.0;
+    for (final c in ChipBankService.allChips()) {
+      total += c.value * quantityAt(ChipLocation.bank, c.id);
+    }
+    return total;
+  }
+
+  /// Fraction of the starting inventory still in the Bank, 0..1.
+  /// Returns null when no inventory has been set up, so callers can tell
+  /// "nothing configured" apart from "everything gone".
+  static double? bankRemainingFraction() {
+    final start = startingBankValue();
+    if (start <= 0) return null;
+    return currentBankValue() / start;
+  }
+
+  /// Whole-session physical chip reconciliation.
+  ///
+  /// Answers the only question that matters at close: is every chip that
+  /// ever existed still accounted for somewhere?
+  /// [physicalCount] maps chipTypeId to the number the banker just
+  /// counted in the case. Supplying it is what turns this from a summary
+  /// into a real reconciliation — see [ChipReconciliation.discrepancy].
+  static ChipReconciliation reconcile({
+    String? sessionId,
+    Map<String, int>? physicalCount,
+  }) {
+    final starting = startingBankValue();
+    final inBank = currentBankValue();
+
+    var withPlayers = 0.0;
+    for (final h in allPlayerHoldings(sessionId: sessionId).values) {
+      withPlayers += h.totalValue;
+    }
+    var onTables = 0.0;
+    for (final h in allTableHoldings(sessionId: sessionId).values) {
+      onTables += h.totalValue;
+    }
+    final removed = removedHolding(sessionId: sessionId).totalValue;
+
+    // Rake is money-neutral here: it is counted as part of the Bank
+    // because that is where the physical chips now sit.
+    var rakeToBank = 0.0;
+    for (final m in _all) {
+      if (sessionId != null && m.sessionId != sessionId) continue;
+      if (m.reasonEnum != ChipMovementReason.rake) continue;
+      if (m.to.isBank) rakeToBank += m.totalValue;
+      if (m.from.isBank) rakeToBank -= m.totalValue;
+    }
+
+    double? counted;
+    if (physicalCount != null && physicalCount.isNotEmpty) {
+      counted = 0;
+      for (final c in ChipBankService.allChips()) {
+        final q = physicalCount[c.id];
+        // Uncounted denominations fall back to the derived figure, so a
+        // partial count only flags what was actually checked.
+        counted = counted! + c.value * (q ?? quantityAt(ChipLocation.bank, c.id));
+      }
+    }
+
+    return ChipReconciliation(
+      startingBankValue: starting,
+      currentBankValue: inBank,
+      countedBankValue: counted,
+      withPlayers: withPlayers,
+      onTables: onTables,
+      removed: removed,
+      rakeReturnedToBank: rakeToBank,
+    );
   }
 
   // -----------------------------------------------------------------
