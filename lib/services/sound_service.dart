@@ -2,6 +2,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../core/localization/app_localizations.dart';
 import '../models/enums.dart';
 import 'hive_service.dart';
 
@@ -22,6 +23,9 @@ class ChipSample {
   /// pubspec already declares. Do NOT prefix with `assets/`.
   final String asset;
 
+  /// English fallback title. The UI shows [localizedTitle] instead; this
+  /// stays in place so the const list, its ids and any non-UI consumer
+  /// keep working unchanged.
   final String title;
   final String description;
   final double duration;
@@ -33,6 +37,13 @@ class ChipSample {
     required this.description,
     required this.duration,
   });
+
+  /// Localized display strings, keyed off the stable [id].
+  ///
+  /// Display-only: [id], [asset] and [duration] are untouched, so the
+  /// persisted selection and the audio playback path cannot change.
+  String get localizedTitle => tr('sound_${id}_title');
+  String get localizedDescription => tr('sound_${id}_desc');
 }
 
 /// Chip variations split out of the supplied master recording, shortest
@@ -163,6 +174,8 @@ class AppSounds {
       case TransactionType.transferOut:
       case TransactionType.transferIn:
         return SoundEffect.addPlayer;
+      case TransactionType.dealerTips:
+        return SoundEffect.rake;
     }
   }
 

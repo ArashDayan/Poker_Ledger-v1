@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/localization/app_localizations.dart';
+import '../../core/localization/enum_labels.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
@@ -42,7 +43,7 @@ class TransactionsTab extends StatelessWidget {
               child: Text(tr('choose_player'), style: TextStyle(fontWeight: FontWeight.bold)),
             ),
             ...players.map((p) => ListTile(
-                  title: Text('Seat ${p.seatNumber} · ${p.name}'),
+                  title: Text('${tr('seat')} ${p.seatNumber} · ${p.name}'),
                   subtitle: showTable
                       // tableById() resolves a null tableId to the first
                       // table, which is exactly how playersAt() treats
@@ -87,8 +88,7 @@ class TransactionsTab extends StatelessWidget {
           context: context,
           builder: (ctx) => AlertDialog(
             title: Text(tr('house_rule_notice')),
-            content: Text('${player.name} is not eligible for another rebuy at level '
-                '${session.currentLevel} under the current house rules.'),
+            content: Text(tr('rebuy_not_eligible_note')),
             actions: [
               TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('cancel'))),
               ElevatedButton(
@@ -104,7 +104,7 @@ class TransactionsTab extends StatelessWidget {
     final lastAmount = provider.lastAmountFor(player.id, type);
     final result = await showQuickTransactionSheet(
       context,
-      title: '${type.label} · ${player.name}',
+      title: '${type.localizedLabel} · ${player.name}',
       type: type,
       initialAmount: lastAmount,
       formatter: fmt,
@@ -145,6 +145,68 @@ class TransactionsTab extends StatelessWidget {
   Future<void> _collectRake(BuildContext context) =>
       showQuickRakeSheet(context);
 
+  /// Dealer tips — chips taken off the table for the dealer.
+  ///
+  /// Deliberately modelled on the rake flow rather than a new mechanism:
+  /// the amount is entered, the physical denominations are chosen, the
+  /// money row is written, and the chips move table -> Bank. The only
+  /// difference from rake is the transaction type, which is what keeps
+  /// the money out of Host Profit.
+  ///
+  /// The chip step is asked BEFORE the money is written, so cancelling
+  /// the denomination sheet cancels the whole action rather than leaving
+  /// a money row with no chips behind it.
+  Future<void> _dealerTips(BuildContext context) async {
+    final provider = context.read<SessionProvider>();
+    final session = provider.current!;
+    final fmt = CurrencyFormatter(session.currency);
+
+    final result = await showQuickTransactionSheet(
+      context,
+      title: tr('dealer_tips'),
+      type: TransactionType.dealerTips,
+      formatter: fmt,
+      sessionId: session.id,
+    );
+    if (result == null || !context.mounted) return;
+
+    // Which table the chips physically came off. Table-level, like rake
+    // and cash drop — a tip belongs to the table, not to one player.
+    final tableId = provider.activeTableId;
+
+    final dist = await ChipFlow.ask(
+      context,
+      amount: result.amount,
+      currency: session.currency,
+    );
+    if (!context.mounted) return;
+
+    try {
+      final tx = await provider.recordTransaction(
+        type: TransactionType.dealerTips,
+        amount: result.amount,
+        hostSignatureBase64: result.signature ?? '',
+        tableId: tableId,
+      );
+      if (context.mounted) {
+        await ChipFlow.apply(
+          context,
+          distribution: dist,
+          type: TransactionType.dealerTips,
+          sessionId: session.id,
+          transactionId: tx.id,
+          tableId: tableId,
+        );
+      }
+      AppSounds.play(SoundEffect.rake);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
 
   Future<void> _cashDrop(BuildContext context) async {
     final provider = context.read<SessionProvider>();
@@ -152,7 +214,7 @@ class TransactionsTab extends StatelessWidget {
     final fmt = CurrencyFormatter(session.currency);
     final result = await showQuickTransactionSheet(
       context,
-      title: 'Cash Drop to Safe',
+      title: tr('cash_drop_to_safe'),
       type: TransactionType.cashDrop,
       formatter: fmt,
       sessionId: session.id,
@@ -201,21 +263,23 @@ class TransactionsTab extends StatelessWidget {
           crossAxisSpacing: 10,
           childAspectRatio: 2.4,
           children: [
-            _actionButton(context, 'Buy-in', Icons.add_card, AppColors.accentGreen,
+            _actionButton(context, tr('buy_in'), Icons.add_card, AppColors.accentGreen,
                 actionPlayers.isEmpty
                     ? null
                     : () => _playerTransaction(context, TransactionType.buyIn)),
-            _actionButton(context, 'Rebuy', Icons.refresh, AppColors.accentGreen,
+            _actionButton(context, tr('rebuy'), Icons.refresh, AppColors.accentGreen,
                 actionPlayers.isEmpty
                     ? null
                     : () => _playerTransaction(context, TransactionType.rebuy)),
-            _actionButton(context, 'Cash-out', Icons.logout, AppColors.danger,
+            _actionButton(context, tr('cash_out'), Icons.logout, AppColors.danger,
                 actionPlayers.isEmpty
                     ? null
                     : () => _playerTransaction(context, TransactionType.cashOut)),
-            _actionButton(context, 'Collect Rake', Icons.percent, AppColors.gold,
+            _actionButton(context, tr('collect_rake'), Icons.percent, AppColors.gold,
                 () => _collectRake(context)),
-            _actionButton(context, 'Cash Drop', Icons.lock_outline, AppColors.textSecondary,
+            _actionButton(context, tr('dealer_tips'), Icons.volunteer_activism,
+                AppColors.warning, () => _dealerTips(context)),
+            _actionButton(context, tr('cash_drop'), Icons.lock_outline, AppColors.textSecondary,
                 () => _cashDrop(context)),
           ],
         ),
@@ -243,7 +307,7 @@ class TransactionsTab extends StatelessWidget {
               child: Row(
                 children: [
                   Expanded(
-                    child: Text('${t.type.label} · $name',
+                    child: Text('${t.type.localizedLabel} · $name',
                         style: const TextStyle(fontSize: 13), overflow: TextOverflow.ellipsis),
                   ),
                   Text(

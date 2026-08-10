@@ -207,7 +207,7 @@ class _HouseRulesScreenState extends State<HouseRulesScreen> {
             for (final tier in _tiers)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Text('Under ${fmt.format(tier.upperBound)}  →  ${fmt.format(tier.rake)}',
+                child: Text('${tr('under')} ${fmt.format(tier.upperBound)}  →  ${fmt.format(tier.rake)}',
                     style: const TextStyle(fontSize: 13)),
               ),
             Padding(

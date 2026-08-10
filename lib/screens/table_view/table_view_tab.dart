@@ -1,4 +1,5 @@
 import '../../core/localization/app_localizations.dart';
+import '../../core/localization/enum_labels.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
@@ -40,8 +41,7 @@ class TableViewTab extends StatelessWidget {
           context: context,
           builder: (ctx) => AlertDialog(
             title: Text(tr('house_rule_notice')),
-            content: Text('${player.name} is not eligible for another rebuy at level '
-                '${session.currentLevel} under the current house rules.'),
+            content: Text(tr('rebuy_not_eligible_note')),
             actions: [
               TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('cancel'))),
               ElevatedButton(
@@ -57,7 +57,7 @@ class TableViewTab extends StatelessWidget {
     final lastAmount = provider.lastAmountFor(player.id, type);
     final result = await showQuickTransactionSheet(
       context,
-      title: '${type.label} · ${player.name}',
+      title: '${type.localizedLabel} · ${player.name}',
       type: type,
       initialAmount: lastAmount,
       formatter: fmt,
@@ -104,7 +104,7 @@ class TableViewTab extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.all(16),
-              child: Text('Seat ${player.seatNumber} · ${player.name}',
+              child: Text('${tr('seat')} ${player.seatNumber} · ${player.name}',
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             ),
             ListTile(

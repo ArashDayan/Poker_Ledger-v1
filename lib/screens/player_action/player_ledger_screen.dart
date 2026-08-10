@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/localization/enum_labels.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../models/session.dart';
@@ -316,7 +317,7 @@ class PlayerLedgerScreen extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            tx.type.label,
+                            tx.type.localizedLabel,
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 13.5,
@@ -447,6 +448,8 @@ class PlayerLedgerScreen extends StatelessWidget {
       case TransactionType.transferOut:
       case TransactionType.transferIn:
         return AppColors.textSecondary;
+      case TransactionType.dealerTips:
+        return AppColors.warning;
     }
   }
 }

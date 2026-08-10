@@ -123,7 +123,7 @@ class _ReportsHubScreenState extends State<ReportsHubScreen> {
                           child: Row(
                             children: [
                               Expanded(
-                                child: Text(m.label,
+                                child: Text(m.localizedLabel,
                                     style: const TextStyle(
                                         fontSize: 12.5,
                                         fontWeight: FontWeight.bold)),

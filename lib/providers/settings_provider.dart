@@ -11,6 +11,7 @@ class SettingsProvider extends ChangeNotifier {
   AppCurrency _defaultCurrency = AppCurrency.usd;
   String? _pinHash;
   bool _privacyMode = false;
+  bool _showCumulativeRake = true;
 
   SettingsProvider() {
     _load();
@@ -23,6 +24,7 @@ class SettingsProvider extends ChangeNotifier {
   /// Hides every money amount on screen. Display-only — the ledger,
   /// balance engine and exports are untouched.
   bool get privacyMode => _privacyMode;
+  bool get showCumulativeRake => _showCumulativeRake;
 
   /// Re-reads every preference from storage. Used after a backup
   /// restore, so language, currency, privacy mode and sound settings all
@@ -45,6 +47,9 @@ class SettingsProvider extends ChangeNotifier {
     // always-on gets it from launch.
     _privacyMode = box.get('privacy_mode', defaultValue: false) as bool;
     CurrencyFormatter.privacyMode = _privacyMode;
+    // Visible unless the banker previously chose to hide it.
+    _showCumulativeRake =
+        box.get('show_cumulative_rake', defaultValue: true) as bool;
     notifyListeners();
   }
 
@@ -76,6 +81,33 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> togglePrivacyMode() => setPrivacyMode(!_privacyMode);
+
+  /// Whether the Home screen's cumulative Total Rake figure is shown.
+  ///
+  /// A DISPLAY PREFERENCE ONLY. It never reaches the rake calculation —
+  /// `SessionService.hostProfit` remains the single source of truth and
+  /// is queried unchanged whether this is on or off. Hiding simply
+  /// swaps the rendered string for a mask.
+  ///
+  /// Separate from [privacyMode], which blanks every amount app-wide.
+  /// A banker may want the running house take off the home screen (it is
+  /// the one figure a guest is most likely to glance at) while still
+  /// reading normal amounts everywhere else.
+  ///
+  /// Defaults to true — visible — so behaviour is unchanged until the
+  /// banker opts out.
+  Future<void> setShowCumulativeRake(bool value) async {
+    _showCumulativeRake = value;
+    notifyListeners();
+    try {
+      await HiveService.settings.put('show_cumulative_rake', value);
+    } catch (_) {
+      // Best-effort persistence; the toggle still applies this session.
+    }
+  }
+
+  Future<void> toggleCumulativeRake() =>
+      setShowCumulativeRake(!_showCumulativeRake);
 
   String _hash(String pin) => sha256.convert(utf8.encode(pin)).toString();
 

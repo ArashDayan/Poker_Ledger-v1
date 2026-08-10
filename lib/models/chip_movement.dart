@@ -115,6 +115,13 @@ enum ChipMovementReason {
   /// Banker correcting a count, or writing off damaged chips.
   adjustment,
 
+  /// Chips taken off a table as a dealer tip and returned to the Bank.
+  ///
+  /// Physically identical to [rake] — chips move table/player -> bank —
+  /// but kept distinct so the audit log says WHY they moved, and so the
+  /// reconciliation can report tips separately from house income.
+  dealerTips,
+
   /// One leg of a denomination exchange. Both legs share an
   /// `exchange:<uuid>` tag in [ChipMovement.note] and carry equal total
   /// value, so an exchange nets to zero for both sides.

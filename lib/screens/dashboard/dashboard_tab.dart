@@ -84,8 +84,8 @@ class DashboardTab extends StatelessWidget {
                       : () async {
                           final confirmed = await confirmSensitiveAction(
                             ctx,
-                            title: 'End Session',
-                            message: 'This closes the session for further transactions. Continue?',
+                            title: tr('end_session'),
+                            message: tr('end_session_confirm_msg'),
                           );
                           if (!confirmed) return;
                           setSheetState(() => closing = true);
@@ -227,7 +227,7 @@ class DashboardTab extends StatelessWidget {
                   ),
                   Row(
                     children: [
-                      Text('Level ${session.currentLevel}',
+                      Text('${tr('level_label')} ${session.currentLevel}',
                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                       const SizedBox(width: 8),
                       InkWell(
@@ -388,15 +388,18 @@ class DashboardTab extends StatelessWidget {
               Row(
                 children: [
                   _miniStat('Rake', fmt.format(provider.totalRake), color: AppColors.gold),
+                  // Stated on its own line, next to Rake but never added
+                  // to it. Host Profit below is rake alone.
+                  _miniStat(tr('dealer_tips'), fmt.format(provider.totalDealerTips),
+                      color: AppColors.warning),
                   _miniStat('Host Profit', fmt.format(provider.hostProfit),
                       color: AppColors.accentGreen),
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: BalanceIndicator(result: balance, formatter: fmt),
-                    ),
-                  ),
                 ],
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: BalanceIndicator(result: balance, formatter: fmt),
               ),
             ],
           ),
@@ -445,7 +448,7 @@ class DashboardTab extends StatelessWidget {
         ],
         if (provider.totalCashDrop > 0) ...[
           const SizedBox(height: 6),
-          Text('Cash dropped to safe so far: ${fmt.format(provider.totalCashDrop)}',
+          Text('${tr('cash_dropped_so_far')}: ${fmt.format(provider.totalCashDrop)}',
               style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
         ],
         const SizedBox(height: 10),
@@ -581,16 +584,24 @@ class _TableFinancialCard extends StatelessWidget {
           Row(
             children: [
               _cell('Rake', fmt.format(summary.rake), color: AppColors.gold),
+              // Beside Rake, never inside it. Host Profit is rake alone.
+              _cell(tr('dealer_tips'), fmt.format(summary.dealerTips),
+                  color: AppColors.warning),
               _cell('Host Profit', fmt.format(summary.hostProfit),
                   color: AppColors.accentGreen),
-              // Third slot keeps the two rows on the same grid so the
-              // columns line up with the session summary above.
-              summary.cashDrop > 0
-                  ? _cell('Cash Drop', fmt.format(summary.cashDrop),
-                      color: AppColors.textSecondary)
-                  : const Expanded(child: SizedBox.shrink()),
             ],
           ),
+          if (summary.cashDrop > 0) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _cell(tr('cash_drop'), fmt.format(summary.cashDrop),
+                    color: AppColors.textSecondary),
+                const Expanded(child: SizedBox.shrink()),
+                const Expanded(child: SizedBox.shrink()),
+              ],
+            ),
+          ],
         ],
       ),
     );

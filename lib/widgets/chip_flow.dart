@@ -30,7 +30,10 @@ class ChipFlow {
       type == TransactionType.buyIn ||
       type == TransactionType.rebuy ||
       type == TransactionType.cashOut ||
-      type == TransactionType.rakeCollection;
+      type == TransactionType.rakeCollection ||
+      // Dealer tips physically leave the table for the Bank, exactly
+      // like rake, so they need the same denomination step.
+      type == TransactionType.dealerTips;
 
   /// Buy-ins and rebuys take chips OUT of the bank; cash-outs and rake
   /// bring them back IN.
@@ -45,6 +48,8 @@ class ChipFlow {
         return ChipMovementReason.cashOut;
       case TransactionType.rakeCollection:
         return ChipMovementReason.rake;
+      case TransactionType.dealerTips:
+        return ChipMovementReason.dealerTips;
       default:
         return ChipMovementReason.buyIn;
     }

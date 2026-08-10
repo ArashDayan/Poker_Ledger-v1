@@ -52,6 +52,19 @@ enum TransactionType {
   /// Always the mirror of a [transferOut] of the same amount.
   @HiveField(6)
   transferIn,
+
+  /// Chips taken off a table as a tip for the dealer.
+  ///
+  /// A REAL money-out flow, but NOT house income.
+  /// Like rake, these chips physically leave the table and go back to
+  /// the Bank, so the table's pot must fall by the amount. Unlike rake,
+  /// the money is owed to the dealer rather than kept by the host — so
+  /// it is deliberately its own type, never folded into
+  /// `rakeCollection`. That separation is what keeps
+  /// `hostProfit == totalRake` true: `hostProfit` sums one explicit
+  /// type, and this is not it.
+  @HiveField(7)
+  dealerTips,
 }
 
 @HiveType(typeId: 2)
@@ -130,6 +143,8 @@ extension TransactionTypeX on TransactionType {
         return 'Transfer Out';
       case TransactionType.transferIn:
         return 'Transfer In';
+      case TransactionType.dealerTips:
+        return 'Dealer Tips';
     }
   }
 
@@ -149,7 +164,8 @@ extension TransactionTypeX on TransactionType {
   bool get isOutflow =>
       this == TransactionType.cashOut ||
       this == TransactionType.cashDrop ||
-      this == TransactionType.transferOut;
+      this == TransactionType.transferOut ||
+      this == TransactionType.dealerTips;
 
   /// True for the two legs of a table-to-table move.
   ///

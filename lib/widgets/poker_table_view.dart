@@ -1,8 +1,13 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../core/theme/app_theme.dart';
+import '../models/enums.dart';
 import '../models/player.dart';
+import '../services/player_registry_service.dart';
 import '../services/table_service.dart';
+import 'player_type_badge.dart';
 
 /// Fixed seat anchors for the reference table photograph.
 ///
@@ -25,32 +30,69 @@ import '../services/table_service.dart';
 class TableAnchors {
   const TableAnchors._();
 
-  /// The source image is landscape 1536x1024; rotated a quarter turn for
-  /// portrait it is 1024x1536. Locking this ratio is what stops the
-  /// table stretching on different phones.
-  static const double aspectRatio = 1024 / 1536;
+  /// The asset is the table in its natural landscape orientation, with
+  /// the studio backdrop cut away and cropped to the table itself
+  /// (1501x812). It is drawn WITHOUT rotation, so the felt reads the
+  /// same way up as the physical table: dealer nearest the banker at the
+  /// bottom, seats climbing away around the rail.
+  ///
+  /// Locking this ratio is what stops the table stretching on different
+  /// phones — the box and the bitmap always agree.
+  static const double aspectRatio = 1501 / 812;
 
-  /// seat number -> (x, y) as a fraction of the rotated image.
+  /// seat number -> (x, y) as a fraction of the table image.
+  ///
+  /// Derived from the previously verified positions by a -90 degree
+  /// rotation ((x,y) -> (y, 1-x)) and then re-mapped onto the cropped
+  /// asset, so every pod still lands on the rail beside its own printed
+  /// number. Verified visually against the artwork.
   static const Map<int, Offset> seats = {
-    1: Offset(0.262, 0.290),
-    2: Offset(0.470, 0.080),
-    3: Offset(0.668, 0.084),
-    4: Offset(0.830, 0.212),
-    5: Offset(0.848, 0.382),
-    6: Offset(0.848, 0.616),
-    7: Offset(0.830, 0.788),
-    8: Offset(0.668, 0.916),
-    9: Offset(0.470, 0.920),
-    10: Offset(0.262, 0.710),
+    1: Offset(0.285, 0.785),
+    2: Offset(0.070, 0.523),
+    3: Offset(0.074, 0.273),
+    4: Offset(0.205, 0.069),
+    5: Offset(0.379, 0.046),
+    6: Offset(0.618, 0.046),
+    7: Offset(0.794, 0.069),
+    8: Offset(0.925, 0.273),
+    9: Offset(0.929, 0.523),
+    10: Offset(0.715, 0.785),
   };
 
-  /// The dealer's chip tray, on the LEFT in portrait.
-  static const Offset dealer = Offset(0.385, 0.500);
+  /// The dealer's chip tray, at the BOTTOM centre of the table.
+  static const Offset dealer = Offset(0.500, 0.630);
 
   /// Highest seat the artwork can show. A table configured for more than
   /// this still renders ten pods; nothing is invented beyond the felt.
   static const int maxSeats = 10;
+
+  /// Extreme anchor positions, used to work out how far the outermost
+  /// pods reach past the table box so the layout can reserve exactly
+  /// that much and no more.
+  ///
+  /// Hard-coded rather than folded over [seats] on every layout pass:
+  /// the map is `const`, so these can never drift out of step, and it
+  /// keeps a hot path allocation-free.
+  ///   x: seat 2 (0.070) .. seat 9 (0.929)
+  ///   y: seat 5/6 (0.046) .. seat 1/10 (0.785)
+  static const double minX = 0.070;
+  static const double maxX = 0.929;
+  static const double minY = 0.046;
+  static const double maxY = 0.785;
 }
+
+/// Height of the name plate that hangs beneath an occupied pod. The
+/// lowest seats need this much clearance or a player's name is clipped
+/// by the bottom of the widget.
+const double _plateHeight = 26.0;
+
+/// Pod diameter for a given table width.
+///
+/// Scales with the table so seats stay proportionate, but clamped: never
+/// so large it crowds the felt, never below the ~34px that keeps it a
+/// comfortable tap target on a small phone.
+double _seatSizeFor(double tableW) =>
+    (tableW * 0.135).clamp(34.0, 52.0);
 
 /// Everything one seat needs to render. Assembled by the caller so this
 /// widget stays free of business logic — it draws, it does not calculate.
@@ -135,42 +177,81 @@ class PokerTableView extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Fit the fixed-aspect table inside whatever space is available,
-        // leaving a margin for the pods that overhang the rail. The
-        // table's own proportions never change — only its scale — which
-        // is what keeps one geometry across every phone and seat count.
-        const overhang = 30.0;
-
+        // WIDTH-FIRST SIZING.
+        //
+        // The table is the whole point of this screen, so it takes as
+        // much width as the phone can give it. Vertical slack is left
+        // as empty space above and below rather than being used to
+        // shrink the table — a landscape table in a portrait window
+        // will always leave bands, and filling them would mean a
+        // smaller, harder-to-read table.
+        //
+        // The previous version reserved a flat 30px on every side for
+        // pods overhanging the rail. That was a guess, and on the
+        // horizontal axis it was simply wrong: seats 2/3 sit at x=0.070
+        // and 8/9 at x=0.929, so with a pod half-width of at most 26px
+        // they never reach the table's own left/right edges. The flat
+        // margin therefore threw away ~60px of width for nothing —
+        // about 16% of the table on a 393px screen.
+        //
+        // So the margins are now MEASURED from the real anchor extents
+        // and the real pod size, per axis, instead of assumed.
         final maxW = constraints.maxWidth;
         final maxH = constraints.maxHeight.isFinite
             ? constraints.maxHeight
             : maxW / TableAnchors.aspectRatio;
 
-        var tableW = maxW - overhang * 2;
-        var tableH = tableW / TableAnchors.aspectRatio;
-        if (tableH > maxH - overhang * 2) {
-          tableH = maxH - overhang * 2;
-          tableW = tableH * TableAnchors.aspectRatio;
-        }
-        tableW = tableW.clamp(80.0, double.infinity);
-        tableH = tableH.clamp(120.0, double.infinity);
+        // Breathing room so the widest pod never sits flush against the
+        // screen edge, even when the maths says it would just fit.
+        const edgeGuard = 4.0;
 
-        // Pods scale with the table so they stay proportionate, but are
-        // clamped so they never grow clumsy or shrink below a tappable
-        // target on a small screen.
-        final seatSize = (tableW * 0.135).clamp(34.0, 52.0);
+        // How far pods stick out past the table box, for a candidate
+        // width. Depends on the width itself (pods scale with it), so
+        // it is resolved by iteration below rather than in one pass.
+        ({double l, double r, double t, double b}) overhangFor(double w) {
+          final h = w / TableAnchors.aspectRatio;
+          final s = _seatSizeFor(w);
+          return (
+            l: math.max(0.0, s / 2 - TableAnchors.minX * w),
+            r: math.max(0.0, (TableAnchors.maxX * w + s / 2) - w),
+            t: math.max(0.0, s / 2 - TableAnchors.minY * h),
+            // The name plate hangs below the pod, so the lowest seats
+            // need room for it too or a player's name gets clipped.
+            b: math.max(
+                0.0, (TableAnchors.maxY * h + s / 2 + _plateHeight) - h),
+          );
+        }
+
+        // Start from the full width and give back only what the pods
+        // actually need. Two passes settle it: the first sizes the pods,
+        // the second accounts for the overhang they produce.
+        var tableW = maxW - edgeGuard * 2;
+        for (var i = 0; i < 3; i++) {
+          final o = overhangFor(tableW);
+          final fitW = maxW - o.l - o.r - edgeGuard * 2;
+          final fitH = (maxH - o.t - o.b) * TableAnchors.aspectRatio;
+          // Height only constrains the table when it genuinely cannot
+          // fit — which is what keeps every seat on screen on a short
+          // window without shrinking the table on a normal phone.
+          tableW = math.min(fitW, fitH);
+        }
+        tableW = math.max(tableW, 80.0);
+
+        final tableH = tableW / TableAnchors.aspectRatio;
+        final seatSize = _seatSizeFor(tableW);
+        final pad = overhangFor(tableW);
 
         return Center(
           child: SizedBox(
-            width: tableW + overhang * 2,
-            height: tableH + overhang * 2,
+            width: tableW + pad.l + pad.r,
+            height: tableH + pad.t + pad.b,
             child: Stack(
               clipBehavior: Clip.none,
               children: [
                 // The table itself.
                 Positioned(
-                  left: overhang,
-                  top: overhang,
+                  left: pad.l,
+                  top: pad.t,
                   width: tableW,
                   height: tableH,
                   child: _TableImage(status: status),
@@ -178,8 +259,8 @@ class PokerTableView extends StatelessWidget {
 
                 if (status.isClosed || status.isPaused)
                   Positioned(
-                    left: overhang,
-                    top: overhang + tableH * 0.5 - 16,
+                    left: pad.l,
+                    top: pad.t + tableH * 0.5 - 16,
                     width: tableW,
                     child: IgnorePointer(
                       child: Center(
@@ -213,8 +294,8 @@ class PokerTableView extends StatelessWidget {
 
                 // Dealer box, over the tray printed on the felt.
                 Positioned(
-                  left: overhang + tableW * TableAnchors.dealer.dx - 22,
-                  top: overhang + tableH * TableAnchors.dealer.dy - 26,
+                  left: pad.l + tableW * TableAnchors.dealer.dx - 22,
+                  top: pad.t + tableH * TableAnchors.dealer.dy - 26,
                   child: _DealerBox(
                     seatNumber: dealerSeat,
                     onTap: onDealerTap,
@@ -227,7 +308,7 @@ class PokerTableView extends StatelessWidget {
                     _positionSeat(
                       seat: seat,
                       anchor: TableAnchors.seats[seat.seatNumber]!,
-                      origin: const Offset(overhang, overhang),
+                      origin: Offset(pad.l, pad.t),
                       tableW: tableW,
                       tableH: tableH,
                       seatSize: seatSize,
@@ -267,13 +348,28 @@ class PokerTableView extends StatelessWidget {
   }
 }
 
-/// The photographic table, rotated a quarter turn into portrait.
+/// The photographic table, drawn in its natural orientation.
 ///
-/// [RotatedBox] turns the image during layout rather than at paint time,
-/// so the rotated bitmap participates in layout normally and costs
-/// nothing per frame. [BoxFit.fill] is safe precisely because the parent
-/// already sized itself to [TableAnchors.aspectRatio] — the box and the
-/// bitmap agree, so nothing is stretched.
+/// NO ROTATION. The asset is already the right way up for the phone —
+/// dealer tray at the bottom — so the previous `RotatedBox` is gone.
+/// Rotating the bitmap while leaving the anchors alone is exactly how
+/// the seats and the felt fall out of step, so orientation is expressed
+/// in ONE place: the artwork plus [TableAnchors], which were derived
+/// together.
+///
+/// TRANSPARENCY. The asset is RGBA with the studio backdrop cut away, so
+/// only the table itself paints and the app's dark background shows
+/// through around it. Two things that would have re-introduced a
+/// rectangle are therefore deliberately absent:
+///
+///   * no `DecoratedBox`/`boxShadow` wrapper — a box shadow is cast by
+///     the WIDGET's rectangle, not the table silhouette, which drew a
+///     hard rectangular halo around the oval;
+///   * no opaque background colour of any kind.
+///
+/// [BoxFit.fill] stays safe because the parent already sized itself to
+/// [TableAnchors.aspectRatio] — box and bitmap agree, so nothing is
+/// stretched.
 class _TableImage extends StatelessWidget {
   final TableStatus status;
   const _TableImage({required this.status});
@@ -286,32 +382,21 @@ class _TableImage extends StatelessWidget {
             ? 0.22
             : 0.0;
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.55),
-            blurRadius: 26,
-            spreadRadius: 2,
-            offset: const Offset(0, 10),
-          ),
-        ],
+    const image = Image(
+      image: AssetImage('assets/images/poker_table.png'),
+      fit: BoxFit.fill,
+      filterQuality: FilterQuality.medium,
+    );
+
+    // srcATop multiplies by the source alpha, so the veil follows the
+    // table's own shape and cannot tint the transparent surround.
+    if (dim == 0) return image;
+    return ColorFiltered(
+      colorFilter: ColorFilter.mode(
+        Colors.black.withValues(alpha: dim),
+        BlendMode.srcATop,
       ),
-      child: ColorFiltered(
-        colorFilter: ColorFilter.mode(
-          Colors.black.withValues(alpha: dim),
-          BlendMode.srcATop,
-        ),
-        child: const RotatedBox(
-          quarterTurns: 1,
-          child: Image(
-            image: AssetImage('assets/images/poker_table.png'),
-            fit: BoxFit.fill,
-            filterQuality: FilterQuality.medium,
-          ),
-        ),
-      ),
+      child: image,
     );
   }
 }
@@ -331,6 +416,21 @@ class SeatWidget extends StatelessWidget {
     this.isDealer = false,
     this.tableClosed = false,
   });
+
+  /// Classification of the seated player, or null for an empty seat.
+  ///
+  /// Resolved through the registry so a person classified in the Player
+  /// Bank shows correctly here even if this session's row predates the
+  /// change. Read-only — the table never writes a classification.
+  PlayerTag? get _seatTag {
+    final p = data.player;
+    return p == null ? null : PlayerRegistryService.tagFor(p);
+  }
+
+  bool get _seatBlacklisted {
+    final p = data.player;
+    return p != null && PlayerRegistryService.isBlacklisted(p);
+  }
 
   Color get _ring {
     if (!data.enabled) return AppColors.divider;
@@ -359,10 +459,16 @@ class SeatWidget extends StatelessWidget {
     // AbsorbPointer swallows it, so tapping a locked seat does literally
     // nothing. ExcludeSemantics stops screen readers announcing it as an
     // actionable control.
+    // 0.55 rather than the original 0.28: at the lower value the pod
+    // almost vanished against the felt, so a 9-seat table looked like it
+    // was missing seat 10 rather than showing it locked. This is still
+    // clearly muted against an active seat — which sits at full opacity
+    // with a coloured ring — so it reads as "present but unavailable",
+    // never as a live seat.
     if (!data.enabled) {
       return ExcludeSemantics(
         child: AbsorbPointer(
-          child: Opacity(opacity: 0.28, child: _pod(ring, player)),
+          child: Opacity(opacity: 0.55, child: _pod(ring, player)),
         ),
       );
     }
@@ -454,16 +560,37 @@ class SeatWidget extends StatelessWidget {
                   borderRadius: BorderRadius.circular(5),
                   border: Border.all(color: ring.withValues(alpha: 0.45)),
                 ),
-                child: Text(
-                  player!.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 8.5,
-                    fontWeight: FontWeight.bold,
-                    height: 1.1,
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Classification icon, not the full label: the plate
+                    // is 8.5pt and already tight, so "Problem Player"
+                    // would either overflow or crush the name. The icon
+                    // gives the banker the same at-a-glance read without
+                    // displacing the name as the primary element.
+                    if (_seatTag != null) ...[
+                      Icon(_seatTag!.icon, size: 8.5, color: _seatTag!.color),
+                      const SizedBox(width: 2.5),
+                    ],
+                    Flexible(
+                      child: Text(
+                        player!.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 8.5,
+                          fontWeight: FontWeight.bold,
+                          height: 1.1,
+                        ),
+                      ),
+                    ),
+                    if (_seatBlacklisted) ...[
+                      const SizedBox(width: 2.5),
+                      const Icon(Icons.block,
+                          size: 8.5, color: AppColors.danger),
+                    ],
+                  ],
                 ),
               ),
             ],

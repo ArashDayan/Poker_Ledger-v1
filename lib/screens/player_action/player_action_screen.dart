@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/localization/app_localizations.dart';
+import '../../core/localization/enum_labels.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
@@ -280,7 +281,7 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Seat ${player.seatNumber} · ${player.name}'),
+        title: Text('${tr('seat')} ${player.seatNumber} · ${player.name}'),
         actions: [
           IconButton(
             tooltip: tr('complete_ledger'),
@@ -447,7 +448,7 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
               child: _submitting
                   ? const SizedBox(
                       height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                  : Text('Confirm ${_type.label}'),
+                  : Text('${tr('confirm')} ${_type.localizedLabel}'),
             ),
           ],
         ),

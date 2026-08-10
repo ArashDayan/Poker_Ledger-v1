@@ -370,15 +370,12 @@ Future<double?> _askTransferAmount(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Money moving with ${player.name}',
+          Text('${tr('money_moving_with')} ${player.name}',
               style: const TextStyle(
                   fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           Text(
-            '${from.name} → ${to.name}. '
-            'This amount leaves ${from.name} and arrives at ${to.name}. '
-            'The session total is unchanged — the money has only changed '
-            'table.',
+            '${from.name} → ${to.name}. ${tr('transfer_table_note')}',
             style: const TextStyle(
                 fontSize: 11, color: AppColors.textSecondary),
           ),
@@ -389,8 +386,8 @@ Future<double?> _askTransferAmount(
             keyboardType:
                 const TextInputType.numberWithOptions(decimal: true),
             decoration: const InputDecoration(
-              labelText: 'Amount taking from this table',
-              helperText: 'Count the chips the player is carrying.',
+              labelText: tr('transfer_amount_label'),
+              helperText: tr('transfer_amount_helper'),
               prefixIcon: Icon(Icons.swap_horiz),
             ),
           ),
@@ -409,7 +406,7 @@ Future<double?> _askTransferAmount(
               Expanded(
                 child: OutlinedButton(
                   onPressed: () => Navigator.pop(ctx, 0.0),
-                  child: const Text('No money'),
+                  child: Text(tr('no_money')),
                 ),
               ),
               const SizedBox(width: 10),
@@ -426,7 +423,7 @@ Future<double?> _askTransferAmount(
                     if (v == null || v < 0) {
                       ScaffoldMessenger.of(ctx).showSnackBar(
                         const SnackBar(
-                            content: Text('Enter a valid amount.')),
+                            content: Text(tr('enter_valid_amount'))),
                       );
                       return;
                     }
@@ -460,15 +457,12 @@ Future<void> showMovePlayerSheet(BuildContext context, Player player) {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Move ${player.name}',
+              Text('${tr('move_player_title')} ${player.name}',
                   style: const TextStyle(
                       fontSize: 16, fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
               Text(
-                'Currently ${currentTable.name}, seat ${player.seatNumber}. '
-                'You will be asked how much money they carry across. '
-                'Their existing buy-ins, rebuys and cash-outs are never '
-                'rewritten.',
+                '${currentTable.name} · ${tr('seat')} ${player.seatNumber}. ${tr('move_player_note')}',
                 style: const TextStyle(
                     fontSize: 11, color: AppColors.textSecondary),
               ),
@@ -482,8 +476,8 @@ Future<void> showMovePlayerSheet(BuildContext context, Player player) {
                       color: AppColors.accentGreen),
                   title: Text(t.name),
                   subtitle: Text(free == null
-                      ? 'Full ($count/${t.seatCount})'
-                      : 'Seat $free free · $count/${t.seatCount} seated'),
+                      ? '${tr('full')} ($count/${t.seatCount})'
+                      : '${tr('seat')} $free ${tr('free')} · $count/${t.seatCount} ${tr('seated')}'),
                   enabled: free != null,
                   onTap: free == null
                       ? null

@@ -1,3 +1,4 @@
+import '../core/localization/app_localizations.dart';
 import '../models/enums.dart';
 import '../models/session.dart';
 import 'hive_service.dart';
@@ -7,7 +8,21 @@ import 'tournament_service.dart';
 
 /// One row of the banker's lifetime/monthly performance figures.
 class PeriodStats {
+  /// English label. Consumed by the PDF/CSV export, which has no Persian
+  /// font bundled, so it must stay English — see [localizedLabel] for the
+  /// on-screen text.
   final String label;
+
+  /// Localization key for [label], when one exists.
+  ///
+  /// Display-only: nothing in the aggregation reads this, and the export
+  /// keeps using [label], so report figures and file output are
+  /// unchanged.
+  final String? labelKey;
+
+  /// Month labels also carry the year, which is appended after the
+  /// translated month name.
+  final String labelSuffix;
   final DateTime from;
   final DateTime to;
   final int sessions;
@@ -19,6 +34,8 @@ class PeriodStats {
 
   const PeriodStats({
     required this.label,
+    this.labelKey,
+    this.labelSuffix = '',
     required this.from,
     required this.to,
     required this.sessions,
@@ -28,6 +45,11 @@ class PeriodStats {
     required this.rake,
     required this.bankerProfit,
   });
+
+  /// The label as it should appear in the app's UI.
+  String get localizedLabel => labelKey == null
+      ? label
+      : '${tr(labelKey!)}${labelSuffix.isEmpty ? '' : ' $labelSuffix'}';
 
   double get averagePerSession => sessions == 0 ? 0 : bankerProfit / sessions;
   double get averageBuyIn => players == 0 ? 0 : moneyIn / players;
@@ -95,6 +117,8 @@ class ReportService {
   static PeriodStats aggregate(
     List<PokerSession> sessions, {
     required String label,
+    String? labelKey,
+    String labelSuffix = '',
     DateTime? from,
     DateTime? to,
   }) {
@@ -117,6 +141,8 @@ class ReportService {
     final dates = sessions.map((s) => s.dateTime).toList()..sort();
     return PeriodStats(
       label: label,
+      labelKey: labelKey,
+      labelSuffix: labelSuffix,
       from: from ?? (dates.isEmpty ? DateTime.now() : dates.first),
       to: to ?? (dates.isEmpty ? DateTime.now() : dates.last),
       sessions: sessions.length,
@@ -130,7 +156,8 @@ class ReportService {
 
   /// Lifetime figures for a currency.
   static PeriodStats lifetime(AppCurrency currency) =>
-      aggregate(sessionsIn(currency), label: 'Lifetime');
+      aggregate(sessionsIn(currency),
+          label: 'Lifetime', labelKey: 'lifetime_label');
 
   /// One [PeriodStats] per calendar month that has sessions, newest
   /// month first.
@@ -153,6 +180,8 @@ class ReportService {
           return aggregate(
             buckets[k]!,
             label: '${_monthName(month)} $year',
+            labelKey: 'month_$month',
+            labelSuffix: '$year',
             from: DateTime(year, month, 1),
             to: DateTime(year, month + 1, 0),
           );

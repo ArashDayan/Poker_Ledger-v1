@@ -245,7 +245,7 @@ class _ChipExchangeSheetState extends State<_ChipExchangeSheet> {
                       for (final pl in widget.players)
                         DropdownMenuItem(
                           value: pl.id,
-                          child: Text('Seat ${pl.seatNumber} · ${pl.name}',
+                          child: Text('${tr('seat')} ${pl.seatNumber} · ${pl.name}',
                               overflow: TextOverflow.ellipsis),
                         ),
                     ],

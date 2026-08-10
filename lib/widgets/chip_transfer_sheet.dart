@@ -8,7 +8,10 @@ import '../models/chip_movement.dart';
 import '../models/enums.dart';
 import '../models/player.dart';
 import '../providers/chip_bank_provider.dart';
+import '../providers/session_provider.dart';
 import '../services/chip_tracking_service.dart';
+import '../services/session_service.dart';
+import '../services/table_service.dart';
 import 'chip_picker_list.dart';
 
 /// Physical chips moving directly from one player to another.
@@ -21,12 +24,27 @@ import 'chip_picker_list.dart';
 /// `to` of the recorded movement are player locations, so the Bank's
 /// derived balance cannot move.
 ///
-/// Equally, no [LedgerTransaction] is created. The banker's settlement is
-/// computed from buy-ins, rebuys and cash-outs; a private transfer
-/// between two players is not any of those. Recording one here would
+/// NO BUY-IN, REBUY, CASH-OUT OR RAKE IS EVER WRITTEN. The banker's
+/// settlement is computed from those four types; a private transfer
+/// between two players is none of them, and recording one as such would
 /// corrupt both players' financial positions. What this DOES fix is the
 /// physical picture: cash-out chip counts now reconcile against who is
 /// actually holding what.
+///
+/// TABLE ATTRIBUTION — the one case that needs a ledger row.
+/// If the two players sit at DIFFERENT tables the chips have physically
+/// crossed the room, so each table's balance must move even though the
+/// session's does not. That is recorded as a mirrored
+/// transferOut/transferIn pair of equal value — the same mechanism a
+/// table-to-table player move already uses, not a second accounting
+/// system. Those two types are invisible to every session-level total
+/// (each filters one explicit type), so the session stays exactly
+/// neutral.
+///
+/// A same-table transfer writes NO ledger row at all: the chips never
+/// left the table, so zero net change is achieved by recording nothing
+/// rather than by two offsetting rows that would inflate that table's
+/// Money In and Money Out alike.
 Future<bool> showChipTransferSheet(
   BuildContext context, {
   required List<Player> players,
@@ -113,6 +131,20 @@ class _ChipTransferSheetState extends State<_ChipTransferSheet> {
       _sourceCanCover &&
       !_saving;
 
+  /// A short, human-readable breakdown of the chips being moved, e.g.
+  /// "$25 x 4, $5 x 2". Stored on both ledger legs so the Timeline can
+  /// show exactly which physical chips changed hands.
+  String _denominationNote() {
+    final chips = context.read<ChipBankProvider>().chips;
+    final fmt = CurrencyFormatter(widget.currency);
+    final parts = <String>[];
+    for (final c in chips) {
+      final q = _selection[c.id] ?? 0;
+      if (q > 0) parts.add('${fmt.formatRaw(c.value)} x $q');
+    }
+    return parts.join(', ');
+  }
+
   Future<void> _confirm() async {
     final f = _from;
     final t = _to;
@@ -120,12 +152,61 @@ class _ChipTransferSheetState extends State<_ChipTransferSheet> {
     setState(() => _saving = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
+      // 1. The physical chips. Player -> player, so bank inventory is
+      //    untouched and no chips are created or destroyed.
       await ChipTrackingService.recordPlayerTransfer(
         fromPlayerId: f.id,
         toPlayerId: t.id,
         distribution: _selection,
         sessionId: widget.sessionId,
       );
+
+      // 2. Table attribution, ONLY when the chips actually cross tables.
+      //
+      //    Same table: nothing is written. The chips never left the
+      //    table, so a pair of offsetting rows would be noise that
+      //    inflates that table's Money In AND Money Out by the same
+      //    amount while netting to zero — technically harmless, but it
+      //    would misreport the table's takings. Zero net change is
+      //    achieved by recording nothing at all.
+      //
+      //    Different tables: a mirrored transferOut/transferIn pair,
+      //    reusing the exact mechanism a table-to-table player move
+      //    already uses. Source table Money Out +X, destination Money
+      //    In +X, and the session stays neutral because every
+      //    session-level total filters on one explicit transaction type
+      //    and neither of these is among them.
+      final session = context.read<SessionProvider>().current;
+      if (session != null) {
+        final fromTable = TableService.tableForPlayer(session, f).id;
+        final toTable = TableService.tableForPlayer(session, t).id;
+        if (fromTable != toTable) {
+          final note = _denominationNote();
+          // playerId is deliberately null on both legs.
+          // SessionService.recordTransaction resolves a row's table from
+          // the PLAYER when one is given — and neither player moves in a
+          // P2P transfer, so passing an id would file both legs on the
+          // same table and defeat the attribution. Table-level rows use
+          // the explicit tableId instead, and the players are preserved
+          // in the note for the audit trail.
+          await SessionService.recordTransaction(
+            sessionId: widget.sessionId,
+            type: TransactionType.transferOut,
+            amount: _value,
+            tableId: fromTable,
+            note: '${tr('chips_to_player')} ${t.name}'
+                '${note.isEmpty ? '' : ' · $note'}',
+          );
+          await SessionService.recordTransaction(
+            sessionId: widget.sessionId,
+            type: TransactionType.transferIn,
+            amount: _value,
+            tableId: toTable,
+            note: '${tr('chips_from_player')} ${f.name}'
+                '${note.isEmpty ? '' : ' · $note'}',
+          );
+        }
+      }
       if (!mounted) return;
       context.read<ChipBankProvider>().refresh();
       messenger.showSnackBar(
@@ -342,7 +423,7 @@ class _PlayerField extends StatelessWidget {
             for (final p in players)
               DropdownMenuItem(
                 value: p.id,
-                child: Text('Seat ${p.seatNumber} · ${p.name}',
+                child: Text('${tr('seat')} ${p.seatNumber} · ${p.name}',
                     overflow: TextOverflow.ellipsis),
               ),
           ],

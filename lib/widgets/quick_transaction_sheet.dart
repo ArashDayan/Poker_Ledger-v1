@@ -127,7 +127,7 @@ Future<QuickTransactionResult?> showQuickTransactionSheet(
                                 ),
                                 ElevatedButton(
                                   onPressed: () => Navigator.pop(dctx, true),
-                                  child: const Text("It's Correct"),
+                                  child: Text(tr('its_correct')),
                                 ),
                               ],
                             ),

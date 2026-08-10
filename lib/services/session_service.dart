@@ -164,6 +164,18 @@ class SessionService {
   static double totalRake(String sessionId) => _sum(sessionId, TransactionType.rakeCollection);
   static double totalCashDrop(String sessionId) => _sum(sessionId, TransactionType.cashDrop);
 
+  /// Chips tipped to the dealer, across the session.
+  ///
+  /// A REAL money-out flow: these chips physically left the tables and
+  /// went back to the Bank, so [moneyStillInPlay] and [checkBalance]
+  /// must both account for them or a fully-settled session would look
+  /// short by the tip total.
+  ///
+  /// Deliberately NOT part of [hostProfit]. The money is owed to the
+  /// dealer, not kept by the host.
+  static double totalDealerTips(String sessionId) =>
+      _sum(sessionId, TransactionType.dealerTips);
+
   /// Total cash a player has put into play (buy-in + all rebuys).
   /// Informational only — display purposes and house-rule checks.
   /// NEVER used to cap or validate that player's cash-out amount.
@@ -250,7 +262,10 @@ class SessionService {
     return totalBuyIn(sessionId) +
         totalRebuy(sessionId) -
         totalCashOut(sessionId) -
-        totalRake(sessionId);
+        totalRake(sessionId) -
+        // Subtracted ONCE, for the same reason checkBalance adds it to
+        // money out: tipped chips are no longer on the table.
+        totalDealerTips(sessionId);
   }
 
   /// A soft, non-blocking check for whether [amount] looks unusually
@@ -272,7 +287,13 @@ class SessionService {
 
   static BalanceResult checkBalance(String sessionId) {
     final moneyIn = totalBuyIn(sessionId) + totalRebuy(sessionId);
-    final moneyOut = totalCashOut(sessionId) + totalRake(sessionId);
+    // Dealer tips are counted here ONCE, alongside cash-out and rake,
+    // because those chips physically left the table for the Bank. A
+    // settled session that paid tips would otherwise report a false
+    // discrepancy equal to the tip total.
+    final moneyOut = totalCashOut(sessionId) +
+        totalRake(sessionId) +
+        totalDealerTips(sessionId);
     final neverCashedOut = playersFor(sessionId)
         .where((p) => !hasCashedOut(sessionId, p.id))
         .toList();
