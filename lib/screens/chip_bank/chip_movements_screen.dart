@@ -48,6 +48,12 @@ String describeReason(ChipMovementReason r) {
       return tr('reason_adjustment');
     case ChipMovementReason.transfer:
       return tr('reason_transfer');
+    case ChipMovementReason.dealerTips:
+      return tr('dealer_tips');
+    case ChipMovementReason.exchange:
+      return tr('chip_exchange');
+    case ChipMovementReason.reversal:
+      return tr('undo');
   }
 }
 

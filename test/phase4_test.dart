@@ -123,6 +123,7 @@ void main() {
         ..sort();
       final expected = [
         'Chip_sound.wav',
+        'timer_alarm.wav',
         ...kChipSamples.map((s) => s.asset.split('/').last),
       ]..sort();
       expect(wavs, expected);

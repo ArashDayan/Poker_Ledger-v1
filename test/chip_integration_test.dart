@@ -440,7 +440,7 @@ void main() {
     });
   });
 
-  group('ACCEPTANCE: $20,000 bank, $10,000 in, $500 rake, $8,500 out', () {
+  group('ACCEPTANCE: \$20,000 bank, \$10,000 in, \$500 rake, \$8,500 out', () {
     test('every chip is accounted for and nothing is invented', () async {
       final c = await _stockBank();
       final k1000 = c['1000']!.id;
@@ -524,7 +524,7 @@ void main() {
 
       final r = ChipTrackingService.reconcile();
       expect(r.currentBankValue, 19000, reason: 'ending bank');
-      expect(r.withPlayers, 1000, reason: 'players still hold $1,000');
+      expect(r.withPlayers, 1000, reason: 'players still hold \$1,000');
       expect(r.rakeReturnedToBank, 500);
       expect(r.removed, 0, reason: 'no chips invented or destroyed');
       expect(r.totalAccountedFor, 20000);

@@ -294,6 +294,7 @@ void main() {
 
       final provider = SessionProvider()..loadSession(_live);
       expect(provider.consumeTableTimerNotice(), isNull);
+      provider.dispose();
     });
 
     test('a finished timer cannot be restarted into negative time',
@@ -333,6 +334,7 @@ void main() {
       // Polled every second by the shell — must not repeat.
       expect(provider.consumeTableTimerNotice(), isNull);
       expect(provider.consumeTableTimerNotice(), isNull);
+      provider.dispose();
     });
 
     test('the notice flag survives a reload, so it cannot re-fire',
@@ -344,7 +346,8 @@ void main() {
       await _setClock(id,
           runningSince: DateTime.now().subtract(const Duration(minutes: 61)));
 
-      SessionProvider()..loadSession(_live)..consumeTableTimerNotice();
+      final p1 = SessionProvider()..loadSession(_live)..consumeTableTimerNotice();
+      p1.dispose();
 
       await Hive.box<PokerSession>(HiveService.sessionsBox).close();
       await Hive.openBox<PokerSession>(HiveService.sessionsBox);
@@ -352,6 +355,7 @@ void main() {
       expect(_table(id).finishNoticeShown, isTrue);
       final provider2 = SessionProvider()..loadSession(_live);
       expect(provider2.consumeTableTimerNotice(), isNull);
+      provider2.dispose();
     });
 
     test('re-setting the duration re-arms the alarm', () async {
@@ -368,6 +372,7 @@ void main() {
       // New level, new duration: the table must be able to finish again.
       await TableService.setTableTimerDuration(_live, id, 30);
       expect(_table(id).finishNoticeShown, isFalse);
+      provider.dispose();
     });
   });
 
@@ -439,6 +444,7 @@ void main() {
       expect(_table(ids[2]).timerRunning, isTrue);
       expect(_table(ids[2]).isFinished, isFalse);
       expect(_table(ids[2]).timeRemaining!.inMinutes, closeTo(115, 1));
+      provider.dispose();
     });
 
     test('two simultaneous expiries produce two separate notices',
@@ -463,6 +469,7 @@ void main() {
       expect(a!.tableId, isNot(b!.tableId),
           reason: 'each table gets its own correctly-labelled alert');
       expect(c, isNull);
+      provider.dispose();
     });
   });
 

@@ -385,10 +385,10 @@ Future<double?> _askTransferAmount(
             autofocus: true,
             keyboardType:
                 const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: tr('transfer_amount_label'),
               helperText: tr('transfer_amount_helper'),
-              prefixIcon: Icon(Icons.swap_horiz),
+              prefixIcon: const Icon(Icons.swap_horiz),
             ),
           ),
           const SizedBox(height: 14),
@@ -422,7 +422,7 @@ Future<double?> _askTransferAmount(
                         double.tryParse(ctrl.text.trim().replaceAll(',', ''));
                     if (v == null || v < 0) {
                       ScaffoldMessenger.of(ctx).showSnackBar(
-                        const SnackBar(
+                        SnackBar(
                             content: Text(tr('enter_valid_amount'))),
                       );
                       return;

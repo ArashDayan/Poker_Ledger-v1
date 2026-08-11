@@ -139,6 +139,10 @@ class _PlayersDirectoryScreenState extends State<PlayersDirectoryScreen> {
     if (mounted) setState(() {});
   }
 
+  List<PlayerCareer> _sorted(List<PlayerCareer> list) {
+    return list..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  }
+
   @override
   Widget build(BuildContext context) {
     final careers = _sorted(_filtered(PlayerHistoryService.search(_query)));
@@ -435,25 +439,25 @@ class _PlayersDirectoryScreenState extends State<PlayersDirectoryScreen> {
                       ),
                     ),
                     if (blacklisted)
-                      const PopupMenuItem(
+                      PopupMenuItem(
                         value: 'unblacklist',
                         child: Row(
                           children: [
-                            Icon(Icons.check_circle_outline,
+                            const Icon(Icons.check_circle_outline,
                                 size: 18, color: AppColors.accentGreen),
-                            SizedBox(width: 10),
+                            const SizedBox(width: 10),
                             Text(tr('unblacklist')),
                           ],
                         ),
                       )
                     else
-                      const PopupMenuItem(
+                      PopupMenuItem(
                         value: 'blacklist',
                         child: Row(
                           children: [
-                            Icon(Icons.block,
+                            const Icon(Icons.block,
                                 size: 18, color: AppColors.danger),
-                            SizedBox(width: 10),
+                            const SizedBox(width: 10),
                             Text(tr('blacklist')),
                           ],
                         ),
