@@ -773,6 +773,13 @@ class TableSummary {
   final double rake;
   final double cashDrop;
 
+  /// Chips tipped to the dealer from this table. Already included in
+  /// [moneyOut]; exposed separately so the Dashboard can state it on its
+  /// own line without recomputing it.
+  ///
+  /// NEVER part of [hostProfit] — see [TransactionType.dealerTips].
+  final double dealerTips;
+
   /// Money carried onto / off this table by players changing seats.
   /// Already included in [moneyIn] / [moneyOut]; kept separately so the
   /// UI can explain a table whose figures moved without a buy-in.
@@ -805,6 +812,7 @@ class TableSummary {
     this.cashOut = 0,
     this.rake = 0,
     this.cashDrop = 0,
+    this.dealerTips = 0,
     this.transferIn = 0,
     this.transferOut = 0,
     this.currentPot = 0,
@@ -833,6 +841,7 @@ class TableSummary {
       final cashOut = sum(TransactionType.cashOut);
       final rake = sum(TransactionType.rakeCollection);
       final drop = sum(TransactionType.cashDrop);
+      final tips = sum(TransactionType.dealerTips);
       // Money arriving with, and leaving with, players who changed table.
       final transferIn = sum(TransactionType.transferIn);
       final transferOut = sum(TransactionType.transferOut);
@@ -840,8 +849,9 @@ class TableSummary {
       // Money entering this table: bought in here, or carried in.
       final moneyIn = buyIn + rebuy + transferIn;
       // Money leaving this table: paid out to players, retained by the
-      // house as rake, or carried away to another table.
-      final moneyOut = cashOut + rake + transferOut;
+      // house as rake, tipped to the dealer, or carried away to another
+      // table. Tips appear here ONCE — they are not added anywhere else.
+      final moneyOut = cashOut + rake + tips + transferOut;
 
       return TableSummary(
         table: t,
@@ -853,6 +863,7 @@ class TableSummary {
         cashOut: cashOut,
         rake: rake,
         cashDrop: drop,
+        dealerTips: tips,
         transferIn: transferIn,
         transferOut: transferOut,
         // What is still physically on this table. Once the table is

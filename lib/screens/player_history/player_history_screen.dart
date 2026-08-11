@@ -4,6 +4,8 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../services/player_history_service.dart';
+import '../../services/player_registry_service.dart';
+import '../../widgets/player_type_badge.dart';
 import '../reports/reports_screen.dart';
 import '../session_shell/session_shell_screen.dart';
 import '../../models/enums.dart';
@@ -82,6 +84,26 @@ class PlayerHistoryScreen extends StatelessWidget {
       ),
       child: Column(
         children: [
+          // Classification and access status, stated before the numbers
+          // so the banker sees WHO this is before HOW MUCH they are worth.
+          Builder(builder: (_) {
+            final tag = PlayerRegistryService.tagForName(c.name);
+            final blacklisted =
+                PlayerRegistryService.isBlacklistedName(c.name);
+            if (tag == null && !blacklisted) return const SizedBox.shrink();
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  if (tag != null) PlayerTypeBadge(tag: tag, scale: 1.25),
+                  if (blacklisted) const BlacklistBadge(scale: 1.25),
+                ],
+              ),
+            );
+          }),
           Text(
             '${c.sessionsPlayed} session${c.sessionsPlayed == 1 ? '' : 's'} played',
             style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),

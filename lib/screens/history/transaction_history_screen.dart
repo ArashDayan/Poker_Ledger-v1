@@ -1,5 +1,6 @@
 import 'dart:convert';
 import '../../core/localization/app_localizations.dart';
+import '../../core/localization/enum_labels.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
@@ -54,6 +55,8 @@ class _HistoryTabState extends State<HistoryTab> {
         return Icons.logout;
       case TransactionType.transferIn:
         return Icons.login;
+      case TransactionType.dealerTips:
+        return Icons.volunteer_activism;
     }
   }
 
@@ -79,7 +82,7 @@ class _HistoryTabState extends State<HistoryTab> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('Edit ${tx.type.label}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                Text('${tr('edit')} ${tx.type.localizedLabel}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 12),
                 TextField(
                   controller: amountCtrl,
@@ -194,9 +197,8 @@ class _HistoryTabState extends State<HistoryTab> {
     }
     final confirmed = await confirmSensitiveAction(
       context,
-      title: 'Void Transaction',
-      message: 'This removes ${tx.type.label} from all balance totals but keeps it in the '
-          'audit log as voided. You can restore it later. Continue?',
+      title: tr('void_transaction'),
+      message: tr('void_tx_message'),
     );
     if (confirmed) await provider.voidTransactionById(tx.id);
   }
@@ -205,10 +207,9 @@ class _HistoryTabState extends State<HistoryTab> {
     final provider = context.read<SessionProvider>();
     final confirmed = await confirmSensitiveAction(
       context,
-      title: 'Delete Transaction',
-      message: 'This PERMANENTLY removes this ${tx.type.label} record. This cannot be undone, '
-          'not even as a voided entry. Continue?',
-      confirmLabel: 'Delete',
+      title: tr('delete_transaction'),
+      message: tr('delete_tx_message'),
+      confirmLabel: tr('delete'),
       isDestructive: true,
     );
     if (confirmed) await provider.deleteTransaction(tx.id);
@@ -263,38 +264,76 @@ class _HistoryTabState extends State<HistoryTab> {
       }).toList();
     }
 
-    // ---- Per-table rake totals -------------------------------------
+    // ---- Per-table totals for the SELECTED transaction type ---------
     //
-    // A pure aggregation for display. It folds the amounts of the rake
-    // rows ALREADY in `txs`, so it inherits every active filter and can
-    // never disagree with the list the banker is looking at. No rake is
-    // recalculated, no threshold or cap is consulted, and
-    // SessionService.totalRake stays the single source of truth for the
-    // session figure on the Dashboard.
+    // The existing rake aggregation, generalised. The calculation is
+    // unchanged in every respect: it still folds the amounts of rows
+    // ALREADY in `txs`, so it inherits every active filter (type,
+    // player, table, search) and can never disagree with the list the
+    // banker is looking at. Nothing is recalculated from rake rules,
+    // and SessionService remains the single source of truth for every
+    // session-level figure on the Dashboard.
     //
     // Table attribution follows the project's existing rule verbatim
     // (SessionService.transactionsForTable / the table filter above):
     // a null tableId means "the first table", which is what everything
     // recorded before multi-table support stored. No new fallback is
     // invented here.
-    final rakeRows =
-        txs.where((t) => t.type == TransactionType.rakeCollection).toList();
-    final rakeByTable = <String, double>{};
-    for (final t in rakeRows) {
-      final id = t.tableId ?? firstTableId;
-      if (id == null) continue;
-      rakeByTable[id] = (rakeByTable[id] ?? 0) + t.amount;
+    //
+    // WHICH TYPES GET A SUMMARY, AND WHY.
+    // Only types whose rows carry a table-attributable amount that the
+    // existing model already defines. buyIn / rebuy / cashOut /
+    // rakeCollection all do. Deliberately excluded:
+    //
+    //   * cashDrop    — money leaving the float for the safe. It is a
+    //                   session-level movement, not a table's takings,
+    //                   and the Dashboard already reports it separately.
+    //   * transferOut/In — the two legs of a table-to-table move. They
+    //                   net to zero across tables by construction, so a
+    //                   "total" would be a meaningless zero and a
+    //                   per-table figure would double-count money that
+    //                   never entered or left the session.
+    //
+    // "Showed" is not a transaction type in this model, and "Voided" is
+    // a boolean flag with its own separate chip — neither is a tab, so
+    // neither is touched here.
+    const summarisableTypes = {
+      TransactionType.buyIn,
+      TransactionType.rebuy,
+      TransactionType.cashOut,
+      TransactionType.rakeCollection,
+      // Dealer tips are table-attributable money out, exactly like rake,
+      // so they summarise the same way.
+      TransactionType.dealerTips,
+    };
+
+    final summaryType =
+        (_filter != null && summarisableTypes.contains(_filter))
+            ? _filter
+            : null;
+
+    var summaryRows = const <LedgerTransaction>[];
+    var summaryTotals = const <MapEntry<String, double>>[];
+    var summaryShownTotal = 0.0;
+
+    if (summaryType != null) {
+      summaryRows = txs.where((t) => t.type == summaryType).toList();
+      final byTable = <String, double>{};
+      for (final t in summaryRows) {
+        final id = t.tableId ?? firstTableId;
+        if (id == null) continue;
+        byTable[id] = (byTable[id] ?? 0) + t.amount;
+      }
+      // Ordered by the session's own table order so the summary reads
+      // the same way as the filter chips above it. Tables with no
+      // activity are omitted rather than shown as a misleading zero.
+      summaryTotals = [
+        for (final t in allTables)
+          if ((byTable[t.id] ?? 0) != 0) MapEntry(t.name, byTable[t.id]!),
+      ];
+      summaryShownTotal =
+          summaryRows.fold<double>(0, (sum, t) => sum + t.amount);
     }
-    // Ordered by the session's own table order so the summary reads the
-    // same way as the filter chips above it. Tables with no rake are
-    // omitted entirely rather than shown as a misleading zero.
-    final rakeTotals = [
-      for (final t in allTables)
-        if ((rakeByTable[t.id] ?? 0) != 0)
-          MapEntry(t.name, rakeByTable[t.id]!),
-    ];
-    final rakeShownTotal =
-        rakeRows.fold<double>(0, (sum, t) => sum + t.amount);
 
     return Column(
       children: [
@@ -396,8 +435,8 @@ class _HistoryTabState extends State<HistoryTab> {
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             children: [
-              _filterChip(null, 'All'),
-              for (final t in TransactionType.values) _filterChip(t, t.label),
+              _filterChip(null, tr('filter_all')),
+              for (final t in TransactionType.values) _filterChip(t, t.localizedLabel),
               const SizedBox(width: 8),
               FilterChip(
                 label: Text(tr('show_voided')),
@@ -407,17 +446,23 @@ class _HistoryTabState extends State<HistoryTab> {
             ],
           ),
         ),
-        // Rake summary. Appears only when the current view actually
-        // contains rake rows, so it never adds noise to a timeline the
-        // banker is using for something else.
-        if (rakeRows.isNotEmpty)
-          _RakeSummary(
-            perTable: rakeTotals,
-            shownTotal: rakeShownTotal,
+        // Summary for the SELECTED transaction type only.
+        //
+        // Previously this was rendered whenever the visible rows
+        // happened to contain any rake, which meant it also appeared
+        // under "All" — turning the combined timeline into a
+        // rake-flavoured view. It now belongs to its tab: "All" shows
+        // the plain combined list, and at most one summary is ever on
+        // screen.
+        if (summaryType != null && summaryRows.isNotEmpty)
+          _TypeSummary(
+            type: summaryType,
+            perTable: summaryTotals,
+            shownTotal: summaryShownTotal,
             fmt: fmt,
             // With one table there is nothing to break down — a single
-            // "Total Rake" line answers the question completely.
-            showBreakdown: multi && rakeTotals.isNotEmpty,
+            // total line answers the question completely.
+            showBreakdown: multi && summaryTotals.isNotEmpty,
           ),
         const SizedBox(height: 8),
         Expanded(
@@ -545,7 +590,7 @@ class _TransactionTile extends StatelessWidget {
           ),
           title: Row(
             children: [
-              Flexible(child: Text('${tx.type.label} · $playerName', overflow: TextOverflow.ellipsis)),
+              Flexible(child: Text('${tx.type.localizedLabel} · $playerName', overflow: TextOverflow.ellipsis)),
               if (tx.isVoided) ...[
                 const SizedBox(width: 6),
                 Text(tr('voided'), style: TextStyle(fontSize: 10, color: AppColors.danger)),
@@ -628,40 +673,93 @@ class _TransactionTile extends StatelessWidget {
   }
 }
 
-/// Rake totals for the transactions currently visible in the timeline.
+/// Per-table totals for the transaction type currently selected in the
+/// timeline.
 ///
-/// Display only. Every figure here is a fold over rake transactions that
-/// are already on screen — nothing is recalculated from rake rules, and
-/// the Dashboard's session-wide total is untouched and still authoritative.
-class _RakeSummary extends StatelessWidget {
-  /// Table name -> rake total, in the session's own table order.
-  /// Only tables that actually produced rake appear.
+/// Display only. Every figure here is a fold over transactions that are
+/// ALREADY on screen — nothing is recalculated from rake rules, buy-in
+/// limits or settlement, and the Dashboard's session-wide totals remain
+/// authoritative.
+///
+/// This is the original rake summary, generalised: same container, same
+/// layout, same colour treatment. Only the accent colour, icon and
+/// heading vary by type, so a banker who knows the rake view already
+/// knows this one.
+class _TypeSummary extends StatelessWidget {
+  final TransactionType type;
+
+  /// Table name -> total, in the session's own table order.
+  /// Only tables that actually produced activity appear.
   final List<MapEntry<String, double>> perTable;
 
   /// Total across everything currently shown. With no filters applied
-  /// this equals the session rake; with a filter active it is the total
-  /// of what the banker can see, which is what they are asking about.
+  /// this equals the session figure for this type; with a filter active
+  /// it is the total of what the banker can see, which is what they are
+  /// asking about.
   final double shownTotal;
 
   final CurrencyFormatter fmt;
   final bool showBreakdown;
 
-  const _RakeSummary({
+  const _TypeSummary({
+    required this.type,
     required this.perTable,
     required this.shownTotal,
     required this.fmt,
     required this.showBreakdown,
   });
 
+  /// Rake keeps gold — the colour it has always had, so that view is
+  /// visually unchanged. The others borrow the ledger's existing
+  /// money language: green for cash in, red for cash out.
+  Color get _accent {
+    switch (type) {
+      case TransactionType.rakeCollection:
+        return AppColors.gold;
+      case TransactionType.cashOut:
+        return AppColors.danger;
+      // Amber: money that left the table but is not house income.
+      case TransactionType.dealerTips:
+        return AppColors.warning;
+      default:
+        return AppColors.accentGreen;
+    }
+  }
+
+  IconData get _icon {
+    switch (type) {
+      case TransactionType.rakeCollection:
+        return Icons.percent;
+      case TransactionType.buyIn:
+        return Icons.arrow_downward;
+      case TransactionType.rebuy:
+        return Icons.refresh;
+      case TransactionType.cashOut:
+        return Icons.arrow_upward;
+      case TransactionType.dealerTips:
+        return Icons.volunteer_activism;
+      default:
+        return Icons.summarize_outlined;
+    }
+  }
+
+  /// Rake reuses its existing localised string so that view is
+  /// byte-identical to before. The others are labelled from the type's
+  /// own label, which is already localised at the enum.
+  String get _totalLabel => type == TransactionType.rakeCollection
+      ? tr('total_rake')
+      : '${tr('total_prefix')} ${type.localizedLabel}';
+
   @override
   Widget build(BuildContext context) {
+    final accent = _accent;
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 4, 16, 0),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: AppColors.gold.withOpacity(0.08),
+        color: accent.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.gold.withOpacity(0.35)),
+        border: Border.all(color: accent.withValues(alpha: 0.35)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -672,7 +770,7 @@ class _RakeSummary extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Row(
                   children: [
-                    const Icon(Icons.percent, size: 13, color: AppColors.gold),
+                    Icon(_icon, size: 13, color: accent),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -683,10 +781,10 @@ class _RakeSummary extends StatelessWidget {
                     ),
                     Text(
                       fmt.format(entry.value),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12.5,
                         fontWeight: FontWeight.bold,
-                        color: AppColors.gold,
+                        color: accent,
                       ),
                     ),
                   ],
@@ -697,12 +795,12 @@ class _RakeSummary extends StatelessWidget {
           Row(
             children: [
               if (!showBreakdown) ...[
-                const Icon(Icons.percent, size: 13, color: AppColors.gold),
+                Icon(_icon, size: 13, color: accent),
                 const SizedBox(width: 8),
               ],
               Expanded(
                 child: Text(
-                  tr('total_rake'),
+                  _totalLabel,
                   style: const TextStyle(
                     fontSize: 12.5,
                     fontWeight: FontWeight.bold,
@@ -712,10 +810,10 @@ class _RakeSummary extends StatelessWidget {
               ),
               Text(
                 fmt.format(shownTotal),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
-                  color: AppColors.gold,
+                  color: accent,
                 ),
               ),
             ],

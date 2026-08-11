@@ -62,7 +62,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Backup failed: $e')));
+            .showSnackBar(SnackBar(content: Text('${tr('backup_failed')}: $e')));
       }
     } finally {
       if (mounted) setState(() => _working = false);
@@ -114,7 +114,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Restore failed: $e')));
+            .showSnackBar(SnackBar(content: Text('${tr('restore_failed')}: $e')));
       }
     } finally {
       if (mounted) setState(() => _working = false);
@@ -135,7 +135,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SegmentedButton<String>(
             segments: [
               ButtonSegment(value: 'en', label: Text(tr('english'))),
-              ButtonSegment(value: 'fa', label: Text('فارسی')),
+              ButtonSegment(value: 'fa', label: Text(tr('persian'))),
             ],
             selected: {settings.locale.languageCode},
             onSelectionChanged: (s) => settings.setLanguage(s.first),
@@ -228,7 +228,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  sample.title,
+                                  sample.localizedTitle,
                                   style: TextStyle(
                                     fontSize: 13.5,
                                     fontWeight: FontWeight.bold,
@@ -239,7 +239,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
-                                  '${sample.description} · '
+                                  '${sample.localizedDescription} · '
                                   '${sample.duration.toStringAsFixed(2)}s',
                                   style: const TextStyle(
                                       fontSize: 11,

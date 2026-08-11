@@ -85,7 +85,7 @@ class PlayerCard extends StatelessWidget {
                     Row(
                       children: [
                         Flexible(
-                          child: Text('Seat ${player.seatNumber} · ${player.name}',
+                          child: Text('${tr('seat')} ${player.seatNumber} · ${player.name}',
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                               overflow: TextOverflow.ellipsis),
                         ),

@@ -48,7 +48,7 @@ class _ReportsTabState extends State<ReportsTab> {
       await ExportService.shareFile(file);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Export failed: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${tr('export_failed')}: $e')));
       }
     } finally {
       if (mounted) setState(() => _exporting = false);
@@ -66,7 +66,7 @@ class _ReportsTabState extends State<ReportsTab> {
       padding: const EdgeInsets.all(16),
       children: [
         Text(session.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-        Text('${session.location} · Table ${session.tableNumber}',
+        Text('${session.location} · ${tr('table')} ${session.tableNumber}',
             style: const TextStyle(color: AppColors.textSecondary)),
         const SizedBox(height: 16),
         BalanceCheckBanner(result: balance, formatter: fmt),
@@ -79,22 +79,22 @@ class _ReportsTabState extends State<ReportsTab> {
           crossAxisSpacing: 10,
           childAspectRatio: 1.7,
           children: [
-            StatCard(label: 'Money In (Buy-in+Rebuy)', icon: Icons.arrow_downward,
+            StatCard(label: tr('money_in_buyin_rebuy'), icon: Icons.arrow_downward,
                 value: fmt.format(balance.moneyIn)),
-            StatCard(label: 'Money Out (Cash-out+Rake)', icon: Icons.arrow_upward,
+            StatCard(label: tr('money_out_cashout_rake'), icon: Icons.arrow_upward,
                 value: fmt.format(balance.moneyOut)),
             StatCard(
-              label: 'Difference',
+              label: tr('difference'),
               icon: balance.isBalanced ? Icons.check_circle : Icons.error_outline,
               value: fmt.format(balance.discrepancy),
               valueColor: balance.isBalanced ? AppColors.accentGreen : AppColors.danger,
             ),
-            StatCard(label: 'Rake Collected', icon: Icons.percent,
+            StatCard(label: tr('rake_collected'), icon: Icons.percent,
                 value: fmt.format(SessionService.totalRake(session.id)),
                 valueColor: AppColors.gold),
-            StatCard(label: 'Cash Drops', icon: Icons.safety_check,
+            StatCard(label: tr('cash_drops'), icon: Icons.safety_check,
                 value: fmt.format(SessionService.totalCashDrop(session.id))),
-            StatCard(label: 'Host Profit', icon: Icons.savings,
+            StatCard(label: tr('host_profit'), icon: Icons.savings,
                 value: fmt.format(SessionService.hostProfit(session.id)),
                 valueColor: AppColors.accentGreen),
           ],
@@ -106,7 +106,7 @@ class _ReportsTabState extends State<ReportsTab> {
           final pl = SessionService.playerProfitLoss(session.id, p.id);
           return Card(
             child: ListTile(
-              title: Text('Seat ${p.seatNumber} · ${p.name}'),
+              title: Text('${tr('seat')} ${p.seatNumber} · ${p.name}'),
               trailing: Text(
                 '${pl >= 0 ? '+' : ''}${fmt.format(pl)}',
                 style: TextStyle(

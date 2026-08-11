@@ -351,6 +351,11 @@ class SessionProvider extends ChangeNotifier {
   double get totalRake => _current == null ? 0 : SessionService.totalRake(_current!.id);
   double get totalCashDrop => _current == null ? 0 : SessionService.totalCashDrop(_current!.id);
   double get hostProfit => _current == null ? 0 : SessionService.hostProfit(_current!.id);
+
+  /// Chips tipped to the dealer this session. Reported separately from
+  /// [hostProfit], which remains rake alone.
+  double get totalDealerTips =>
+      _current == null ? 0 : SessionService.totalDealerTips(_current!.id);
   double get moneyStillInPlay =>
       _current == null ? 0 : SessionService.moneyStillInPlay(_current!.id);
   int get currentLevel => _current?.currentLevel ?? 1;

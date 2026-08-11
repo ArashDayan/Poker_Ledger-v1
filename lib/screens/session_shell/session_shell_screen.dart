@@ -1,5 +1,6 @@
 import 'dart:async';
 import '../../core/localization/app_localizations.dart';
+import '../../core/localization/enum_labels.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
@@ -307,7 +308,7 @@ class _SessionShellScreenState extends State<SessionShellScreen> {
             .name;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Undone: ${voided.type.label} of ${fmt.format(voided.amount)} for $playerName'),
+        content: Text('${tr('undone')}: ${voided.type.localizedLabel} · ${fmt.format(voided.amount)} · $playerName'),
         duration: const Duration(seconds: 4),
       ),
     );

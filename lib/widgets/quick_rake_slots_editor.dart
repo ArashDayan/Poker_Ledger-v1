@@ -91,7 +91,7 @@ class QuickRakeSlotsEditor extends StatelessWidget {
                     onChanged: (_) => onChanged?.call(),
                     decoration: InputDecoration(
                       isDense: true,
-                      labelText: 'Quick rake ${i + 1}',
+                      labelText: '${tr('quick_rake')} ${i + 1}',
                       hintText: tr('leave_blank_hide'),
                       prefixText: formatter.symbol == '\$' ? '\$ ' : null,
                       suffixText: formatter.symbol == '\$' ? null : formatter.symbol,
@@ -99,7 +99,7 @@ class QuickRakeSlotsEditor extends StatelessWidget {
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Clear slot ${i + 1}',
+                  tooltip: '${tr('clear_slot')} ${i + 1}',
                   icon: const Icon(Icons.backspace_outlined,
                       size: 18, color: AppColors.textSecondary),
                   onPressed: enabled

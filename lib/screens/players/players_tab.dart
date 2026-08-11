@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
 import '../../core/localization/app_localizations.dart';
+import '../../core/localization/enum_labels.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
 import '../../models/player.dart';
 import '../../providers/session_provider.dart';
+import '../../services/player_registry_service.dart';
 import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/table_service.dart';
 import '../../widgets/player_card.dart';
+import '../../widgets/player_type_badge.dart';
 import '../../widgets/signature_compare_sheet.dart';
 import '../../widgets/signature_pad.dart';
 import '../../widgets/table_selector_bar.dart';
@@ -239,7 +242,7 @@ class PlayersTab extends StatelessWidget {
                   children: PlayerTag.values.map((tag) {
                     final selected = tags.contains(tag);
                     return ChoiceChip(
-                      label: Text(tag.label),
+                      label: Text(tag.localizedLabel),
                       selected: selected,
                       // Classification is mutually exclusive: at most ONE
                       // may be held at a time. Clearing the set before
@@ -289,6 +292,29 @@ class PlayersTab extends StatelessWidget {
                       return;
                     }
 
+                    // BLACKLIST GATE — creation path only.
+                    //
+                    // Placed here, after validation but before anything
+                    // is written, so every add-player route funnels
+                    // through it: the Players tab, an empty seat on the
+                    // poker table, and the app-bar action all open this
+                    // same sheet.
+                    //
+                    // Editing an existing player returned above, which
+                    // is deliberate: they are already seated, so warning
+                    // about it would be noise rather than a decision.
+                    //
+                    // A strong warning, never a lock — Continue seats
+                    // them normally, Cancel abandons the add entirely.
+                    if (PlayerRegistryService.isBlacklistedName(
+                        nameCtrl.text.trim())) {
+                      final proceed = await confirmBlacklistedPlayer(
+                        ctx,
+                        playerName: nameCtrl.text.trim(),
+                      );
+                      if (!proceed) return;
+                    }
+
                     final buyIn = double.tryParse(buyInCtrl.text.replaceAll(',', ''));
                     final name = nameCtrl.text.trim();
                     final tagList = tags.toList();
@@ -329,7 +355,7 @@ class PlayersTab extends StatelessWidget {
                     if (!context.mounted) return;
                     final result = await showQuickTransactionSheet(
                       context,
-                      title: 'Buy-in',
+                      title: tr('buy_in'),
                       type: TransactionType.buyIn,
                       initialAmount: buyIn,
                       formatter: fmt,
@@ -407,8 +433,7 @@ class PlayersTab extends StatelessWidget {
           context: context,
           builder: (ctx) => AlertDialog(
             title: Text(tr('house_rule_notice')),
-            content: Text('${player.name} is not eligible for another rebuy at level '
-                '${session.currentLevel} under the current house rules.'),
+            content: Text(tr('rebuy_not_eligible_note')),
             actions: [
               TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('cancel'))),
               ElevatedButton(
@@ -423,7 +448,7 @@ class PlayersTab extends StatelessWidget {
     final lastAmount = provider.lastAmountFor(player.id, type);
     final result = await showQuickTransactionSheet(
       context,
-      title: '${type.label} · ${player.name}',
+      title: '${type.localizedLabel} · ${player.name}',
       type: type,
       initialAmount: lastAmount,
       formatter: fmt,

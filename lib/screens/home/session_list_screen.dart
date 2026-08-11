@@ -109,6 +109,9 @@ class _SessionListScreenState extends State<SessionListScreen> {
     final currencies = all.map((s) => s.currency).toSet();
     final showTotals = all.isNotEmpty && currencies.length == 1;
     final fmt = CurrencyFormatter(all.isEmpty ? AppCurrency.usd : all.first.currency);
+    // Watched, so toggling the eye rebuilds this card immediately and
+    // the choice survives a restart via the settings box.
+    final showRake = context.watch<SettingsProvider>().showCumulativeRake;
 
     return Container(
       width: double.infinity,
@@ -231,24 +234,34 @@ class _SessionListScreenState extends State<SessionListScreen> {
           Row(
             children: [
               _heroStat(
-                label: 'Active',
+                label: tr('active'),
                 value: '$activeCount',
                 color: activeCount > 0 ? AppColors.accentGreen : AppColors.textSecondary,
                 icon: Icons.play_circle_outline,
               ),
               const SizedBox(width: 10),
               _heroStat(
-                label: 'Sessions',
+                label: tr('sessions'),
                 value: '${all.length}',
                 color: AppColors.textPrimary,
                 icon: Icons.history_toggle_off,
               ),
               const SizedBox(width: 10),
+              // Total Rake is the one figure a guest is most likely to
+              // read over the banker's shoulder, so it gets its own
+              // show/hide. Display only: `totalRake` above is still the
+              // existing SessionService.hostProfit fold, computed and
+              // unchanged either way — only the rendered string differs.
               _heroStat(
-                label: 'Total Rake',
-                value: showTotals ? fmt.format(totalRake) : '—',
+                label: tr('total_rake_label'),
+                value: !showRake
+                    ? CurrencyFormatter.maskedText
+                    : (showTotals ? fmt.format(totalRake) : '—'),
                 color: AppColors.gold,
                 icon: Icons.savings_outlined,
+                isHidden: !showRake,
+                onToggleVisibility: () =>
+                    context.read<SettingsProvider>().toggleCumulativeRake(),
               ),
             ],
           ),
@@ -262,38 +275,71 @@ class _SessionListScreenState extends State<SessionListScreen> {
     required String value,
     required Color color,
     required IconData icon,
+    /// When supplied, the tile becomes tappable and shows an eye
+    /// affordance beside its label. Only the Total Rake tile uses this;
+    /// the others are unchanged.
+    VoidCallback? onToggleVisibility,
+    bool isHidden = false,
   }) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-        decoration: BoxDecoration(
-          color: AppColors.surface.withValues(alpha: 0.72),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.divider),
-        ),
-        child: Column(
-          children: [
-            Icon(icon, size: 16, color: color.withValues(alpha: 0.85)),
-            const SizedBox(height: 6),
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(
-                value,
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color),
-              ),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              label.toUpperCase(),
-              style: const TextStyle(
-                fontSize: 9,
-                letterSpacing: 0.9,
-                color: AppColors.textSecondary,
-              ),
-            ),
-          ],
-        ),
+    final tile = Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+      decoration: BoxDecoration(
+        color: AppColors.surface.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.divider),
       ),
+      child: Column(
+        children: [
+          Icon(icon, size: 16, color: color.withValues(alpha: 0.85)),
+          const SizedBox(height: 6),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              value,
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color),
+            ),
+          ),
+          const SizedBox(height: 3),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  label.toUpperCase(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 9,
+                    letterSpacing: 0.9,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+              if (onToggleVisibility != null) ...[
+                const SizedBox(width: 4),
+                Icon(
+                  isHidden
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
+                  size: 11,
+                  color: AppColors.textSecondary,
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+
+    return Expanded(
+      child: onToggleVisibility == null
+          ? tile
+          : InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: onToggleVisibility,
+              child: tile,
+            ),
     );
   }
 

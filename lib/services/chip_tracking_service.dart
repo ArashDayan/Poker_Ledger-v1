@@ -570,8 +570,18 @@ class ChipTrackingService {
   /// being pushed, or settling up between themselves.
   ///
   /// The Bank is not involved, so bank inventory is unchanged; only the
-  /// two players' derived holdings move. No money transaction is created,
-  /// because no money changed hands.
+  /// two players' derived holdings move. No money transaction is created
+  /// HERE, because no money entered or left the session.
+  ///
+  /// TABLE ATTRIBUTION IS THE CALLER'S JOB.
+  /// When the two players sit at different tables the chips have
+  /// physically crossed the room, so the two tables' balances must move
+  /// even though the session's does not. That is a money-ledger concern,
+  /// not a chip-ledger one, so it is handled by the caller writing a
+  /// mirrored transferOut/transferIn pair — exactly the mechanism a
+  /// table-to-table player move already uses. Doing it here would drag a
+  /// LedgerTransaction dependency into the chip layer, which is
+  /// deliberately kept free of one.
   static Future<List<ChipMovement>> recordPlayerTransfer({
     required String fromPlayerId,
     required String toPlayerId,
@@ -849,10 +859,18 @@ class ChipTrackingService {
 
     // Rake is money-neutral here: it is counted as part of the Bank
     // because that is where the physical chips now sit.
+    // Dealer tips ride alongside rake here for the same reason: those
+    // chips physically sit in the Bank now. Counting them keeps the
+    // reconciliation identity true — without this, a session that paid
+    // tips would report the tip value as unexplained.
     var rakeToBank = 0.0;
     for (final m in _all) {
       if (sessionId != null && m.sessionId != sessionId) continue;
-      if (m.reasonEnum != ChipMovementReason.rake) continue;
+      final r = m.reasonEnum;
+      if (r != ChipMovementReason.rake &&
+          r != ChipMovementReason.dealerTips) {
+        continue;
+      }
       if (m.to.isBank) rakeToBank += m.totalValue;
       if (m.from.isBank) rakeToBank -= m.totalValue;
     }

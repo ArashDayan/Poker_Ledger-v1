@@ -170,7 +170,7 @@ class _SignatureZoomScreenState extends State<_SignatureZoomScreen>
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
-        title: Text(widget.title.isEmpty ? 'Signature' : widget.title,
+        title: Text(widget.title.isEmpty ? tr('signature') : widget.title,
             style: const TextStyle(fontSize: 15)),
         actions: [
           IconButton(
@@ -241,7 +241,7 @@ Future<void> showSignatureComparison(
                   const Icon(Icons.fact_check_outlined, color: AppColors.gold, size: 20),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text('Verify Signature · ${player.name}',
+                    child: Text('${tr('verify_signature')} · ${player.name}',
                         style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
                   ),
                 ],
