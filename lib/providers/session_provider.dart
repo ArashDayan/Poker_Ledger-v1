@@ -6,6 +6,7 @@ import '../models/player.dart';
 import '../models/session.dart';
 import '../models/transaction.dart';
 import '../services/hive_service.dart';
+import '../services/player_identity_service.dart';
 import '../services/session_service.dart';
 import '../services/chip_tracking_service.dart';
 import '../services/table_service.dart';
@@ -451,6 +452,11 @@ class SessionProvider extends ChangeNotifier {
     /// working and players created with only one sample stay valid.
     String? sampleSignature2Base64,
     String? tableId,
+    /// Permanent identity to attach to this seat. Null leaves the seat
+    /// unlinked — the correct state for every caller that has not gone
+    /// through confirm-on-suggest. This method never invents or
+    /// suggests a personId.
+    String? personId,
   }) async {
     if (_current == null) throw StateError('No active session.');
 
@@ -511,6 +517,7 @@ class SessionProvider extends ChangeNotifier {
           (sampleSignature2Base64 != null && sampleSignature2Base64.isNotEmpty)
               ? DateTime.now()
               : null,
+      personId: personId,
     );
     await HiveService.players.put(player.id, player);
     notifyListeners();
@@ -532,6 +539,7 @@ class SessionProvider extends ChangeNotifier {
     String? sampleSignatureBase64,
     String? sampleSignature2Base64,
     String? tableId,
+    String? personId,
   }) async {
     final player = await addPlayer(
       name: name,
@@ -541,6 +549,7 @@ class SessionProvider extends ChangeNotifier {
       sampleSignatureBase64: sampleSignatureBase64,
       sampleSignature2Base64: sampleSignature2Base64,
       tableId: tableId,
+      personId: personId,
     );
     if (buyInAmount != null && buyInAmount > 0) {
       if (hostSignatureBase64 == null || hostSignatureBase64.isEmpty) {
@@ -587,6 +596,12 @@ class SessionProvider extends ChangeNotifier {
 
   Future<void> updatePlayer(Player player) async {
     await player.save();
+    // A rename updates the identity's display spelling only. The
+    // personId itself never changes here — that would be a merge.
+    final linkedId = player.personId;
+    if (linkedId != null && linkedId.isNotEmpty) {
+      await PlayerIdentityService.touchDisplayName(linkedId, player.name);
+    }
     notifyListeners();
   }
 

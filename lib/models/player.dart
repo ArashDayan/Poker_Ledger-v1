@@ -85,6 +85,18 @@ class Player extends HiveObject {
   @HiveField(16)
   DateTime? sampleSignature2At;
 
+  /// Permanent identity of the human sitting in this seat.
+  ///
+  /// Null on every player saved before Step 1, and that is a real
+  /// state — not "settled" and not "owes nothing". A missing personId
+  /// means this seat has not been linked yet. Financial totals for an
+  /// unlinked seat must later read as "Not recorded", never 0.
+  ///
+  /// Additive HiveField 17: old records load with null and keep working.
+  /// Names stay display-only; this id is what later money attaches to.
+  @HiveField(17)
+  String? personId;
+
   Player({
     required this.id,
     required this.sessionId,
@@ -103,6 +115,7 @@ class Player extends HiveObject {
     this.addOnCount = 0,
     this.sampleSignature2Base64,
     this.sampleSignature2At,
+    this.personId,
   })  : tags = tags ?? [],
         joinedAt = joinedAt ?? DateTime.now();
 
@@ -124,6 +137,7 @@ class Player extends HiveObject {
         'addOnCount': addOnCount,
         'sampleSignature2Base64': sampleSignature2Base64,
         'sampleSignature2At': sampleSignature2At?.toIso8601String(),
+        'personId': personId,
       };
 
   static Player fromJson(Map<String, dynamic> json) => Player(
@@ -154,6 +168,7 @@ class Player extends HiveObject {
         sampleSignature2At: json['sampleSignature2At'] == null
             ? null
             : DateTime.parse(json['sampleSignature2At'] as String),
+        personId: json['personId'] as String?,
       );
 
   /// Whether this player has busted out of a tournament.

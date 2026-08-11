@@ -9,6 +9,7 @@ import '../../models/enums.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/sound_service.dart';
 import '../../services/backup_service.dart';
+import '../../widgets/identity_link_sheet.dart';
 import '../license/license_info_section.dart';
 import '../security/app_lock_section.dart';
 
@@ -102,12 +103,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
         await context.read<SettingsProvider>().reload();
         AppSounds.loadPreference();
       }
+
+      // D-2: identity conflicts are never auto-merged. Each one needs
+      // an explicit keep-local / take-backup / keep-both decision.
+      // Dismissing a prompt keeps the local identity.
+      if (mounted && res.requiresIdentityResolution) {
+        final resolutions = <IdentityResolution>[];
+        for (final conflict in res.identityConflicts) {
+          if (!mounted) break;
+          final action = await confirmIdentityRestoreConflict(
+            context,
+            conflict: conflict,
+          );
+          resolutions.add(
+              IdentityResolution(conflict: conflict, action: action));
+        }
+        if (resolutions.isNotEmpty) {
+          await BackupService.applyIdentityResolutions(resolutions);
+        }
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(
             'Restored ${res.sessionsImported} sessions, ${res.playersImported} '
             'players, ${res.transactionsImported} transactions'
-            '${res.settingsImported > 0 ? ', ${res.settingsImported} settings' : ''}.',
+            '${res.settingsImported > 0 ? ', ${res.settingsImported} settings' : ''}'
+            '${res.identitiesImported > 0 ? ', ${res.identitiesImported} identities' : ''}.'
+            '${res.identityConflicts.isNotEmpty ? ' ${tr('identity_conflicts_resolved')}' : ''}',
           ),
         ));
       }

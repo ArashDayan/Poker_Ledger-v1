@@ -58,10 +58,12 @@ class StorageErrorApp extends StatelessWidget {
                       textAlign: TextAlign.center),
                   const SizedBox(height: 12),
                   const Text(
-                    "Local storage on this device couldn't be opened, even after "
-                    'attempting to recover it automatically. Try restarting the app. '
-                    'If this keeps happening, check available storage space, or '
-                    'reinstall — but note reinstalling will lose any unsaved sessions.',
+                    "Local storage on this device couldn't be opened. "
+                    'Chip-ledger files are recovered automatically when possible; '
+                    'identity and financial files are never deleted to recover them, '
+                    'so a backup can still be copied off the device. '
+                    'Try restarting the app. If this keeps happening, check '
+                    'available storage space.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: AppColors.textSecondary),
                   ),
