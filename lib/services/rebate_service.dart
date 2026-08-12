@@ -752,6 +752,29 @@ class RebateService {
     String personId,
     AppCurrency currency,
   ) {
+    final events = _activeChronological(
+      sessionId: sessionId,
+      personId: personId,
+      currency: currency,
+    );
+    var consumed = 0;
+    for (final e in events) {
+      if (e.type != FinancialEventType.rebateGranted) continue;
+      consumed += e.baseLossMinor ?? 0;
+    }
+    return consumed;
+  }
+
+  /// Active (not reversed, not a reversal) events in occurrence order.
+  ///
+  /// Same exclusion rules as [snapshot]. Used so a cash-out that has
+  /// already closed snapshot exposure can still recover an unjournaled
+  /// type-9 row.
+  static List<FinancialEvent> _activeChronological({
+    required String sessionId,
+    String? personId,
+    required AppCurrency currency,
+  }) {
     final events = FinancialLedgerService.eventsForSession(
       sessionId,
       personId: personId,
@@ -761,13 +784,14 @@ class RebateService {
         .where((e) => e.isReversal)
         .map((e) => e.reversesEventId!)
         .toSet();
-    var consumed = 0;
-    for (final e in events) {
-      if (e.isReversal || reversed.contains(e.id)) continue;
-      if (e.type != FinancialEventType.rebateGranted) continue;
-      consumed += e.baseLossMinor ?? 0;
-    }
-    return consumed;
+    return events
+        .where((e) => !e.isReversal && !reversed.contains(e.id))
+        .toList()
+      ..sort((a, b) {
+        final byTime = a.occurredAt.compareTo(b.occurredAt);
+        if (byTime != 0) return byTime;
+        return a.createdAt.compareTo(b.createdAt);
+      });
   }
 
   static int _percentOf(int minor, double percent) {

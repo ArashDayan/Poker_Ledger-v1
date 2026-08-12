@@ -158,6 +158,45 @@ void main() {
       expect(result.financialEventsReserved, 1);
       expect(HiveService.financialEvents.isEmpty, isTrue);
     });
+
+    test('Discount grant fields survive backup export and restore', () async {
+      final person = await PlayerIdentityService.createNew('Ali');
+      final grant = FinancialEvent(
+        id: 'grant-1',
+        personId: person!.id,
+        currency: AppCurrency.usd,
+        type: FinancialEventType.rebateGranted,
+        amountMinor: 15000,
+        occurredAt: DateTime(2026, 8, 12, 21),
+        createdAt: DateTime(2026, 8, 12, 21),
+        sessionId: 'night',
+        baseLossMinor: 150000,
+        grantedAsChips: true,
+      );
+      await HiveService.financialEvents.put(grant.id, grant);
+
+      final payload = BackupService.exportPayload();
+      final exported = (payload['financialEvents'] as List).single
+          as Map<String, dynamic>;
+      expect(exported['baseLossMinor'], 150000);
+      expect(exported['grantedAsChips'], isTrue);
+      expect(exported['type'], FinancialEventType.rebateGranted.index);
+      expect(exported['sessionId'], 'night');
+      expect(exported['personId'], person.id);
+
+      await HiveService.financialEvents.clear();
+      final result = await BackupService.importPayload(payload);
+      expect(result.financialEventsImported, 1);
+      final restored = HiveService.financialEvents.get('grant-1')!;
+      expect(restored.type, FinancialEventType.rebateGranted);
+      expect(restored.amountMinor, 15000);
+      expect(restored.baseLossMinor, 150000);
+      expect(restored.grantedAsChips, isTrue);
+      expect(restored.sessionId, 'night');
+      expect(restored.personId, person.id);
+      expect(restored.currency, AppCurrency.usd);
+      expect(restored.reversesEventId, isNull);
+    });
   });
 
   group('D-2 identity conflicts are not auto-applied', () {

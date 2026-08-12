@@ -217,6 +217,8 @@ class FinancialEvent extends HiveObject {
         'reversesEventId': reversesEventId,
         'adjustmentSign': adjustmentSign,
         'reason': reason,
+        'baseLossMinor': baseLossMinor,
+        'grantedAsChips': grantedAsChips,
       };
 
   static FinancialEvent fromJson(Map<String, dynamic> json) {

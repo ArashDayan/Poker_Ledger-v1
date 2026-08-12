@@ -1183,4 +1183,115 @@ void main() {
       );
     });
   });
+
+  group('D1/D2 compile and backup integrity', () {
+    test('unjournaled realization after cash-out is $70 lost in play',
+        () async {
+      final s = await _session('pending');
+      await _cashIn(s.id, 1500);
+      await RebateService.grant(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        asChips: false,
+        bustRealized: true,
+      );
+      await _cashOut(s.id, 80);
+      final pending = RebateService.unjournaledRealization(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+      );
+      expect(pending, isNotNull);
+      expect(pending!.returnedMinor, 7000);
+      expect(pending.clawbackMinor, 0);
+      expect(pending.actualCashPaidMinor, 8000);
+      expect(pending.recoveryKind, RebateRecoveryKind.lostInPlay);
+    });
+
+    test('grant JSON round-trips baseLossMinor and grantedAsChips', () {
+      final original = FinancialEvent(
+        id: 'g-1',
+        personId: _personId,
+        currency: AppCurrency.usd,
+        type: FinancialEventType.rebateGranted,
+        amountMinor: 15000,
+        occurredAt: DateTime(2026, 8, 12, 20),
+        createdAt: DateTime(2026, 8, 12, 20),
+        sessionId: 'econ',
+        baseLossMinor: 150000,
+        grantedAsChips: true,
+      );
+      final json = original.toJson();
+      expect(json['baseLossMinor'], 150000);
+      expect(json['grantedAsChips'], isTrue);
+      expect(json['type'], FinancialEventType.rebateGranted.index);
+      final copy = FinancialEvent.fromJson(json);
+      expect(copy.id, original.id);
+      expect(copy.personId, original.personId);
+      expect(copy.currency, AppCurrency.usd);
+      expect(copy.type, FinancialEventType.rebateGranted);
+      expect(copy.amountMinor, 15000);
+      expect(copy.sessionId, 'econ');
+      expect(copy.baseLossMinor, 150000);
+      expect(copy.grantedAsChips, isTrue);
+      expect(copy.reversesEventId, isNull);
+    });
+
+    test('older JSON without grant fields still loads as null', () {
+      final json = {
+        'id': 'legacy',
+        'personId': _personId,
+        'currency': AppCurrency.usd.index,
+        'type': FinancialEventType.cashInForChips.index,
+        'amountMinor': 150000,
+        'occurredAt': DateTime(2026, 1, 1).toIso8601String(),
+        'createdAt': DateTime(2026, 1, 1).toIso8601String(),
+        'isBackdated': false,
+        'sessionId': 'old',
+      };
+      final copy = FinancialEvent.fromJson(json);
+      expect(copy.baseLossMinor, isNull);
+      expect(copy.grantedAsChips, isNull);
+      expect(copy.type, FinancialEventType.cashInForChips);
+    });
+
+    test('restored grant keeps consumed base loss so the same $1500 is not rebated again',
+        () async {
+      final s = await _session('restore');
+      await _cashIn(s.id, 1500);
+      final grant = await RebateService.grant(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        asChips: true,
+        bustRealized: true,
+      );
+      expect(grant.baseLossMinor, 150000);
+      expect(grant.grantedAsChips, isTrue);
+
+      final payload = grant.toJson();
+      await HiveService.financialEvents.delete(grant.id);
+      expect(_snap(s.id).granted, 0);
+
+      final restored = FinancialEvent.fromJson(payload);
+      await HiveService.financialEvents.put(restored.id, restored);
+      expect(restored.baseLossMinor, 150000);
+      expect(restored.grantedAsChips, isTrue);
+      expect(
+        RebateService.chipGrantsIssuedMinor(s.id, AppCurrency.usd),
+        15000,
+      );
+
+      final sug = RebateService.suggest(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        bustRealized: true,
+      );
+      expect(sug.alreadyQualified, isTrue);
+      expect(sug.canGrant, isFalse);
+      expect(sug.blockReason, contains('No new own-cash loss'));
+    });
+  });
 }
