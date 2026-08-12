@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/localization/enum_labels.dart';
@@ -7,14 +8,20 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
 import '../../models/financial_event.dart';
+import '../../providers/session_provider.dart';
+import '../../services/deposit_to_chips.dart';
 import '../../services/financial_capture.dart';
 import '../../services/financial_ledger_service.dart';
+import '../../services/sound_service.dart';
+import '../../widgets/chip_flow.dart';
+import '../../widgets/signature_pad.dart';
 
 /// Player Account: derived Outstanding Balance plus history.
 ///
-/// Step 3 added Credit repayment. Step 4 adds Front Money deposit and
-/// return. Neither writes the Chip Ledger. Settlement reports stay
-/// Step 5. Discount/rebate stays Step 6.
+/// Step 4 Deposit (internal type: front money):
+///   Accept Deposit, Use Deposit for Chips, Return Deposit.
+/// Use Deposit for Chips is one explicit action — never inferred from
+/// a Buy-in. Settlement stays Step 5. Discount/rebate stays Step 6.
 ///
 /// Every amount goes through [CurrencyFormatter.format] so Privacy Mode
 /// cannot leak a figure here.
@@ -64,16 +71,22 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
             ...account.balances.map(_balanceCard),
           const SizedBox(height: 8),
           OutlinedButton.icon(
-            onPressed: _acceptFrontMoney,
+            onPressed: _acceptDeposit,
             icon: const Icon(Icons.savings_outlined, size: 18),
-            label: Text(tr('accept_front_money')),
+            label: Text(tr('accept_deposit')),
           ),
-          if (account.balances.any((b) => b.bankerHolds)) ...[
+          if (_hasDeposit) ...[
             const SizedBox(height: 8),
             OutlinedButton.icon(
-              onPressed: _returnFrontMoney,
+              onPressed: _useDepositForChips,
+              icon: const Icon(Icons.casino_outlined, size: 18),
+              label: Text(tr('use_deposit_for_chips')),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _returnDeposit,
               icon: const Icon(Icons.north_east, size: 18),
-              label: Text(tr('return_front_money')),
+              label: Text(tr('return_deposit')),
             ),
           ],
           if (account.balances.any((b) => b.playerOwes)) ...[
@@ -120,11 +133,33 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
     return AppCurrency.usd;
   }
 
-  Future<void> _acceptFrontMoney() async {
+  double _depositMajor(AppCurrency currency) =>
+      FinancialLedgerService.depositHeldMajor(widget.personId, currency);
+
+  bool get _hasDeposit {
+    final account = FinancialLedgerService.accountFor(widget.personId);
+    final currencies = <AppCurrency>{_actionCurrency};
+    for (final b in account.balances) {
+      currencies.add(b.currency);
+    }
+    return currencies.any((c) => _depositMajor(c) > 0);
+  }
+
+  AppCurrency get _depositCurrency {
+    final preferred = _actionCurrency;
+    if (_depositMajor(preferred) > 0) return preferred;
+    final account = FinancialLedgerService.accountFor(widget.personId);
+    for (final b in account.balances) {
+      if (_depositMajor(b.currency) > 0) return b.currency;
+    }
+    return preferred;
+  }
+
+  Future<void> _acceptDeposit() async {
     final currency = _actionCurrency;
     final amount = await _askAmount(
-      title: tr('accept_front_money'),
-      hint: tr('front_money_in_hint'),
+      title: tr('accept_deposit'),
+      hint: tr('deposit_in_hint'),
       currency: currency,
     );
     if (amount == null) return;
@@ -144,26 +179,15 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
     }
   }
 
-  Future<void> _returnFrontMoney() async {
-    final account = FinancialLedgerService.accountFor(widget.personId);
-    final held = account.balances.where((b) => b.bankerHolds).toList();
-    if (held.isEmpty) return;
-    OutstandingBalance balance = held.first;
-    final sessionCurrency = widget.sessionCurrency;
-    if (sessionCurrency != null) {
-      for (final b in held) {
-        if (b.currency == sessionCurrency) {
-          balance = b;
-          break;
-        }
-      }
-    }
-    final currency = balance.currency;
+  Future<void> _returnDeposit() async {
+    final currency = _depositCurrency;
+    final held = _depositMajor(currency);
+    if (held <= 0) return;
     final amount = await _askAmount(
-      title: tr('return_front_money'),
-      hint: tr('front_money_out_hint'),
+      title: tr('return_deposit'),
+      hint: tr('deposit_out_hint'),
       currency: currency,
-      initial: balance.amountMajor.abs(),
+      initial: held,
     );
     if (amount == null) return;
     try {
@@ -180,6 +204,153 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
             .showSnackBar(SnackBar(content: Text('$e')));
       }
     }
+  }
+
+  Future<void> _useDepositForChips() async {
+    final currency = _depositCurrency;
+    final held = _depositMajor(currency);
+    if (held <= 0) return;
+
+    String? sessionId = widget.sessionId;
+    try {
+      final provider = context.read<SessionProvider>();
+      sessionId ??= provider.current?.id;
+    } catch (_) {}
+    if (sessionId == null || sessionId.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr('deposit_need_session'))),
+        );
+      }
+      return;
+    }
+    final player = DepositToChips.seatedPlayer(sessionId, widget.personId);
+    if (player == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr('deposit_need_seat'))),
+        );
+      }
+      return;
+    }
+
+    final choice = await _askConvert(currency: currency, initial: held);
+    if (choice == null) return;
+
+    final dist = ChipFlow.appliesTo(TransactionType.buyIn)
+        ? await ChipFlow.ask(context,
+            amount: choice.amount, currency: currency)
+        : null;
+    if (!mounted) return;
+
+    try {
+      final result = await DepositToChips.convert(
+        personId: widget.personId,
+        sessionId: sessionId,
+        playerId: player.id,
+        currency: currency,
+        amount: choice.amount,
+        hostSignatureBase64: choice.signature,
+      );
+      if (mounted) {
+        await ChipFlow.apply(
+          context,
+          distribution: dist,
+          type: result.chipTransaction.type,
+          sessionId: sessionId,
+          transactionId: result.chipTransaction.id,
+          playerId: player.id,
+        );
+      }
+      AppSounds.play(AppSounds.forTransaction(result.chipTransaction.type));
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
+  Future<_ConvertChoice?> _askConvert({
+    required AppCurrency currency,
+    required double initial,
+  }) async {
+    final fmt = CurrencyFormatter(currency);
+    final ctrl = TextEditingController(
+      text: initial.toStringAsFixed(currency == AppCurrency.usd ? 2 : 0),
+    );
+    var signature = '';
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 16,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+        ),
+        child: StatefulBuilder(
+          builder: (ctx, setSheet) => SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(tr('use_deposit_for_chips'),
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                Text(tr('deposit_use_chips_hint'),
+                    style: const TextStyle(
+                        fontSize: 12.5,
+                        color: AppColors.textSecondary,
+                        height: 1.35)),
+                const SizedBox(height: 8),
+                Text(
+                  '${tr('remaining_deposit')}: ${fmt.format(initial)}',
+                  style: const TextStyle(
+                      fontSize: 13, color: AppColors.textSecondary),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: ctrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    labelText: tr('amount'),
+                    prefixText: fmt.symbol == r'$' ? r'$ ' : null,
+                    suffixText: fmt.symbol == r'$' ? null : fmt.symbol,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(tr('deposit_sign_hint'),
+                    style: const TextStyle(
+                        fontSize: 12, color: AppColors.textSecondary)),
+                const SizedBox(height: 8),
+                SignaturePad(
+                    onChanged: (sig) => setSheet(() => signature = sig)),
+                const SizedBox(height: 14),
+                ElevatedButton(
+                  onPressed: signature.isEmpty
+                      ? null
+                      : () => Navigator.pop(ctx, true),
+                  child: Text(tr('confirm')),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: Text(tr('cancel')),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (confirmed != true || !mounted) return null;
+    final amount = double.tryParse(ctrl.text.replaceAll(',', ''));
+    if (amount == null || amount <= 0 || signature.isEmpty) return null;
+    return _ConvertChoice(amount, signature);
   }
 
   Future<double?> _askAmount({
@@ -331,6 +502,7 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
 
   Widget _balanceCard(OutstandingBalance b) {
     final fmt = CurrencyFormatter(b.currency);
+    final deposit = _depositMajor(b.currency);
     final Color color;
     final String caption;
     final String figure;
@@ -385,6 +557,14 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
             const SizedBox(height: 4),
             Text(caption,
                 style: TextStyle(fontSize: 12.5, color: color)),
+            if (deposit > 0) ...[
+              const SizedBox(height: 8),
+              Text(
+                '${tr('remaining_deposit')}: ${fmt.format(deposit)}',
+                style: const TextStyle(
+                    fontSize: 12.5, color: AppColors.gold),
+              ),
+            ],
           ],
         ),
       ),
@@ -521,4 +701,10 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
 
   String _currencyLabel(AppCurrency currency) =>
       currency == AppCurrency.usd ? 'USD' : tr('toman');
+}
+
+class _ConvertChoice {
+  final double amount;
+  final String signature;
+  const _ConvertChoice(this.amount, this.signature);
 }

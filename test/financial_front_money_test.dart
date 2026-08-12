@@ -1,7 +1,7 @@
-// Step 4 — Front Money deposit and return.
+// Step 4 — Deposit (internal type: front money).
 //
-// Front money is cash the banker holds for a player. It is not a chip
-// buy-in, not credit, and not a Discount/rebate event.
+// A Deposit is cash the banker holds. It is not a chip buy-in, not
+// credit, and not a Discount/rebate base until explicitly converted.
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +13,7 @@ import 'package:poker_ledger/models/player.dart';
 import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
+import 'package:poker_ledger/services/deposit_to_chips.dart';
 import 'package:poker_ledger/services/financial_capture.dart';
 import 'package:poker_ledger/services/financial_ledger_service.dart';
 import 'package:poker_ledger/services/hive_service.dart';
@@ -45,25 +46,48 @@ Future<void> _close() async {
 OutstandingBalance _usd() =>
     FinancialLedgerService.balance(_personId, AppCurrency.usd);
 
+double _deposit() =>
+    FinancialLedgerService.depositHeldMajor(_personId, AppCurrency.usd);
+
+double _cashInSum() {
+  return FinancialLedgerService.eventsFor(_personId,
+          currency: AppCurrency.usd)
+      .where((e) =>
+          e.type == FinancialEventType.cashInForChips && !e.isReversal)
+      .fold<double>(0, (s, e) => s + e.amountMajor);
+}
+
+Future<Player> _seat(String sessionId) async {
+  final player = Player(
+    id: 'seat-1',
+    sessionId: sessionId,
+    name: 'Ali',
+    seatNumber: 1,
+    personId: _personId,
+  );
+  await HiveService.players.put(player.id, player);
+  return player;
+}
+
 void main() {
   setUp(_open);
   tearDown(_close);
 
-  group('front money writes', () {
-    test('deposit makes the banker hold the cash', () async {
+  group('deposit writes', () {
+    test('deposit $1000 is held and is not cashInForChips', () async {
       final e = await FinancialCapture.recordFrontMoneyIn(
         personId: _personId,
         currency: AppCurrency.usd,
-        amount: 2000,
+        amount: 1000,
       );
-      expect(e, isNotNull);
       expect(e!.type, FinancialEventType.frontMoneyIn);
-      expect(_usd().recorded, isTrue);
-      expect(_usd().amountMajor, -2000);
-      expect(_usd().bankerHolds, isTrue);
+      expect(_deposit(), 1000);
+      expect(_usd().amountMajor, -1000);
+      expect(_cashInSum(), 0);
+      expect(HiveService.transactions.isEmpty, isTrue);
     });
 
-    test('full return settles the held cash', () async {
+    test('full return settles the deposit', () async {
       await FinancialCapture.recordFrontMoneyIn(
         personId: _personId,
         currency: AppCurrency.usd,
@@ -75,26 +99,11 @@ void main() {
         amount: 2000,
       );
       expect(out!.type, FinancialEventType.frontMoneyOut);
-      expect(_usd().amountMajor, 0);
+      expect(_deposit(), 0);
       expect(_usd().isSettled, isTrue);
     });
 
-    test('partial return leaves the remainder held', () async {
-      await FinancialCapture.recordFrontMoneyIn(
-        personId: _personId,
-        currency: AppCurrency.usd,
-        amount: 2000,
-      );
-      await FinancialCapture.recordFrontMoneyOut(
-        personId: _personId,
-        currency: AppCurrency.usd,
-        amount: 500,
-      );
-      expect(_usd().amountMajor, -1500);
-      expect(_usd().bankerHolds, isTrue);
-    });
-
-    test('cannot return more than is held', () async {
+    test('cannot return more than remaining deposit', () async {
       await FinancialCapture.recordFrontMoneyIn(
         personId: _personId,
         currency: AppCurrency.usd,
@@ -108,19 +117,7 @@ void main() {
         ),
         throwsA(isA<FinancialLedgerException>()),
       );
-      expect(_usd().amountMajor, -200);
-    });
-
-    test('cannot return when nothing is held', () async {
-      expect(
-        () => FinancialCapture.recordFrontMoneyOut(
-          personId: _personId,
-          currency: AppCurrency.usd,
-          amount: 100,
-        ),
-        throwsA(isA<FinancialLedgerException>()),
-      );
-      expect(_usd().isNotRecorded, isTrue);
+      expect(_deposit(), 200);
     });
 
     test('no personId writes nothing', () async {
@@ -143,8 +140,191 @@ void main() {
     });
   });
 
+  group('use deposit for chips', () {
+    test('deposit 1000 then convert 600 leaves 400 and writes cash-in',
+        () async {
+      final session = PokerSession(
+        id: 's-dep',
+        name: 'Night',
+        location: 'Home',
+        dateTime: DateTime.now(),
+        smallBlind: 1,
+        bigBlind: 2,
+        tableNumber: '1',
+      );
+      await HiveService.sessions.put(session.id, session);
+      final player = await _seat(session.id);
+
+      await FinancialCapture.recordFrontMoneyIn(
+        personId: _personId,
+        currency: AppCurrency.usd,
+        amount: 1000,
+        sessionId: session.id,
+      );
+
+      final result = await DepositToChips.convert(
+        personId: _personId,
+        sessionId: session.id,
+        playerId: player.id,
+        currency: AppCurrency.usd,
+        amount: 600,
+        hostSignatureBase64: 'sig',
+      );
+
+      expect(result.frontMoneyOut.type, FinancialEventType.frontMoneyOut);
+      expect(result.frontMoneyOut.amountMajor, 600);
+      expect(result.cashInForChips.type, FinancialEventType.cashInForChips);
+      expect(result.cashInForChips.amountMajor, 600);
+      expect(result.frontMoneyOut.linkedTransactionId, result.chipTransaction.id);
+      expect(result.cashInForChips.linkedTransactionId, result.chipTransaction.id);
+      expect(result.chipTransaction.amount, 600);
+      expect(result.chipTransaction.type, TransactionType.buyIn);
+      expect(result.chipTransaction.playerId, player.id);
+
+      expect(_deposit(), 400);
+      expect(_cashInSum(), 600);
+      expect(SessionService.totalBuyIn(session.id), 600);
+      expect(SessionService.playerTotalIn(session.id, player.id), 600);
+      // Outstanding: deposit remaining only. cashInForChips contributes 0.
+      expect(_usd().amountMajor, -400);
+      expect(SessionService.hostProfit(session.id), 0);
+    });
+
+    test('returning remaining 400 writes only frontMoneyOut', () async {
+      final session = PokerSession(
+        id: 's-ret',
+        name: 'Night',
+        location: 'Home',
+        dateTime: DateTime.now(),
+        smallBlind: 1,
+        bigBlind: 2,
+        tableNumber: '1',
+      );
+      await HiveService.sessions.put(session.id, session);
+      final player = await _seat(session.id);
+      await FinancialCapture.recordFrontMoneyIn(
+        personId: _personId,
+        currency: AppCurrency.usd,
+        amount: 1000,
+        sessionId: session.id,
+      );
+      await DepositToChips.convert(
+        personId: _personId,
+        sessionId: session.id,
+        playerId: player.id,
+        currency: AppCurrency.usd,
+        amount: 600,
+        hostSignatureBase64: 'sig',
+      );
+
+      final out = await FinancialCapture.recordFrontMoneyOut(
+        personId: _personId,
+        currency: AppCurrency.usd,
+        amount: 400,
+        sessionId: session.id,
+      );
+      expect(out!.type, FinancialEventType.frontMoneyOut);
+      expect(_deposit(), 0);
+      expect(_cashInSum(), 600);
+      expect(
+        FinancialLedgerService.eventsFor(_personId)
+            .where((e) => e.type == FinancialEventType.cashOutForChips),
+        isEmpty,
+      );
+      expect(SessionService.totalCashOut(session.id), 0);
+    });
+
+    test('deposit itself is never a Discount base', () async {
+      await FinancialCapture.recordFrontMoneyIn(
+        personId: _personId,
+        currency: AppCurrency.usd,
+        amount: 1000,
+      );
+      // No conversion → no cash-in. Rebate (Step 6) reads cashInForChips
+      // only, so an unused deposit cannot qualify.
+      expect(_cashInSum(), 0);
+      expect(
+        FinancialLedgerService.eventsFor(_personId)
+            .every((e) => e.type.index <= 7),
+        isTrue,
+      );
+    });
+
+    test('cannot convert more than remaining deposit', () async {
+      final session = PokerSession(
+        id: 's-over',
+        name: 'Night',
+        location: 'Home',
+        dateTime: DateTime.now(),
+        smallBlind: 1,
+        bigBlind: 2,
+        tableNumber: '1',
+      );
+      await HiveService.sessions.put(session.id, session);
+      final player = await _seat(session.id);
+      await FinancialCapture.recordFrontMoneyIn(
+        personId: _personId,
+        currency: AppCurrency.usd,
+        amount: 1000,
+      );
+      expect(
+        () => DepositToChips.convert(
+          personId: _personId,
+          sessionId: session.id,
+          playerId: player.id,
+          currency: AppCurrency.usd,
+          amount: 1001,
+          hostSignatureBase64: 'sig',
+        ),
+        throwsA(isA<FinancialLedgerException>()),
+      );
+      expect(SessionService.totalBuyIn(session.id), 0);
+      expect(_deposit(), 1000);
+    });
+
+    test('a second convert uses rebuy and does not double-count', () async {
+      final session = PokerSession(
+        id: 's-two',
+        name: 'Night',
+        location: 'Home',
+        dateTime: DateTime.now(),
+        smallBlind: 1,
+        bigBlind: 2,
+        tableNumber: '1',
+      );
+      await HiveService.sessions.put(session.id, session);
+      final player = await _seat(session.id);
+      await FinancialCapture.recordFrontMoneyIn(
+        personId: _personId,
+        currency: AppCurrency.usd,
+        amount: 1000,
+      );
+      await DepositToChips.convert(
+        personId: _personId,
+        sessionId: session.id,
+        playerId: player.id,
+        currency: AppCurrency.usd,
+        amount: 600,
+        hostSignatureBase64: 'sig',
+      );
+      final second = await DepositToChips.convert(
+        personId: _personId,
+        sessionId: session.id,
+        playerId: player.id,
+        currency: AppCurrency.usd,
+        amount: 400,
+        hostSignatureBase64: 'sig',
+      );
+      expect(second.chipTransaction.type, TransactionType.rebuy);
+      expect(SessionService.totalBuyIn(session.id), 600);
+      expect(SessionService.totalRebuy(session.id), 400);
+      expect(_cashInSum(), 1000);
+      expect(_deposit(), 0);
+    });
+  });
+
   group('isolation', () {
-    test('front money does not create a chip buy-in', () async {
+    test('accepting a deposit does not create a chip buy-in', () async {
       await FinancialCapture.recordFrontMoneyIn(
         personId: _personId,
         currency: AppCurrency.usd,
@@ -155,7 +335,7 @@ void main() {
       expect(SessionService.totalBuyIn('s-fm'), 0);
     });
 
-    test('a chip buy-in does not become front money', () async {
+    test('a chip buy-in is not inferred as a deposit', () async {
       final session = PokerSession(
         id: 's-chip',
         name: 'Night',
@@ -179,9 +359,10 @@ void main() {
       );
       expect(SessionService.totalBuyIn(session.id), 2000);
       expect(_usd().isNotRecorded, isTrue);
+      expect(_deposit(), 0);
     });
 
-    test('front money does not change host profit', () async {
+    test('deposit does not change host profit', () async {
       final session = PokerSession(
         id: 's-rake',
         name: 'Night',
@@ -213,30 +394,20 @@ void main() {
       expect(SessionService.hostProfit(session.id),
           SessionService.totalRake(session.id));
     });
-
-    test('cash-in for chips is not front money', () async {
-      await FinancialCapture.recordFunding(
-        personId: _personId,
-        currency: AppCurrency.usd,
-        funding: ChipFunding.paidCash,
-        amount: 1000,
-      );
-      expect(_usd().amountMajor, 0);
-      expect(_usd().bankerHolds, isFalse);
-      final events = FinancialLedgerService.eventsFor(_personId);
-      expect(events.single.type, FinancialEventType.cashInForChips);
-    });
   });
 
   group('localization', () {
-    test('EN/FA front-money keys exist and differ', () {
+    test('EN/FA deposit keys exist and differ', () {
       const keys = [
-        'accept_front_money',
-        'return_front_money',
-        'front_money_in_hint',
-        'front_money_out_hint',
-        'fin_front_money_in',
-        'fin_front_money_out',
+        'accept_deposit',
+        'return_deposit',
+        'use_deposit_for_chips',
+        'remaining_deposit',
+        'deposit_in_hint',
+        'deposit_out_hint',
+        'deposit_use_chips_hint',
+        'fin_deposit_in',
+        'fin_deposit_out',
       ];
       for (final key in keys) {
         final en = AppLocalizations.lookup('en', key);

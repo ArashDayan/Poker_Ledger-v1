@@ -270,6 +270,36 @@ class FinancialLedgerService {
     return list;
   }
 
+  /// Remaining deposit (front money still held) in minor units.
+  ///
+  /// Derived only from frontMoneyIn − frontMoneyOut. Reversed events
+  /// are excluded. This is NOT Outstanding Balance and is NOT a
+  /// Discount/rebate base — cashInForChips is never included.
+  static int depositHeldMinor(String personId, AppCurrency currency) {
+    final events = _eventsFor(personId, currency: currency);
+    if (events.isEmpty) return 0;
+    final reversed = _reversedIds(events);
+    var minor = 0;
+    for (final e in events) {
+      if (e.isReversal || reversed.contains(e.id)) continue;
+      switch (e.type) {
+        case FinancialEventType.frontMoneyIn:
+          minor += e.amountMinor;
+          break;
+        case FinancialEventType.frontMoneyOut:
+          minor -= e.amountMinor;
+          break;
+        default:
+          break;
+      }
+    }
+    return minor < 0 ? 0 : minor;
+  }
+
+  /// Same figure as [depositHeldMinor], in display units.
+  static double depositHeldMajor(String personId, AppCurrency currency) =>
+      MoneyUnits.toMajor(currency, depositHeldMinor(personId, currency));
+
   /// Derived, never stored. Empty history ⇒ [PlayerAccount.hasHistory]
   /// is false and the UI must show "Not recorded", not 0.
   static PlayerAccount accountFor(String personId) {

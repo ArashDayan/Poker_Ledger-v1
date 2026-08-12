@@ -121,8 +121,9 @@ class FinancialCapture {
     );
   }
 
-  /// Player hands cash to the banker to hold. Not a chip buy-in and
-  /// not a credit repayment. Does not write the Chip Ledger.
+  /// Player hands cash to the banker as a deposit. Not a chip buy-in
+  /// and not a credit repayment. Does not write the Chip Ledger.
+  /// Does not become cashInForChips until explicitly converted.
   static Future<FinancialEvent?> recordFrontMoneyIn({
     required String? personId,
     required AppCurrency currency,
@@ -130,6 +131,7 @@ class FinancialCapture {
     String? sessionId,
     PaymentMethod? paymentMethod,
     String? note,
+    String? linkedTransactionId,
   }) {
     return _recordFrontMoney(
       personId: personId,
@@ -139,12 +141,12 @@ class FinancialCapture {
       sessionId: sessionId,
       paymentMethod: paymentMethod,
       note: note,
+      linkedTransactionId: linkedTransactionId,
     );
   }
 
-  /// Banker returns cash previously held for the player. Not a chip
-  /// cash-out. Refuses an amount larger than what is actually held in
-  /// this currency so a return cannot invent a debt.
+  /// Banker returns deposited cash. Not a chip cash-out and not a
+  /// conversion into play. Refuses more than the remaining deposit.
   static Future<FinancialEvent?> recordFrontMoneyOut({
     required String? personId,
     required AppCurrency currency,
@@ -152,6 +154,7 @@ class FinancialCapture {
     String? sessionId,
     PaymentMethod? paymentMethod,
     String? note,
+    String? linkedTransactionId,
   }) {
     return _recordFrontMoney(
       personId: personId,
@@ -161,7 +164,56 @@ class FinancialCapture {
       sessionId: sessionId,
       paymentMethod: paymentMethod,
       note: note,
+      linkedTransactionId: linkedTransactionId,
     );
+  }
+
+  /// Converts deposit into playing money: frontMoneyOut + cashInForChips.
+  ///
+  /// The banker must choose this explicitly. A deposit is never inferred
+  /// as payment for chips. Does not write the Chip Ledger — the caller
+  /// records the buy-in/rebuy and passes [linkedTransactionId].
+  static Future<DepositToChipsPair?> useDepositForChips({
+    required String? personId,
+    required AppCurrency currency,
+    required double amount,
+    String? sessionId,
+    String? linkedTransactionId,
+  }) async {
+    if (personId == null || personId.isEmpty) return null;
+    if (amount <= 0) return null;
+
+    final out = await recordFrontMoneyOut(
+      personId: personId,
+      currency: currency,
+      amount: amount,
+      sessionId: sessionId,
+      linkedTransactionId: linkedTransactionId,
+      note: 'Used for chips',
+    );
+    if (out == null) return null;
+
+    try {
+      final cashIn = await FinancialLedgerService.record(
+        personId: personId,
+        currency: currency,
+        type: FinancialEventType.cashInForChips,
+        amount: amount,
+        sessionId: sessionId,
+        linkedTransactionId: linkedTransactionId,
+        note: 'From deposit',
+      );
+      return DepositToChipsPair(
+        frontMoneyOut: out,
+        cashInForChips: cashIn,
+      );
+    } catch (e) {
+      await FinancialLedgerService.reverse(
+        out.id,
+        reason: 'Deposit-to-chips cash-in failed',
+      );
+      rethrow;
+    }
   }
 
   static Future<FinancialEvent?> _recordFrontMoney({
@@ -172,6 +224,7 @@ class FinancialCapture {
     String? sessionId,
     PaymentMethod? paymentMethod,
     String? note,
+    String? linkedTransactionId,
   }) async {
     if (type != FinancialEventType.frontMoneyIn &&
         type != FinancialEventType.frontMoneyOut) {
@@ -183,11 +236,11 @@ class FinancialCapture {
     if (amount <= 0) return null;
 
     if (type == FinancialEventType.frontMoneyOut) {
-      final held = FinancialLedgerService.balance(personId, currency);
+      final held = FinancialLedgerService.depositHeldMinor(personId, currency);
       final want = MoneyUnits.toMinor(currency, amount);
-      if (!held.bankerHolds || want > -held.amountMinor) {
+      if (held <= 0 || want > held) {
         throw FinancialLedgerException(
-          'Cannot return more front money than the banker is holding.',
+          'Cannot use more deposit than is held.',
         );
       }
     }
@@ -200,6 +253,18 @@ class FinancialCapture {
       sessionId: sessionId,
       paymentMethod: paymentMethod,
       note: note,
+      linkedTransactionId: linkedTransactionId,
     );
   }
+}
+
+/// The two financial events written by [FinancialCapture.useDepositForChips].
+class DepositToChipsPair {
+  final FinancialEvent frontMoneyOut;
+  final FinancialEvent cashInForChips;
+
+  const DepositToChipsPair({
+    required this.frontMoneyOut,
+    required this.cashInForChips,
+  });
 }

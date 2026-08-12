@@ -76,9 +76,9 @@ extension FinancialEventTypeL10n on FinancialEventType {
       case FinancialEventType.cashOutUnbacked:
         return tr('fin_cash_out_unbacked');
       case FinancialEventType.frontMoneyIn:
-        return tr('fin_front_money_in');
+        return tr('fin_deposit_in');
       case FinancialEventType.frontMoneyOut:
-        return tr('fin_front_money_out');
+        return tr('fin_deposit_out');
       case FinancialEventType.adjustment:
         return tr('fin_adjustment');
     }
