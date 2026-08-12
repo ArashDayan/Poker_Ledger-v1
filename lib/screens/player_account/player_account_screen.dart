@@ -7,13 +7,14 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
 import '../../models/financial_event.dart';
+import '../../services/financial_capture.dart';
 import '../../services/financial_ledger_service.dart';
 
 /// Player Account: derived Outstanding Balance plus history.
 ///
-/// Step 3 adds Credit repayment only. Cash-in / credit / marker at the
-/// table are captured next to chip Buy-in, not invented here. Front
-/// Money and settlement stay later steps.
+/// Step 3 added Credit repayment. Step 4 adds Front Money deposit and
+/// return. Neither writes the Chip Ledger. Settlement reports stay
+/// Step 5. Discount/rebate stays Step 6.
 ///
 /// Every amount goes through [CurrencyFormatter.format] so Privacy Mode
 /// cannot leak a figure here.
@@ -59,16 +60,31 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
           const SizedBox(height: 16),
           if (!account.hasHistory)
             _notRecordedCard()
-          else ...[
+          else
             ...account.balances.map(_balanceCard),
-            if (account.balances.any((b) => b.playerOwes)) ...[
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: _repayCredit,
-                icon: const Icon(Icons.south_west, size: 18),
-                label: Text(tr('record_credit_repaid')),
-              ),
-            ],
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _acceptFrontMoney,
+            icon: const Icon(Icons.savings_outlined, size: 18),
+            label: Text(tr('accept_front_money')),
+          ),
+          if (account.balances.any((b) => b.bankerHolds)) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _returnFrontMoney,
+              icon: const Icon(Icons.north_east, size: 18),
+              label: Text(tr('return_front_money')),
+            ),
+          ],
+          if (account.balances.any((b) => b.playerOwes)) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _repayCredit,
+              icon: const Icon(Icons.south_west, size: 18),
+              label: Text(tr('record_credit_repaid')),
+            ),
+          ],
+          if (account.hasHistory) ...[
             const SizedBox(height: 22),
             Row(
               children: [
@@ -95,6 +111,127 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
         ],
       ),
     );
+  }
+
+  AppCurrency get _actionCurrency {
+    if (widget.sessionCurrency != null) return widget.sessionCurrency!;
+    final account = FinancialLedgerService.accountFor(widget.personId);
+    if (account.balances.isNotEmpty) return account.balances.first.currency;
+    return AppCurrency.usd;
+  }
+
+  Future<void> _acceptFrontMoney() async {
+    final currency = _actionCurrency;
+    final amount = await _askAmount(
+      title: tr('accept_front_money'),
+      hint: tr('front_money_in_hint'),
+      currency: currency,
+    );
+    if (amount == null) return;
+    try {
+      await FinancialCapture.recordFrontMoneyIn(
+        personId: widget.personId,
+        currency: currency,
+        amount: amount,
+        sessionId: widget.sessionId,
+      );
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
+  Future<void> _returnFrontMoney() async {
+    final account = FinancialLedgerService.accountFor(widget.personId);
+    final held = account.balances.where((b) => b.bankerHolds).toList();
+    if (held.isEmpty) return;
+    OutstandingBalance balance = held.first;
+    final sessionCurrency = widget.sessionCurrency;
+    if (sessionCurrency != null) {
+      for (final b in held) {
+        if (b.currency == sessionCurrency) {
+          balance = b;
+          break;
+        }
+      }
+    }
+    final currency = balance.currency;
+    final amount = await _askAmount(
+      title: tr('return_front_money'),
+      hint: tr('front_money_out_hint'),
+      currency: currency,
+      initial: balance.amountMajor.abs(),
+    );
+    if (amount == null) return;
+    try {
+      await FinancialCapture.recordFrontMoneyOut(
+        personId: widget.personId,
+        currency: currency,
+        amount: amount,
+        sessionId: widget.sessionId,
+      );
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
+  Future<double?> _askAmount({
+    required String title,
+    required String hint,
+    required AppCurrency currency,
+    double? initial,
+  }) async {
+    final fmt = CurrencyFormatter(currency);
+    final ctrl = TextEditingController(
+      text: initial == null
+          ? ''
+          : initial.toStringAsFixed(currency == AppCurrency.usd ? 2 : 0),
+    );
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(hint,
+                style: const TextStyle(
+                    fontSize: 12.5, color: AppColors.textSecondary)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText: tr('amount'),
+                prefixText: fmt.symbol == r'$' ? r'$ ' : null,
+                suffixText: fmt.symbol == r'$' ? null : fmt.symbol,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr('cancel'))),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(tr('confirm'))),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return null;
+    final amount = double.tryParse(ctrl.text.replaceAll(',', ''));
+    if (amount == null || amount <= 0) return null;
+    return amount;
   }
 
   Future<void> _repayCredit() async {

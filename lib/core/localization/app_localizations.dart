@@ -753,6 +753,12 @@ class AppLocalizations {
       'financial_record_failed': 'Chip movement was saved. The financial record failed',
       'record_credit_repaid': 'Record credit repayment',
       'credit_repaid_hint': 'They are paying down what they owe. This is not a chip buy-in.',
+      // --- Step 4: Front Money ---
+      'accept_front_money': 'Accept front money',
+      'return_front_money': 'Return front money',
+      'front_money_in_hint': 'They handed you cash to hold. This is not a chip buy-in and not a credit repayment.',
+      'front_money_out_hint': 'You are returning cash you were holding for them. This is not a chip cash-out.',
+      'front_money_held': 'Currently holding',
     },
     'fa': {
       'app_title': 'دفتر پوکر',
@@ -1488,6 +1494,12 @@ class AppLocalizations {
       'financial_record_failed': 'حرکت ژتون ذخیره شد. ثبت مالی ناموفق بود',
       'record_credit_repaid': 'ثبت بازپرداخت اعتبار',
       'credit_repaid_hint': 'بدهی خود را پرداخت می‌کند. این خرید ورود ژتون نیست.',
+      // --- Step 4: Front Money ---
+      'accept_front_money': 'پذیرش پیش‌پرداخت',
+      'return_front_money': 'بازگرداندن پیش‌پرداخت',
+      'front_money_in_hint': 'پول نقد را به شما سپرد تا نگه دارید. این خرید ورود ژتون نیست و بازپرداخت اعتبار هم نیست.',
+      'front_money_out_hint': 'پولی را که برایشان نگه داشته‌اید برمی‌گردانید. این تسویه ژتون نیست.',
+      'front_money_held': 'در حال حاضر نزد بانکر',
     },
   };
 

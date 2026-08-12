@@ -22,4 +22,11 @@ void registerTestAdapters() {
   if (!Hive.isAdapterRegistered(9)) Hive.registerAdapter(ChipTypeAdapter());
   if (!Hive.isAdapterRegistered(10)) Hive.registerAdapter(ChipMovementAdapter());
   if (!Hive.isAdapterRegistered(11)) Hive.registerAdapter(PlayerIdentityAdapter());
+  if (!Hive.isAdapterRegistered(13)) {
+    Hive.registerAdapter(FinancialEventTypeAdapter());
+  }
+  if (!Hive.isAdapterRegistered(14)) {
+    Hive.registerAdapter(PaymentMethodAdapter());
+  }
+  if (!Hive.isAdapterRegistered(12)) Hive.registerAdapter(FinancialEventAdapter());
 }

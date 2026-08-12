@@ -120,4 +120,86 @@ class FinancialCapture {
       note: note,
     );
   }
+
+  /// Player hands cash to the banker to hold. Not a chip buy-in and
+  /// not a credit repayment. Does not write the Chip Ledger.
+  static Future<FinancialEvent?> recordFrontMoneyIn({
+    required String? personId,
+    required AppCurrency currency,
+    required double amount,
+    String? sessionId,
+    PaymentMethod? paymentMethod,
+    String? note,
+  }) {
+    return _recordFrontMoney(
+      personId: personId,
+      currency: currency,
+      type: FinancialEventType.frontMoneyIn,
+      amount: amount,
+      sessionId: sessionId,
+      paymentMethod: paymentMethod,
+      note: note,
+    );
+  }
+
+  /// Banker returns cash previously held for the player. Not a chip
+  /// cash-out. Refuses an amount larger than what is actually held in
+  /// this currency so a return cannot invent a debt.
+  static Future<FinancialEvent?> recordFrontMoneyOut({
+    required String? personId,
+    required AppCurrency currency,
+    required double amount,
+    String? sessionId,
+    PaymentMethod? paymentMethod,
+    String? note,
+  }) {
+    return _recordFrontMoney(
+      personId: personId,
+      currency: currency,
+      type: FinancialEventType.frontMoneyOut,
+      amount: amount,
+      sessionId: sessionId,
+      paymentMethod: paymentMethod,
+      note: note,
+    );
+  }
+
+  static Future<FinancialEvent?> _recordFrontMoney({
+    required String? personId,
+    required AppCurrency currency,
+    required FinancialEventType type,
+    required double amount,
+    String? sessionId,
+    PaymentMethod? paymentMethod,
+    String? note,
+  }) async {
+    if (type != FinancialEventType.frontMoneyIn &&
+        type != FinancialEventType.frontMoneyOut) {
+      throw FinancialLedgerException(
+        'Front money must be recorded as in or out.',
+      );
+    }
+    if (personId == null || personId.isEmpty) return null;
+    if (amount <= 0) return null;
+
+    if (type == FinancialEventType.frontMoneyOut) {
+      final held = FinancialLedgerService.balance(personId, currency);
+      final want = MoneyUnits.toMinor(currency, amount);
+      if (!held.bankerHolds || want > -held.amountMinor) {
+        throw FinancialLedgerException(
+          'Cannot return more front money than the banker is holding.',
+        );
+      }
+    }
+
+    return FinancialLedgerService.record(
+      personId: personId,
+      currency: currency,
+      type: type,
+      amount: amount,
+      sessionId: sessionId,
+      paymentMethod: paymentMethod,
+      note: note,
+    );
+  }
 }
