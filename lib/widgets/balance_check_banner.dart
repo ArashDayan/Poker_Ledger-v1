@@ -45,6 +45,17 @@ class BalanceCheckBanner extends StatelessWidget {
               '(${result.discrepancy > 0 ? "more cash in than out" : "more cash out than in"})',
               style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600),
             ),
+            if (result.knownIssues.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              ...result.knownIssues.map(
+                (c) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('•  $c',
+                      style: const TextStyle(
+                          color: AppColors.warning, fontSize: 12)),
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
             Text(tr('possible_causes'),
                 style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),

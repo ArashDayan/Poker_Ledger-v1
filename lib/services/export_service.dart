@@ -7,8 +7,10 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 import '../models/enums.dart';
 import '../models/session.dart';
+import 'financial_ledger_service.dart';
 import 'report_service.dart';
 import 'session_service.dart';
+import 'session_settlement_view.dart';
 import 'tournament_service.dart';
 import '../core/utils/currency_formatter.dart';
 
@@ -46,6 +48,12 @@ class ExportService {
     final players = SessionService.playersFor(session.id);
     final txs = SessionService.transactionsFor(session.id);
     final balance = SessionService.checkBalance(session.id);
+    final fin = FinancialLedgerService.snapshotForSession(
+      session.id,
+      currency: session.currency,
+    );
+    final settlement =
+        SessionSettlementView.load(session.id, session.currency);
     final fmt = CurrencyFormatter(session.currency);
 
     final extremes = ReportService.sessionExtremes(session);
@@ -113,10 +121,12 @@ class ExportService {
               ['Money In (Buy-in + Rebuy)', fmt.formatRaw(balance.moneyIn)],
               ['Total Cash-out', fmt.formatRaw(SessionService.totalCashOut(session.id))],
               ['Rake Collected', fmt.formatRaw(SessionService.totalRake(session.id))],
-              ['Money Out (Cash-out + Rake)', fmt.formatRaw(balance.moneyOut)],
+              ['Dealer Tips (in Money Out, not Host Profit)',
+                  fmt.formatRaw(SessionService.totalDealerTips(session.id))],
+              ['Money Out (Cash-out + Rake + Dealer Tips)', fmt.formatRaw(balance.moneyOut)],
               ['Cash Drops (tracked, not part of settlement)',
                   fmt.formatRaw(SessionService.totalCashDrop(session.id))],
-              ['Host Profit', fmt.formatRaw(SessionService.hostProfit(session.id))],
+              ['Host Profit (rake only)', fmt.formatRaw(SessionService.hostProfit(session.id))],
               [
                 'Balance Status',
                 balance.isBalanced
@@ -137,6 +147,42 @@ class ExportService {
             ),
           pw.Padding(
             padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+            child: _sectionTitle('Financial account (this session)'),
+          ),
+          pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+            child: _table(
+              align: const {1: pw.Alignment.centerRight},
+              headers: ['Metric', 'Amount'],
+              data: [
+                ['Credit issued', fmt.formatRaw(fin.creditIssued)],
+                ['Credit repaid', fmt.formatRaw(fin.creditRepaid)],
+                ['Unbacked cash-out', fmt.formatRaw(fin.cashOutUnbacked)],
+                ['Cash paid for chips', fmt.formatRaw(fin.cashInForChips)],
+                ['Cash received for returned chips',
+                    fmt.formatRaw(fin.cashOutForChips)],
+              ],
+            ),
+          ),
+          pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+            child: _sectionTitle('Deposit (this session)'),
+          ),
+          pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+            child: _table(
+              align: const {1: pw.Alignment.centerRight},
+              headers: ['Metric', 'Amount'],
+              data: [
+                ['Deposit received', fmt.formatRaw(fin.depositIn)],
+                ['Deposit used for chips', fmt.formatRaw(fin.depositUsedForChips)],
+                ['Deposit returned', fmt.formatRaw(fin.depositReturned)],
+                ['Deposit remaining', fmt.formatRaw(fin.depositRemaining)],
+              ],
+            ),
+          ),
+          pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(horizontal: 18),
             child: _sectionTitle('Players'),
           ),
           pw.Padding(
@@ -148,16 +194,19 @@ class ExportService {
               3: pw.Alignment.centerRight,
               4: pw.Alignment.centerRight,
             },
-            headers: ['Seat', 'Name', 'Buy-in+Rebuy', 'Cash-out', 'P/L'],
-            data: players.map((p) {
-              final totalIn = SessionService.playerTotalIn(session.id, p.id);
-              final totalOut = SessionService.playerTotalCashOut(session.id, p.id);
+            headers: [
+              'Seat', 'Name', 'Buy-in+Rebuy', 'Cash-out', 'P/L',
+              'Cashed out', 'Deposit remaining',
+            ],
+            data: settlement.players.map((row) {
               return [
-                p.seatNumber.toString(),
-                p.name,
-                fmt.formatRaw(totalIn),
-                fmt.formatRaw(totalOut),
-                fmt.formatRaw(SessionService.playerProfitLoss(session.id, p.id)),
+                row.player.seatNumber.toString(),
+                row.player.name,
+                fmt.formatRaw(row.buyIn + row.rebuy),
+                fmt.formatRaw(row.cashOut),
+                fmt.formatRaw(row.chipProfitLoss),
+                row.hasCashedOut ? 'Yes' : 'No',
+                fmt.formatRaw(row.financial.depositRemaining),
               ];
             }).toList(),
           ),

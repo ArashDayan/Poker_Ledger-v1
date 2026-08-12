@@ -300,6 +300,163 @@ class FinancialLedgerService {
   static double depositHeldMajor(String personId, AppCurrency currency) =>
       MoneyUnits.toMajor(currency, depositHeldMinor(personId, currency));
 
+  /// Events recorded against [sessionId], newest first.
+  ///
+  /// A missing or empty sessionId matches nothing — events without a
+  /// session stay off the session settlement view.
+  static List<FinancialEvent> eventsForSession(
+    String sessionId, {
+    String? personId,
+    AppCurrency? currency,
+  }) {
+    final list = _eventsInSession(sessionId,
+        personId: personId, currency: currency);
+    list.sort((a, b) => b.occurredAt.compareTo(a.occurredAt));
+    return list;
+  }
+
+  /// Every event whose [FinancialEvent.linkedTransactionId] is [transactionId].
+  /// Includes reversed originals and does not include reversal rows
+  /// (reversals do not copy the link).
+  static List<FinancialEvent> eventsLinkedTo(String transactionId) {
+    if (!_boxOpen || transactionId.isEmpty) return const [];
+    return HiveService.financialEvents.values
+        .where((e) => e.linkedTransactionId == transactionId)
+        .toList();
+  }
+
+  /// Linked events that still affect derived figures — not reversals
+  /// and not already reversed.
+  static List<FinancialEvent> activeEventsLinkedTo(String transactionId) {
+    final linked = eventsLinkedTo(transactionId);
+    if (linked.isEmpty) return const [];
+    final reversed = _reversedIds(HiveService.financialEvents.values);
+    return linked
+        .where((e) => !e.isReversal && !reversed.contains(e.id))
+        .toList();
+  }
+
+  /// Appends a reversal for each still-active event linked to
+  /// [transactionId]. Never deletes. Never touches unrelated events.
+  static Future<List<FinancialEvent>> reverseLinkedTo(
+    String transactionId, {
+    String? reason,
+  }) async {
+    final active = activeEventsLinkedTo(transactionId);
+    final out = <FinancialEvent>[];
+    for (final e in active) {
+      out.add(await reverse(
+        e.id,
+        reason: reason ?? 'Linked chip transaction voided',
+      ));
+    }
+    return out;
+  }
+
+  /// Session-scoped Deposit remaining for one person.
+  ///
+  /// Same definition as [depositHeldMinor] but only events whose
+  /// [FinancialEvent.sessionId] is [sessionId]. Lifetime Deposit stays
+  /// on [depositHeldMinor].
+  static int depositHeldMinorForSession(
+    String personId,
+    AppCurrency currency,
+    String sessionId,
+  ) {
+    final snap = snapshotForSession(
+      sessionId,
+      currency: currency,
+      personId: personId,
+    );
+    return snap.depositRemainingMinor;
+  }
+
+  static double depositHeldMajorForSession(
+    String personId,
+    AppCurrency currency,
+    String sessionId,
+  ) =>
+      MoneyUnits.toMajor(
+        currency,
+        depositHeldMinorForSession(personId, currency, sessionId),
+      );
+
+  /// Derived session totals. Does not change Outstanding Balance.
+  static SessionFinancialSnapshot snapshotForSession(
+    String sessionId, {
+    required AppCurrency currency,
+    String? personId,
+  }) {
+    final events = _eventsInSession(sessionId,
+        personId: personId, currency: currency);
+    if (events.isEmpty) {
+      return SessionFinancialSnapshot.empty(currency);
+    }
+    final reversed = _reversedIds(events);
+    var cashIn = 0, cashOut = 0, creditIssued = 0, creditRepaid = 0;
+    var unbacked = 0, depositIn = 0, depositOut = 0, usedForChips = 0;
+    var outstanding = 0;
+
+    final cashInLinks = <String>{};
+    for (final e in events) {
+      if (e.isReversal || reversed.contains(e.id)) continue;
+      if (e.type == FinancialEventType.cashInForChips &&
+          e.linkedTransactionId != null) {
+        cashInLinks.add(e.linkedTransactionId!);
+      }
+    }
+
+    for (final e in events) {
+      if (e.isReversal || reversed.contains(e.id)) continue;
+      outstanding += _contribution(e, reversed);
+      switch (e.type) {
+        case FinancialEventType.cashInForChips:
+          cashIn += e.amountMinor;
+          break;
+        case FinancialEventType.cashOutForChips:
+          cashOut += e.amountMinor;
+          break;
+        case FinancialEventType.creditIssued:
+          creditIssued += e.amountMinor;
+          break;
+        case FinancialEventType.creditRepaid:
+          creditRepaid += e.amountMinor;
+          break;
+        case FinancialEventType.cashOutUnbacked:
+          unbacked += e.amountMinor;
+          break;
+        case FinancialEventType.frontMoneyIn:
+          depositIn += e.amountMinor;
+          break;
+        case FinancialEventType.frontMoneyOut:
+          depositOut += e.amountMinor;
+          final link = e.linkedTransactionId;
+          if (link != null && cashInLinks.contains(link)) {
+            usedForChips += e.amountMinor;
+          }
+          break;
+        case FinancialEventType.adjustment:
+          break;
+      }
+    }
+
+    final remaining = depositIn - depositOut;
+    return SessionFinancialSnapshot(
+      currency: currency,
+      cashInForChipsMinor: cashIn,
+      cashOutForChipsMinor: cashOut,
+      creditIssuedMinor: creditIssued,
+      creditRepaidMinor: creditRepaid,
+      cashOutUnbackedMinor: unbacked,
+      depositInMinor: depositIn,
+      depositUsedForChipsMinor: usedForChips,
+      depositReturnedMinor: depositOut - usedForChips,
+      depositRemainingMinor: remaining < 0 ? 0 : remaining,
+      sessionOutstandingMinor: outstanding,
+      recorded: true,
+    );
+  }
+
   /// Derived, never stored. Empty history ⇒ [PlayerAccount.hasHistory]
   /// is false and the UI must show "Not recorded", not 0.
   static PlayerAccount accountFor(String personId) {
@@ -356,6 +513,20 @@ class FinancialLedgerService {
     return HiveService.financialEvents.values
         .where((e) =>
             e.personId == personId &&
+            (currency == null || e.currency == currency))
+        .toList();
+  }
+
+  static List<FinancialEvent> _eventsInSession(
+    String sessionId, {
+    String? personId,
+    AppCurrency? currency,
+  }) {
+    if (!_boxOpen || sessionId.isEmpty) return const [];
+    return HiveService.financialEvents.values
+        .where((e) =>
+            e.sessionId == sessionId &&
+            (personId == null || e.personId == personId) &&
             (currency == null || e.currency == currency))
         .toList();
   }
