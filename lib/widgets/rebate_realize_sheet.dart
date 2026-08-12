@@ -7,10 +7,11 @@ import '../models/enums.dart';
 import '../models/financial_event.dart';
 import '../services/rebate_service.dart';
 
-/// Confirm realisation of an exposed grant against a cash-out.
+/// Realise an exposed grant against a cash-out.
 ///
-/// The player still receives [plan.actualCashPaidMinor] when there is
-/// no clawback, or cash-out minus clawback when C > G.
+/// Lost-in-play (C < G) is journalled even if the sheet is dismissed —
+/// it does not change the cash handed to the player. A window clawback
+/// (C > G) still requires confirm because that does change cash paid.
 Future<FinancialEvent?> askRebateRealize(
   BuildContext context, {
   required String sessionId,
@@ -65,12 +66,15 @@ Future<FinancialEvent?> askRebateRealize(
           const SizedBox(height: 14),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text(tr('confirm_rebate_realize')),
+            child: Text(plan.clawbackMinor > 0
+                ? tr('confirm_rebate_realize')
+                : tr('confirm')),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(tr('cancel')),
-          ),
+          if (plan.clawbackMinor > 0)
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr('cancel')),
+            ),
         ],
       ),
     ),

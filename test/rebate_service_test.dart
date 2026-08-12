@@ -389,6 +389,15 @@ void main() {
       expect(snap.lostInPlay, 70);
       expect(snap.clawback, 0);
       expect(snap.playerEconomicNet, -1420);
+      // Cash-out row is not reduced by the $80 that was paid out.
+      expect(
+        FinancialLedgerService.snapshotForSession(
+          s.id,
+          currency: AppCurrency.usd,
+          personId: _personId,
+        ).cashOutForChips,
+        80,
+      );
     });
 
     test('11. $150 grant + $80 cash-out recovers $70, player receives $80',
