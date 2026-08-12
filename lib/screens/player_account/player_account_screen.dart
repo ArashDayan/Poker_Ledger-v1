@@ -9,25 +9,37 @@ import '../../models/enums.dart';
 import '../../models/financial_event.dart';
 import '../../services/financial_ledger_service.dart';
 
-/// Read-only Player Account. Outstanding Balance plus the event
-/// history. No capture, no settlement — those are Steps 3–5.
+/// Player Account: derived Outstanding Balance plus history.
+///
+/// Step 3 adds Credit repayment only. Cash-in / credit / marker at the
+/// table are captured next to chip Buy-in, not invented here. Front
+/// Money and settlement stay later steps.
 ///
 /// Every amount goes through [CurrencyFormatter.format] so Privacy Mode
 /// cannot leak a figure here.
-class PlayerAccountScreen extends StatelessWidget {
+class PlayerAccountScreen extends StatefulWidget {
   final String personId;
   final String? displayName;
+  final AppCurrency? sessionCurrency;
+  final String? sessionId;
 
   const PlayerAccountScreen({
     super.key,
     required this.personId,
     this.displayName,
+    this.sessionCurrency,
+    this.sessionId,
   });
 
   @override
+  State<PlayerAccountScreen> createState() => _PlayerAccountScreenState();
+}
+
+class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
+  @override
   Widget build(BuildContext context) {
-    final account = FinancialLedgerService.accountFor(personId);
-    final name = displayName ?? account.displayName;
+    final account = FinancialLedgerService.accountFor(widget.personId);
+    final name = widget.displayName ?? account.displayName;
 
     return Scaffold(
       appBar: AppBar(title: Text(tr('player_account'))),
@@ -49,6 +61,14 @@ class PlayerAccountScreen extends StatelessWidget {
             _notRecordedCard()
           else ...[
             ...account.balances.map(_balanceCard),
+            if (account.balances.any((b) => b.playerOwes)) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _repayCredit,
+                icon: const Icon(Icons.south_west, size: 18),
+                label: Text(tr('record_credit_repaid')),
+              ),
+            ],
             const SizedBox(height: 22),
             Row(
               children: [
@@ -75,6 +95,71 @@ class PlayerAccountScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _repayCredit() async {
+    final account = FinancialLedgerService.accountFor(widget.personId);
+    final owing = account.balances.where((b) => b.playerOwes).toList();
+    if (owing.isEmpty) return;
+    final balance = owing.first;
+    final currency = widget.sessionCurrency ?? balance.currency;
+    final fmt = CurrencyFormatter(currency);
+    final ctrl = TextEditingController(
+      text: balance.amountMajor
+          .toStringAsFixed(currency == AppCurrency.usd ? 2 : 0),
+    );
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('record_credit_repaid')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(tr('credit_repaid_hint'),
+                style: const TextStyle(
+                    fontSize: 12.5, color: AppColors.textSecondary)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText: tr('amount'),
+                prefixText: fmt.symbol == r'$' ? r'$ ' : null,
+                suffixText: fmt.symbol == r'$' ? null : fmt.symbol,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr('cancel'))),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(tr('confirm'))),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final amount = double.tryParse(ctrl.text.replaceAll(',', ''));
+    if (amount == null || amount <= 0) return;
+    try {
+      await FinancialLedgerService.record(
+        personId: widget.personId,
+        currency: currency,
+        type: FinancialEventType.creditRepaid,
+        amount: amount,
+        sessionId: widget.sessionId,
+      );
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
   }
 
   Widget _notRecordedCard() {

@@ -7,6 +7,7 @@ import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
 import '../../models/player.dart';
 import '../../providers/session_provider.dart';
+import '../../services/financial_capture_flow.dart';
 import '../../services/player_identity_service.dart';
 import '../../services/player_registry_service.dart';
 import '../../services/session_service.dart';
@@ -433,6 +434,17 @@ class PlayersTab extends StatelessWidget {
                             transactionId: tx.last.id,
                             playerId: created.id,
                           );
+                          if (context.mounted) {
+                            await captureFundingAfterChipTx(
+                              context,
+                              player: created,
+                              chipType: TransactionType.buyIn,
+                              amount: result.amount,
+                              currency: provider.current!.currency,
+                              sessionId: provider.current!.id,
+                              transactionId: tx.last.id,
+                            );
+                          }
                         }
                       }
                       AppSounds.play(SoundEffect.buyIn);
@@ -511,6 +523,17 @@ class PlayersTab extends StatelessWidget {
             sessionId: session.id,
             transactionId: tx.id,
             playerId: player.id);
+        if (context.mounted) {
+          await captureFundingAfterChipTx(
+            context,
+            player: player,
+            chipType: type,
+            amount: result.amount,
+            currency: session.currency,
+            sessionId: session.id,
+            transactionId: tx.id,
+          );
+        }
       }
       AppSounds.play(AppSounds.forTransaction(type));
     } catch (e) {

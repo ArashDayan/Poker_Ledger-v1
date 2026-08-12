@@ -182,6 +182,18 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
         }
       }
 
+      if (mounted) {
+        await captureFundingAfterChipTx(
+          context,
+          player: provider.livePlayer(widget.player),
+          chipType: _type,
+          amount: amount,
+          currency: session.currency,
+          sessionId: session.id,
+          transactionId: tx.id,
+        );
+      }
+
       AppSounds.play(AppSounds.forTransaction(_type));
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -302,6 +314,8 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
                   builder: (_) => PlayerAccountScreen(
                     personId: player.personId!,
                     displayName: player.name,
+                    sessionCurrency: session.currency,
+                    sessionId: session.id,
                   ),
                 ),
               ),
