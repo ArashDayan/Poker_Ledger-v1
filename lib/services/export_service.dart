@@ -9,6 +9,7 @@ import '../models/enums.dart';
 import '../models/financial_event.dart';
 import '../models/session.dart';
 import 'financial_ledger_service.dart';
+import 'rebate_service.dart';
 import 'report_service.dart';
 import 'session_service.dart';
 import 'session_settlement_view.dart';
@@ -376,7 +377,7 @@ class ExportService {
       );
       if (!snap.hasActivity) continue;
       granted += snap.grantedMinor;
-      returned += snap.returnedMinor;
+      returned += snap.lostInPlayMinor;
       paid += snap.paidOutMinor;
       cashIn += snap.playerCashInMinor;
       actual += snap.actualCashPaidMinor;
@@ -385,7 +386,7 @@ class ExportService {
         row.player.name,
         fmt.formatRaw(snap.grossLoss),
         fmt.formatRaw(snap.granted),
-        fmt.formatRaw(snap.returned),
+        fmt.formatRaw(snap.lostInPlay),
         fmt.formatRaw(snap.paidOut),
         fmt.formatRaw(snap.houseRetained),
       ]);
@@ -404,7 +405,7 @@ class ExportService {
           data: [
             ['Player own cash in', fmt.formatRaw(MoneyUnits.toMajor(session.currency, cashIn))],
             ['Discount granted', fmt.formatRaw(MoneyUnits.toMajor(session.currency, granted))],
-            ['Discount returned to house', fmt.formatRaw(MoneyUnits.toMajor(session.currency, returned))],
+            ['Discount lost in play', fmt.formatRaw(MoneyUnits.toMajor(session.currency, returned))],
             ['Discount paid to player', fmt.formatRaw(MoneyUnits.toMajor(session.currency, paid))],
             ['Cash actually paid to player', fmt.formatRaw(MoneyUnits.toMajor(session.currency, actual))],
             ['House retained from own cash', fmt.formatRaw(MoneyUnits.toMajor(session.currency, retained))],
@@ -419,7 +420,7 @@ class ExportService {
               'Player',
               'Eligible loss',
               'Granted',
-              'Returned',
+              'Lost in play',
               'Paid out',
               'House retained',
             ],

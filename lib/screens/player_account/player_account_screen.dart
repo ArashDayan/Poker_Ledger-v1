@@ -13,6 +13,7 @@ import '../../services/deposit_to_chips.dart';
 import '../../services/financial_capture.dart';
 import '../../services/financial_ledger_service.dart';
 import '../../services/rebate_service.dart';
+import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
 import '../../widgets/chip_flow.dart';
 import '../../widgets/rebate_grant_sheet.dart';
@@ -160,12 +161,18 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
     try {
       playerId = DepositToChips.seatedPlayer(sessionId, widget.personId)?.id;
     } catch (_) {}
+    var bustRealized = false;
+    if (playerId != null) {
+      bustRealized = SessionService.hasCashedOut(sessionId, playerId) &&
+          SessionService.playerTotalCashOut(sessionId, playerId) == 0;
+    }
     await askRebateGrant(
       context,
       sessionId: sessionId,
       personId: widget.personId,
       currency: _actionCurrency,
       playerId: playerId,
+      bustRealized: bustRealized,
     );
     if (mounted) setState(() {});
   }

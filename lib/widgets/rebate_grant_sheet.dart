@@ -104,6 +104,8 @@ Future<FinancialEvent?> askRebateGrant(
     personId: personId,
     currency: currency,
     asChips: asChips,
+    bustRealized: bustRealized,
+    chipCashOutWithoutFunding: chipCashOutWithoutFunding,
   );
 
   if (asChips && playerId != null && playerId.isNotEmpty && context.mounted) {

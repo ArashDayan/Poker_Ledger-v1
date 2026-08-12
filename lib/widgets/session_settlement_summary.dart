@@ -65,16 +65,28 @@ class SessionSettlementSummary extends StatelessWidget {
             _row(tr('rebate_own_cash_in'),
                 fmt.format(_sessionRebate!.playerCashIn)),
             _row(tr('rebate_granted'), fmt.format(_sessionRebate!.granted)),
-            _row(tr('rebate_returned'), fmt.format(_sessionRebate!.returned)),
+            _row(tr('rebate_lost_in_play'),
+                fmt.format(_sessionRebate!.lostInPlay)),
+            _row(tr('rebate_clawback'), fmt.format(_sessionRebate!.clawback)),
             _row(tr('rebate_paid_out'), fmt.format(_sessionRebate!.paidOut)),
             _row(tr('rebate_actual_paid'),
                 fmt.format(_sessionRebate!.actualCashPaid)),
             _row(tr('rebate_house_retained'),
                 fmt.format(_sessionRebate!.houseRetained)),
+            if (_chipRec != null && _chipRec!.issuedMinor > 0) ...[
+              _row(tr('rebate_chips_issued'),
+                  fmt.format(_chipRec!.issuedMajor)),
+              _row(tr('rebate_books_residual'),
+                  fmt.format(_chipRec!.residualAfterDiscount)),
+              _row(tr('rebate_implied_in_play'),
+                  fmt.format(_chipRec!.impliedStillInPlay)),
+            ],
           ]),
-          if (_sessionRebate!.chipGrantMinor > 0) ...[
+          if (_chipRec != null && _chipRec!.issuedMinor > 0) ...[
             const SizedBox(height: 10),
-            _warn(tr('settle_warn_rebate_chips')),
+            _warn(_chipRec!.explainsGap
+                ? tr('settle_rebate_chips_explained')
+                : tr('settle_warn_rebate_chips')),
           ],
         ],
         if (fin.hasDepositRemaining || fin.hasOpenCredit) ...[
@@ -97,6 +109,58 @@ class SessionSettlementSummary extends StatelessWidget {
           for (final p in view.players) _playerCard(context, p, fmt),
         ],
       ],
+    );
+  }
+
+  RebateSnapshot? get _sessionRebate {
+    RebateSnapshot? acc;
+    for (final row in view.players) {
+      final personId = row.player.personId;
+      if (personId == null || personId.isEmpty) continue;
+      final snap = RebateService.snapshot(
+        sessionId: view.sessionId,
+        personId: personId,
+        currency: view.currency,
+      );
+      if (!snap.hasActivity) continue;
+      acc = acc == null
+          ? snap
+          : RebateSnapshot(
+              currency: view.currency,
+              playerCashInMinor:
+                  acc.playerCashInMinor + snap.playerCashInMinor,
+              playerCashOutMinor:
+                  acc.playerCashOutMinor + snap.playerCashOutMinor,
+              grossLossMinor: acc.grossLossMinor + snap.grossLossMinor,
+              grantedMinor: acc.grantedMinor + snap.grantedMinor,
+              returnedMinor: acc.returnedMinor + snap.returnedMinor,
+              clawbackMinor: acc.clawbackMinor + snap.clawbackMinor,
+              paidOutMinor: acc.paidOutMinor + snap.paidOutMinor,
+              exposedMinor: acc.exposedMinor + snap.exposedMinor,
+              actualCashPaidMinor:
+                  acc.actualCashPaidMinor + snap.actualCashPaidMinor,
+              houseRetainedMinor:
+                  acc.houseRetainedMinor + snap.houseRetainedMinor,
+              chipGrantMinor: acc.chipGrantMinor + snap.chipGrantMinor,
+              cashGrantMinor: acc.cashGrantMinor + snap.cashGrantMinor,
+              recorded: true,
+            );
+    }
+    return acc;
+  }
+
+  DiscountChipReconciliation? get _chipRec {
+    if ((_sessionRebate?.chipGrantMinor ?? 0) <= 0 &&
+        RebateService.chipGrantsIssuedMinor(
+                view.sessionId, view.currency) <=
+            0) {
+      return null;
+    }
+    return RebateService.chipReconciliation(
+      sessionId: view.sessionId,
+      currency: view.currency,
+      rawDiscrepancy: view.chipBalance.discrepancy,
+      moneyStillInPlay: view.moneyStillInPlay,
     );
   }
 

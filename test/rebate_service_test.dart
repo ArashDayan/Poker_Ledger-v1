@@ -200,13 +200,22 @@ void main() {
       expect(_snap(s.id).playerCashIn, 0);
     });
 
-    test('3. paid cash-in is eligible', () async {
+    test('3. paid cash-in is eligible only after a realized cash-out', () async {
       final s = await _session('s3');
       await _cashIn(s.id, 1500);
+      expect(
+        RebateService.suggest(
+          sessionId: s.id,
+          personId: _personId,
+          currency: AppCurrency.usd,
+        ).canGrant,
+        isFalse,
+      );
       final sug = RebateService.suggest(
         sessionId: s.id,
         personId: _personId,
         currency: AppCurrency.usd,
+        bustRealized: true,
       );
       expect(sug.canGrant, isTrue);
       expect(sug.grantMinor, 15000);
@@ -294,6 +303,7 @@ void main() {
           sessionId: s.id,
           personId: _personId,
           currency: AppCurrency.usd,
+          bustRealized: true,
         ).canGrant,
         isTrue,
       );
@@ -339,6 +349,7 @@ void main() {
         personId: _personId,
         currency: AppCurrency.usd,
         asChips: true,
+        bustRealized: true,
       );
       var snap = _snap(s.id);
       expect(snap.granted, 150);
@@ -375,6 +386,9 @@ void main() {
       expect(snap.exposed, 0);
       expect(snap.actualCashPaid, 80);
       expect(snap.houseRetained, 1420);
+      expect(snap.lostInPlay, 70);
+      expect(snap.clawback, 0);
+      expect(snap.playerEconomicNet, -1420);
     });
 
     test('11. $150 grant + $80 cash-out recovers $70, player receives $80',
@@ -386,6 +400,7 @@ void main() {
         personId: _personId,
         currency: AppCurrency.usd,
         asChips: true,
+        bustRealized: true,
       );
       await _cashOut(s.id, 80);
       await RebateService.realizeCashOut(
@@ -409,6 +424,7 @@ void main() {
         personId: _personId,
         currency: AppCurrency.usd,
         asChips: true,
+        bustRealized: true,
       );
       final plan = RebateService.previewRealization(
         sessionId: s.id,
@@ -441,6 +457,7 @@ void main() {
         personId: _personId,
         currency: AppCurrency.usd,
         asChips: true,
+        bustRealized: true,
       );
       await _cashOut(s.id, 80);
       await RebateService.realizeCashOut(
@@ -477,6 +494,7 @@ void main() {
         personId: _personId,
         currency: AppCurrency.usd,
         asChips: true,
+        bustRealized: true,
       );
       await _cashOut(s.id, 80);
       await RebateService.realizeCashOut(
@@ -508,6 +526,7 @@ void main() {
         personId: _personId,
         currency: AppCurrency.usd,
         asChips: true,
+        bustRealized: true,
       );
       // Leave with nothing of the grant — treat as $0.01 dust so the
       // ledger can store a positive minor amount, then realise.
@@ -546,6 +565,7 @@ void main() {
         personId: _personId,
         currency: AppCurrency.usd,
         asChips: false,
+        bustRealized: true,
       );
       expect(_snap(a.id).granted, 150);
       expect(_snap(b.id).granted, 0);
@@ -624,6 +644,7 @@ void main() {
         personId: _personId,
         currency: AppCurrency.usd,
         asChips: true,
+        bustRealized: true,
       );
       final cashOut = await _cashOut(s.id, 80, linked: 'tx-co');
       final rec = await RebateService.realizeCashOut(
@@ -652,6 +673,7 @@ void main() {
         sessionId: s.id,
         personId: _personId,
         currency: AppCurrency.usd,
+        bustRealized: true,
       );
       expect(sug.canGrant, isTrue);
       expect(_snap(s.id).granted, 0);
@@ -660,6 +682,7 @@ void main() {
         personId: _personId,
         currency: AppCurrency.usd,
         asChips: false,
+        bustRealized: true,
       );
       expect(_snap(s.id).granted, 150);
     });
@@ -714,6 +737,7 @@ void main() {
         personId: _personId,
         currency: AppCurrency.usd,
         asChips: true,
+        bustRealized: true,
       );
       expect(SessionService.checkBalance(s.id).moneyIn, 1500);
       expect(SessionService.moneyStillInPlay(s.id), 1500);
@@ -722,6 +746,159 @@ void main() {
         RebateService.chipGrantsIssuedMinor(s.id, AppCurrency.usd),
         15000,
       );
+    });
+  });
+
+  group('realization gates and origin', () {
+    test('sitting with chips and no cash-out cannot grant', () async {
+      final s = await _session('sit');
+      await _cashIn(s.id, 1500);
+      final sug = RebateService.suggest(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+      );
+      expect(sug.canGrant, isFalse);
+      expect(sug.blockReason, contains('realized'));
+    });
+
+    test('12b. $0 bust realises loss and allows a grant', () async {
+      final s = await _session('bust');
+      await _cashIn(s.id, 1500);
+      final plan = RebateService.previewRealization(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 0,
+      );
+      expect(plan.closesGrant, isFalse);
+      expect(plan.actualCashPaidMinor, 0);
+      final sug = RebateService.suggest(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        bustRealized: true,
+      );
+      expect(sug.canGrant, isTrue);
+      expect(sug.grantMinor, 15000);
+    });
+
+    test('13b. not-recorded cash-out does not invent cashOutForChips', () async {
+      final s = await _session('unfunded');
+      await _cashIn(s.id, 1500);
+      await RebateService.grant(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        asChips: true,
+        bustRealized: true,
+      );
+      final sug = RebateService.suggest(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        chipCashOutWithoutFunding: true,
+      );
+      expect(sug.canGrant, isFalse);
+      expect(sug.blockReason, contains('not recorded'));
+      expect(_snap(s.id).playerCashOut, 0);
+      expect(_snap(s.id).hasOwnCashOutEvent, isFalse);
+    });
+
+    test('P2P transfer does not move Discount eligibility', () async {
+      final s = await _session('p2p');
+      await _cashIn(s.id, 1500);
+      await RebateService.grant(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        asChips: true,
+        bustRealized: true,
+      );
+      await HiveService.chips.put(
+        'c25',
+        ChipType(id: 'c25', value: 25, quantity: 20),
+      );
+      await ChipTrackingService.recordPlayerTransfer(
+        fromPlayerId: 'seat-1',
+        toPlayerId: 'seat-2',
+        distribution: {'c25': 4},
+        sessionId: s.id,
+      );
+      expect(_snap(s.id).granted, 150);
+      expect(_snap(s.id, personId: _otherId).granted, 0);
+      expect(_snap(s.id, personId: _otherId).playerCashIn, 0);
+      expect(
+        RebateService.suggest(
+          sessionId: s.id,
+          personId: _otherId,
+          currency: AppCurrency.usd,
+          bustRealized: true,
+        ).canGrant,
+        isFalse,
+      );
+    });
+
+    test('Case C distinguishes Discount portion from extra cash-out', () async {
+      final s = await _session('casec');
+      await _cashIn(s.id, 1500);
+      await RebateService.grant(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        asChips: true,
+        bustRealized: true,
+      );
+      final plan = RebateService.previewRealization(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 20000,
+      );
+      expect(plan.exposedBeforeMinor, 15000);
+      expect(plan.clawbackMinor, 15000);
+      expect(plan.actualCashPaidMinor, 5000);
+      expect(plan.recoveryKind, RebateRecoveryKind.clawback);
+    });
+
+    test('Discount chips are a reconciling item, not Money In', () async {
+      final s = await _session('recon');
+      final p = await _seat(s.id);
+      await SessionService.recordTransaction(
+        sessionId: s.id,
+        playerId: p.id,
+        type: TransactionType.buyIn,
+        amount: 1500,
+        hostSignatureBase64: 'sig',
+      );
+      await _cashIn(s.id, 1500);
+      await RebateService.grant(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        asChips: true,
+        bustRealized: true,
+      );
+      await SessionService.recordTransaction(
+        sessionId: s.id,
+        playerId: p.id,
+        type: TransactionType.cashOut,
+        amount: 1650,
+        hostSignatureBase64: 'sig',
+      );
+      final books = SessionService.checkBalance(s.id);
+      expect(books.moneyIn, 1500);
+      expect(books.moneyOut, 1650);
+      expect(books.discrepancy, -150);
+      expect(SessionService.hostProfit(s.id), 0);
+      final rec = RebateService.chipReconciliation(
+        sessionId: s.id,
+        currency: AppCurrency.usd,
+        rawDiscrepancy: books.discrepancy,
+        moneyStillInPlay: SessionService.moneyStillInPlay(s.id),
+      );
+      expect(rec.issuedMajor, 150);
+      expect(rec.explainsGap, isTrue);
     });
   });
 

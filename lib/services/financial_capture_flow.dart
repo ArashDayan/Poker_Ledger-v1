@@ -48,8 +48,9 @@ Future<void> captureFundingAfterChipTx(
       );
     } else if (chipType == TransactionType.cashOut) {
       if (!context.mounted) return;
+      ChipCashOutFunding? funding;
       if (amount > 0) {
-        final funding = await askChipCashOutFunding(context,
+        funding = await askChipCashOutFunding(context,
             formatter: fmt, amount: amount);
         if (!context.mounted) return;
         await FinancialCapture.recordCashOutFunding(
@@ -62,16 +63,24 @@ Future<void> captureFundingAfterChipTx(
         );
       }
       if (!context.mounted) return;
-      final cashOutMinor =
-          amount > 0 ? MoneyUnits.toMinor(currency, amount) : 0;
-      await askRebateRealize(
-        context,
-        sessionId: sessionId,
-        personId: personId,
-        currency: currency,
-        cashOutMinor: cashOutMinor,
-        linkedTransactionId: transactionId,
-      );
+      final bustRealized = amount == 0;
+      final paidOwnCash = funding == ChipCashOutFunding.paidCash;
+      final unfunded = funding == ChipCashOutFunding.notRecorded ||
+          funding == ChipCashOutFunding.unbacked;
+      // Only a paid cash-out or a $0 bust realises Discount. Missing
+      // funding must not invent cashOutForChips or a fake loss.
+      if (bustRealized || paidOwnCash) {
+        final cashOutMinor =
+            amount > 0 ? MoneyUnits.toMinor(currency, amount) : 0;
+        await askRebateRealize(
+          context,
+          sessionId: sessionId,
+          personId: personId,
+          currency: currency,
+          cashOutMinor: cashOutMinor,
+          linkedTransactionId: transactionId,
+        );
+      }
       if (!context.mounted) return;
       final cfg = RebateService.configFor(sessionId);
       if (cfg.isUsable) {
@@ -79,14 +88,18 @@ Future<void> captureFundingAfterChipTx(
           sessionId: sessionId,
           personId: personId,
           currency: currency,
+          bustRealized: bustRealized,
+          chipCashOutWithoutFunding: unfunded,
         );
-        if (sug.canGrant) {
+        if (sug.canGrant || unfunded) {
           await askRebateGrant(
             context,
             sessionId: sessionId,
             personId: personId,
             currency: currency,
             playerId: player.id,
+            bustRealized: bustRealized,
+            chipCashOutWithoutFunding: unfunded,
           );
         }
       }

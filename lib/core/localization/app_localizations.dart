@@ -834,6 +834,13 @@ class AppLocalizations {
       'settle_warn_rebate_chips': 'Discount chips were issued this session. They are not Money In. When cashed they can make poker chip books look short by that amount.',
       'rebate_form_chips': 'as chips',
       'rebate_form_cash': 'as cash',
+      'rebate_lost_in_play': 'Discount lost in play',
+      'rebate_clawback': 'Discount clawed back at window',
+      'rebate_beyond_discount': 'Cash-out beyond remaining Discount',
+      'rebate_chips_issued': 'Discount chips issued (not Money In)',
+      'rebate_books_residual': 'Poker-book residual after Discount chips',
+      'rebate_implied_in_play': 'Still in play including Discount chips',
+      'settle_rebate_chips_explained': 'Poker chip books look short because Discount chips were issued. They are not Buy-in and not own cash. The residual after that reconciling item is zero.',
     },
     'fa': {
       'app_title': 'دفتر پوکر',
@@ -1650,6 +1657,13 @@ class AppLocalizations {
       'settle_warn_rebate_chips': 'در این نشست ژتون تخفیف داده شده است. این مبلغ ورودی پول نیست. هنگام تسویه ممکن است دفتر ژتون به همان اندازه کوتاه به نظر برسد.',
       'rebate_form_chips': 'به‌صورت ژتون',
       'rebate_form_cash': 'به‌صورت نقد',
+      'rebate_lost_in_play': 'تخفیف باخته در بازی',
+      'rebate_clawback': 'تخفیف کسرشده در باجه',
+      'rebate_beyond_discount': 'تسویه بیش از تخفیف باقی‌مانده',
+      'rebate_chips_issued': 'ژتون تخفیف داده‌شده (ورودی پول نیست)',
+      'rebate_books_residual': 'مانده دفتر ژتون پس از ژتون تخفیف',
+      'rebate_implied_in_play': 'هنوز در بازی با احتساب ژتون تخفیف',
+      'settle_rebate_chips_explained': 'دفتر ژتون کوتاه به نظر می‌رسد چون ژتون تخفیف داده شده است. این خرید ورود و پول خود بازیکن نیست. مانده پس از این رقم توضیحی صفر است.',
     },
   };
 

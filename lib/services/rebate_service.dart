@@ -34,6 +34,7 @@ class RebateSuggestion {
   final int grossLossMinor;
   final int incrementalLossMinor;
   final bool alreadyQualified;
+  final bool lossRealized;
   final String? blockReason;
 
   const RebateSuggestion({
@@ -42,6 +43,7 @@ class RebateSuggestion {
     required this.grossLossMinor,
     required this.incrementalLossMinor,
     required this.alreadyQualified,
+    this.lossRealized = false,
     this.blockReason,
   });
 
@@ -94,6 +96,7 @@ class RebateSnapshot {
   final int chipGrantMinor;
   final int cashGrantMinor;
   final bool recorded;
+  final bool hasOwnCashOutEvent;
 
   const RebateSnapshot({
     required this.currency,
@@ -110,7 +113,14 @@ class RebateSnapshot {
     required this.chipGrantMinor,
     required this.cashGrantMinor,
     required this.recorded,
+    this.hasOwnCashOutEvent = false,
   });
+
+  /// Discount value lost at the table — not a window clawback.
+  int get lostInPlayMinor {
+    final v = returnedMinor - clawbackMinor;
+    return v < 0 ? 0 : v;
+  }
 
   factory RebateSnapshot.empty(AppCurrency currency) => RebateSnapshot(
         currency: currency,
@@ -142,6 +152,9 @@ class RebateSnapshot {
   double get houseRetained => MoneyUnits.toMajor(currency, houseRetainedMinor);
   double get chipGrant => MoneyUnits.toMajor(currency, chipGrantMinor);
   double get cashGrant => MoneyUnits.toMajor(currency, cashGrantMinor);
+  double get lostInPlay => MoneyUnits.toMajor(currency, lostInPlayMinor);
+  double get playerEconomicNet =>
+      MoneyUnits.toMajor(currency, actualCashPaidMinor - playerCashInMinor);
 
   bool get hasActivity =>
       recorded && (grantedMinor > 0 || playerCashInMinor > 0);
@@ -220,6 +233,7 @@ class RebateService {
     var paidOut = 0;
     var chipGrant = 0;
     var cashGrant = 0;
+    var hasOwnCashOutEvent = false;
 
     for (final e in active) {
       switch (e.type) {
@@ -227,6 +241,7 @@ class RebateService {
           cashIn += e.amountMinor;
           break;
         case FinancialEventType.cashOutForChips:
+          hasOwnCashOutEvent = true;
           cashOut += e.amountMinor;
           if (exposed > 0) {
             final g = exposed;
@@ -284,6 +299,7 @@ class RebateService {
       chipGrantMinor: chipGrant,
       cashGrantMinor: cashGrant,
       recorded: true,
+      hasOwnCashOutEvent: hasOwnCashOutEvent,
     );
   }
 
@@ -291,6 +307,8 @@ class RebateService {
     required String sessionId,
     required String personId,
     required AppCurrency currency,
+    bool bustRealized = false,
+    bool chipCashOutWithoutFunding = false,
   }) {
     final session = _session(sessionId);
     if (session == null) {
@@ -330,6 +348,29 @@ class RebateService {
       personId: personId,
       currency: currency,
     );
+    if (chipCashOutWithoutFunding && !snap.hasOwnCashOutEvent) {
+      return RebateSuggestion(
+        eligibleLossMinor: 0,
+        grantMinor: 0,
+        grossLossMinor: snap.grossLossMinor,
+        incrementalLossMinor: 0,
+        alreadyQualified: false,
+        blockReason: 'Cash-out funding was not recorded. '
+            'Review the cash-out before granting Discount.',
+      );
+    }
+    final lossRealized = snap.hasOwnCashOutEvent || bustRealized;
+    if (!lossRealized) {
+      return RebateSuggestion(
+        eligibleLossMinor: 0,
+        grantMinor: 0,
+        grossLossMinor: snap.grossLossMinor,
+        incrementalLossMinor: 0,
+        alreadyQualified: false,
+        blockReason: 'No realized cash-out yet. '
+            'Record a cash-out or a $0 bust before granting Discount.',
+      );
+    }
     final consumed = _consumedBaseLoss(sessionId, personId, currency);
     final already = consumed > 0;
     final incremental = snap.grossLossMinor - consumed;
@@ -340,6 +381,7 @@ class RebateService {
         grossLossMinor: snap.grossLossMinor,
         incrementalLossMinor: incremental < 0 ? 0 : incremental,
         alreadyQualified: false,
+        lossRealized: true,
         blockReason: 'Own-cash loss is below the session minimum.',
       );
     }
@@ -353,6 +395,7 @@ class RebateService {
         grossLossMinor: snap.grossLossMinor,
         incrementalLossMinor: incremental < 0 ? 0 : incremental,
         alreadyQualified: already,
+        lossRealized: true,
         blockReason: 'No new own-cash loss to rebate.',
       );
     }
@@ -364,6 +407,7 @@ class RebateService {
         grossLossMinor: snap.grossLossMinor,
         incrementalLossMinor: incremental < 0 ? 0 : incremental,
         alreadyQualified: already,
+        lossRealized: true,
         blockReason: 'Calculated Discount rounds to zero.',
       );
     }
@@ -373,6 +417,7 @@ class RebateService {
       grossLossMinor: snap.grossLossMinor,
       incrementalLossMinor: incremental < 0 ? 0 : incremental,
       alreadyQualified: already,
+      lossRealized: true,
     );
   }
 
@@ -385,11 +430,15 @@ class RebateService {
     required AppCurrency currency,
     required bool asChips,
     String? note,
+    bool bustRealized = false,
+    bool chipCashOutWithoutFunding = false,
   }) async {
     final suggestion = suggest(
       sessionId: sessionId,
       personId: personId,
       currency: currency,
+      bustRealized: bustRealized,
+      chipCashOutWithoutFunding: chipCashOutWithoutFunding,
     );
     if (!suggestion.canGrant) {
       throw FinancialLedgerException(
@@ -500,6 +549,27 @@ class RebateService {
     );
   }
 
+  /// Frozen poker books plus Discount chips as a reconciling item.
+  ///
+  /// Does not change SessionService.checkBalance. Residual of 0 means
+  /// the raw discrepancy is fully explained by Discount chips issued.
+  static DiscountChipReconciliation chipReconciliation({
+    required String sessionId,
+    required AppCurrency currency,
+    required double rawDiscrepancy,
+    required double moneyStillInPlay,
+  }) {
+    final issued = chipGrantsIssuedMinor(sessionId, currency);
+    final issuedMajor = MoneyUnits.toMajor(currency, issued);
+    return DiscountChipReconciliation(
+      issuedMinor: issued,
+      issuedMajor: issuedMajor,
+      rawDiscrepancy: rawDiscrepancy,
+      residualAfterDiscount: rawDiscrepancy + issuedMajor,
+      impliedStillInPlay: moneyStillInPlay + issuedMajor,
+    );
+  }
+
   /// Session-wide chip-grant total, for the expected checkBalance gap
   /// explanation. Does not change SessionService math.
   static int chipGrantsIssuedMinor(String sessionId, AppCurrency currency) {
@@ -600,4 +670,25 @@ class RebateService {
       return null;
     }
   }
+}
+
+/// Read-only overlay on frozen poker books. Never written into
+/// SessionService totals.
+class DiscountChipReconciliation {
+  final int issuedMinor;
+  final double issuedMajor;
+  final double rawDiscrepancy;
+  final double residualAfterDiscount;
+  final double impliedStillInPlay;
+
+  const DiscountChipReconciliation({
+    required this.issuedMinor,
+    required this.issuedMajor,
+    required this.rawDiscrepancy,
+    required this.residualAfterDiscount,
+    required this.impliedStillInPlay,
+  });
+
+  bool get explainsGap =>
+      issuedMinor > 0 && residualAfterDiscount.abs() < 0.005;
 }

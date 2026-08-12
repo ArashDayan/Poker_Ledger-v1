@@ -53,8 +53,15 @@ Future<FinancialEvent?> askRebateRealize(
               fmt.format(MoneyUnits.toMajor(currency, plan.exposedBeforeMinor))),
           _line(tr('rebate_player_receives'),
               fmt.format(MoneyUnits.toMajor(currency, plan.actualCashPaidMinor))),
-          _line(tr('rebate_returned_now'),
-              fmt.format(MoneyUnits.toMajor(currency, plan.returnedMinor))),
+          if (plan.clawbackMinor > 0) ...[
+            _line(tr('rebate_beyond_discount'),
+                fmt.format(MoneyUnits.toMajor(
+                    currency, plan.cashOutMinor - plan.exposedBeforeMinor))),
+            _line(tr('rebate_clawback'),
+                fmt.format(MoneyUnits.toMajor(currency, plan.clawbackMinor))),
+          ] else
+            _line(tr('rebate_lost_in_play'),
+                fmt.format(MoneyUnits.toMajor(currency, plan.returnedMinor))),
           const SizedBox(height: 14),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
