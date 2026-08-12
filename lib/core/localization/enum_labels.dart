@@ -81,6 +81,10 @@ extension FinancialEventTypeL10n on FinancialEventType {
         return tr('fin_deposit_out');
       case FinancialEventType.adjustment:
         return tr('fin_adjustment');
+      case FinancialEventType.rebateGranted:
+        return tr('fin_rebate_granted');
+      case FinancialEventType.rebateRecovered:
+        return tr('fin_rebate_recovered');
     }
   }
 }

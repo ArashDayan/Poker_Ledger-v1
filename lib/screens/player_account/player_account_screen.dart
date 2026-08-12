@@ -12,8 +12,10 @@ import '../../providers/session_provider.dart';
 import '../../services/deposit_to_chips.dart';
 import '../../services/financial_capture.dart';
 import '../../services/financial_ledger_service.dart';
+import '../../services/rebate_service.dart';
 import '../../services/sound_service.dart';
 import '../../widgets/chip_flow.dart';
+import '../../widgets/rebate_grant_sheet.dart';
 import '../../widgets/signature_pad.dart';
 
 /// Player Account: derived Outstanding Balance plus history.
@@ -89,6 +91,14 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
               label: Text(tr('return_deposit')),
             ),
           ],
+          if (_canReviewDiscount) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _reviewDiscount,
+              icon: const Icon(Icons.percent, size: 18),
+              label: Text(tr('review_discount')),
+            ),
+          ],
           if (account.balances.any((b) => b.playerOwes)) ...[
             const SizedBox(height: 8),
             OutlinedButton.icon(
@@ -121,6 +131,86 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
             else
               ...account.events.map(_eventRow),
           ],
+        ],
+      ),
+    );
+  }
+
+  bool get _canReviewDiscount {
+    final sessionId = widget.sessionId;
+    if (sessionId == null || sessionId.isEmpty) return false;
+    return RebateService.configFor(sessionId).isUsable;
+  }
+
+  RebateSnapshot? get _discountSnapshot {
+    final sessionId = widget.sessionId;
+    if (sessionId == null || sessionId.isEmpty) return null;
+    final snap = RebateService.snapshot(
+      sessionId: sessionId,
+      personId: widget.personId,
+      currency: _actionCurrency,
+    );
+    return snap.hasActivity ? snap : null;
+  }
+
+  Future<void> _reviewDiscount() async {
+    final sessionId = widget.sessionId;
+    if (sessionId == null) return;
+    String? playerId;
+    try {
+      playerId = DepositToChips.seatedPlayer(sessionId, widget.personId)?.id;
+    } catch (_) {}
+    await askRebateGrant(
+      context,
+      sessionId: sessionId,
+      personId: widget.personId,
+      currency: _actionCurrency,
+      playerId: playerId,
+    );
+    if (mounted) setState(() {});
+  }
+
+  Widget _discountCard(RebateSnapshot snap) {
+    final fmt = CurrencyFormatter(snap.currency);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceElevated,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(tr('rebate_title'),
+              style: const TextStyle(
+                  fontSize: 11,
+                  letterSpacing: 1.1,
+                  color: AppColors.textSecondary)),
+          const SizedBox(height: 8),
+          _discRow(tr('rebate_own_cash_in'), fmt.format(snap.playerCashIn)),
+          _discRow(tr('rebate_granted'), fmt.format(snap.granted)),
+          _discRow(tr('rebate_returned'), fmt.format(snap.returned)),
+          _discRow(tr('rebate_paid_out'), fmt.format(snap.paidOut)),
+          _discRow(tr('rebate_actual_paid'), fmt.format(snap.actualCashPaid)),
+          _discRow(tr('rebate_house_retained'), fmt.format(snap.houseRetained)),
+        ],
+      ),
+    );
+  }
+
+  Widget _discRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(label,
+                style: const TextStyle(
+                    fontSize: 12.5, color: AppColors.textSecondary)),
+          ),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
         ],
       ),
     );
@@ -674,6 +764,16 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
                 Text(_currencyLabel(e.currency),
                     style: const TextStyle(
                         fontSize: 9.5, color: AppColors.textSecondary)),
+                if (e.type == FinancialEventType.rebateGranted &&
+                    !e.isReversal)
+                  TextButton(
+                    onPressed: () async {
+                      await RebateService.reverseGrant(e.id);
+                      if (mounted) setState(() {});
+                    },
+                    child: Text(tr('reverse_rebate_grant'),
+                        style: const TextStyle(fontSize: 11)),
+                  ),
               ],
             ),
           ],

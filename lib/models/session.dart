@@ -224,6 +224,19 @@ class PokerSession extends HiveObject {
   @HiveField(43)
   List<String>? blindNoticesShown;
 
+  /// Cash-game loss rebate (Discount). Session-scoped. Ignored on
+  /// tournaments. Default off so existing sessions stay unchanged.
+  @HiveField(44)
+  bool rebateEnabled;
+
+  /// Minimum own-cash GrossLoss before the first grant. Display units.
+  @HiveField(45)
+  double? rebateMinLoss;
+
+  /// Rebate percent of eligible own-cash loss, e.g. 10.0 = 10%.
+  @HiveField(46)
+  double? rebatePercent;
+
   PokerSession({
     required this.id,
     required this.name,
@@ -269,6 +282,9 @@ class PokerSession extends HiveObject {
     this.startingStack,
     this.payoutPercentages,
     this.blindNoticesShown,
+    this.rebateEnabled = false,
+    this.rebateMinLoss,
+    this.rebatePercent,
   });
 
   bool get isTournament => mode == SessionMode.tournament;
@@ -372,6 +388,9 @@ class PokerSession extends HiveObject {
         'tenMinuteWarningShown': tenMinuteWarningShown,
         'finishNoticeShown': finishNoticeShown,
         'rebuyLevelEnforcementEnabled': rebuyLevelEnforcementEnabled,
+        'rebateEnabled': rebateEnabled,
+        'rebateMinLoss': rebateMinLoss,
+        'rebatePercent': rebatePercent,
       };
 
   static PokerSession fromJson(Map<String, dynamic> json) => PokerSession(
@@ -426,5 +445,8 @@ class PokerSession extends HiveObject {
         plannedMinutes: json['plannedMinutes'] as int?,
         tenMinuteWarningShown: json['tenMinuteWarningShown'] as bool? ?? false,
         finishNoticeShown: json['finishNoticeShown'] as bool? ?? false,
+        rebateEnabled: json['rebateEnabled'] as bool? ?? false,
+        rebateMinLoss: (json['rebateMinLoss'] as num?)?.toDouble(),
+        rebatePercent: (json['rebatePercent'] as num?)?.toDouble(),
       );
 }

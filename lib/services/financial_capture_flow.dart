@@ -3,9 +3,13 @@ import 'package:flutter/material.dart';
 import '../core/localization/app_localizations.dart';
 import '../core/utils/currency_formatter.dart';
 import '../models/enums.dart';
+import '../models/financial_event.dart';
 import '../models/player.dart';
 import '../widgets/financial_funding_sheet.dart';
+import '../widgets/rebate_grant_sheet.dart';
+import '../widgets/rebate_realize_sheet.dart';
 import 'financial_capture.dart';
+import 'rebate_service.dart';
 
 /// After a chip Buy-in/Rebuy/Cash-out is safely stored, ask how real
 /// money moved and write the Financial Ledger. Failures here never
@@ -19,9 +23,10 @@ Future<void> captureFundingAfterChipTx(
   required String sessionId,
   required String transactionId,
 }) async {
-  if (amount <= 0) return;
   final personId = player.personId;
   if (personId == null || personId.isEmpty) return;
+  if (amount < 0) return;
+  if (amount == 0 && chipType != TransactionType.cashOut) return;
 
   final fmt = CurrencyFormatter(currency);
 
@@ -43,17 +48,48 @@ Future<void> captureFundingAfterChipTx(
       );
     } else if (chipType == TransactionType.cashOut) {
       if (!context.mounted) return;
-      final funding = await askChipCashOutFunding(context,
-          formatter: fmt, amount: amount);
+      if (amount > 0) {
+        final funding = await askChipCashOutFunding(context,
+            formatter: fmt, amount: amount);
+        if (!context.mounted) return;
+        await FinancialCapture.recordCashOutFunding(
+          personId: personId,
+          currency: currency,
+          funding: funding,
+          amount: amount,
+          sessionId: sessionId,
+          linkedTransactionId: transactionId,
+        );
+      }
       if (!context.mounted) return;
-      await FinancialCapture.recordCashOutFunding(
+      final cashOutMinor =
+          amount > 0 ? MoneyUnits.toMinor(currency, amount) : 0;
+      await askRebateRealize(
+        context,
+        sessionId: sessionId,
         personId: personId,
         currency: currency,
-        funding: funding,
-        amount: amount,
-        sessionId: sessionId,
+        cashOutMinor: cashOutMinor,
         linkedTransactionId: transactionId,
       );
+      if (!context.mounted) return;
+      final cfg = RebateService.configFor(sessionId);
+      if (cfg.isUsable) {
+        final sug = RebateService.suggest(
+          sessionId: sessionId,
+          personId: personId,
+          currency: currency,
+        );
+        if (sug.canGrant) {
+          await askRebateGrant(
+            context,
+            sessionId: sessionId,
+            personId: personId,
+            currency: currency,
+            playerId: player.id,
+          );
+        }
+      }
     }
   } catch (e) {
     if (context.mounted) {

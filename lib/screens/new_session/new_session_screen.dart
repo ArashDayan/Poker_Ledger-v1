@@ -42,6 +42,9 @@ class _NewSessionScreenState extends State<NewSessionScreen> {
   AppCurrency _currency = AppCurrency.usd;
   RakeMode _rakeMode = RakeMode.percentage;
   bool _showHouseRules = false;
+  bool _rebateEnabled = false;
+  final _rebateMin = TextEditingController(text: '1000');
+  final _rebatePercent = TextEditingController(text: '10');
 
   @override
   void initState() {
@@ -132,6 +135,13 @@ class _NewSessionScreenState extends State<NewSessionScreen> {
           : null,
       startingStack: _mode == SessionMode.tournament
           ? int.tryParse(_tStack.text.replaceAll(',', ''))
+          : null,
+      rebateEnabled: _mode == SessionMode.cashGame && _rebateEnabled,
+      rebateMinLoss: _mode == SessionMode.cashGame
+          ? double.tryParse(_rebateMin.text.replaceAll(',', ''))
+          : null,
+      rebatePercent: _mode == SessionMode.cashGame
+          ? double.tryParse(_rebatePercent.text.replaceAll(',', ''))
           : null,
     );
     if (!mounted) return;
@@ -425,6 +435,33 @@ class _NewSessionScreenState extends State<NewSessionScreen> {
                   ),
                 ],
               ),
+            ],
+            if (_mode == SessionMode.cashGame) ...[
+              const SizedBox(height: 22),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(tr('rebate_enabled')),
+                subtitle: Text(tr('rebate_hint'),
+                    style: const TextStyle(fontSize: 11)),
+                value: _rebateEnabled,
+                onChanged: (v) => setState(() => _rebateEnabled = v),
+              ),
+              if (_rebateEnabled) ...[
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: _rebateMin,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: _moneyDecoration(tr('rebate_min_loss')),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _rebatePercent,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(labelText: tr('rebate_percent')),
+                ),
+              ],
             ],
             const SizedBox(height: 24),
             ElevatedButton(onPressed: _submit, child: Text(tr('create_session'))),

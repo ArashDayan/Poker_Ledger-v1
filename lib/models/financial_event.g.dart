@@ -28,6 +28,10 @@ class FinancialEventTypeAdapter extends TypeAdapter<FinancialEventType> {
         return FinancialEventType.frontMoneyOut;
       case 7:
         return FinancialEventType.adjustment;
+      case 8:
+        return FinancialEventType.rebateGranted;
+      case 9:
+        return FinancialEventType.rebateRecovered;
       default:
         return FinancialEventType.cashInForChips;
     }
@@ -59,6 +63,12 @@ class FinancialEventTypeAdapter extends TypeAdapter<FinancialEventType> {
         break;
       case FinancialEventType.adjustment:
         writer.writeByte(7);
+        break;
+      case FinancialEventType.rebateGranted:
+        writer.writeByte(8);
+        break;
+      case FinancialEventType.rebateRecovered:
+        writer.writeByte(9);
         break;
     }
   }
@@ -145,13 +155,15 @@ class FinancialEventAdapter extends TypeAdapter<FinancialEvent> {
       reversesEventId: fields[13] as String?,
       adjustmentSign: fields[14] as int?,
       reason: fields[15] as String?,
+      baseLossMinor: fields[16] as int?,
+      grantedAsChips: fields[17] as bool?,
     );
   }
 
   @override
   void write(BinaryWriter writer, FinancialEvent obj) {
     writer
-      ..writeByte(16)
+      ..writeByte(18)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -183,7 +195,11 @@ class FinancialEventAdapter extends TypeAdapter<FinancialEvent> {
       ..writeByte(14)
       ..write(obj.adjustmentSign)
       ..writeByte(15)
-      ..write(obj.reason);
+      ..write(obj.reason)
+      ..writeByte(16)
+      ..write(obj.baseLossMinor)
+      ..writeByte(17)
+      ..write(obj.grantedAsChips);
   }
 
   @override

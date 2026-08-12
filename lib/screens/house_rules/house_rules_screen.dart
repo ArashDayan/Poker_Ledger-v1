@@ -36,6 +36,9 @@ class _HouseRulesScreenState extends State<HouseRulesScreen> {
   late final TextEditingController _tieredCutoff;
   late List<TextEditingController> _quickRakeSlots;
   late bool _rebuyLevelEnforcementEnabled;
+  late bool _rebateEnabled;
+  late final TextEditingController _rebateMin;
+  late final TextEditingController _rebatePercent;
 
   @override
   void initState() {
@@ -57,6 +60,11 @@ class _HouseRulesScreenState extends State<HouseRulesScreen> {
         text: (s?.tieredNoRakeAtOrAbove ?? RakeCalculator.defaultNoRakeAtOrAbove).toStringAsFixed(0));
     _quickRakeSlots = QuickRakeSlotsEditor.controllersFrom(s?.quickRakeAmounts);
     _rebuyLevelEnforcementEnabled = s?.rebuyLevelEnforcementEnabled ?? true;
+    _rebateEnabled = s?.rebateEnabled ?? false;
+    _rebateMin = TextEditingController(
+        text: (s?.rebateMinLoss ?? 1000).toStringAsFixed(0));
+    _rebatePercent = TextEditingController(
+        text: (s?.rebatePercent ?? 10).toStringAsFixed(0));
   }
 
   Future<void> _save() async {
@@ -73,6 +81,9 @@ class _HouseRulesScreenState extends State<HouseRulesScreen> {
       tieredNoRakeAtOrAbove: double.tryParse(_tieredCutoff.text.replaceAll(',', '')),
       quickRakeAmounts: QuickRakeSlotsEditor.valuesFrom(_quickRakeSlots),
       rebuyLevelEnforcementEnabled: _rebuyLevelEnforcementEnabled,
+      rebateEnabled: _rebateEnabled,
+      rebateMinLoss: double.tryParse(_rebateMin.text.replaceAll(',', '')),
+      rebatePercent: double.tryParse(_rebatePercent.text.replaceAll(',', '')),
     );
     if (!mounted) return;
     setState(() => _editing = false);
@@ -184,6 +195,35 @@ class _HouseRulesScreenState extends State<HouseRulesScreen> {
               amounts: QuickRakeSlotsEditor.valuesFrom(_quickRakeSlots),
               formatter: fmt,
             ),
+          ],
+          if (session.mode == SessionMode.cashGame) ...[
+            const SizedBox(height: 24),
+            _sectionTitle(tr('rebate_title')),
+            Text(tr('rebate_hint'),
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.textSecondary)),
+            const SizedBox(height: 8),
+            if (_editing) ...[
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(tr('rebate_enabled')),
+                value: _rebateEnabled,
+                onChanged: (v) => setState(() => _rebateEnabled = v),
+              ),
+              if (_rebateEnabled) ...[
+                _editableRow(tr('rebate_min_loss'), _rebateMin, isCurrency: true),
+                _editableRow(tr('rebate_percent'), _rebatePercent),
+              ],
+            ] else ...[
+              _readRow(tr('rebate_enabled'),
+                  _rebateEnabled ? tr('active') : tr('closed')),
+              if (_rebateEnabled) ...[
+                _readRow(tr('rebate_min_loss'),
+                    fmt.format(session.rebateMinLoss ?? 0)),
+                _readRow(tr('rebate_percent'),
+                    '${session.rebatePercent ?? 0}%'),
+              ],
+            ],
           ],
           const SizedBox(height: 24),
           if (_editing)

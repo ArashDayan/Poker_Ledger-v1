@@ -51,8 +51,12 @@ class MoneyUnits {
 ///   5 frontMoneyIn        banker is holding the player's cash   (−)
 ///   6 frontMoneyOut       that cash is returned to the player   (+)
 ///   7 adjustment          signed correction; reason mandatory   (±)
+///   8 rebateGranted       loss rebate given (cash or chips)     (0)
+///   9 rebateRecovered     grant portion returned to the house   (0)
 ///
-/// Marker is not a separate type: it is Credit plus a signature.
+/// Types 8 and 9 never enter Outstanding Balance. They are the
+/// Discount journal. Marker is not a separate type: it is Credit
+/// plus a signature.
 @HiveType(typeId: 13)
 enum FinancialEventType {
   @HiveField(0)
@@ -71,6 +75,10 @@ enum FinancialEventType {
   frontMoneyOut,
   @HiveField(7)
   adjustment,
+  @HiveField(8)
+  rebateGranted,
+  @HiveField(9)
+  rebateRecovered,
 }
 
 /// How the money physically moved, when the banker recorded it.
@@ -156,6 +164,16 @@ class FinancialEvent extends HiveObject {
   @HiveField(15)
   String? reason;
 
+  /// Eligible own-cash loss (minor units) this rebate grant consumed.
+  /// Null on every type except [FinancialEventType.rebateGranted].
+  @HiveField(16)
+  int? baseLossMinor;
+
+  /// True when the grant was issued as chips (ChipMovement.lossRebate).
+  /// False/null = cash. Never means the chips were a Buy-in.
+  @HiveField(17)
+  bool? grantedAsChips;
+
   FinancialEvent({
     required this.id,
     required this.personId,
@@ -173,6 +191,8 @@ class FinancialEvent extends HiveObject {
     this.reversesEventId,
     this.adjustmentSign,
     this.reason,
+    this.baseLossMinor,
+    this.grantedAsChips,
   });
 
   bool get isReversal =>
@@ -228,6 +248,8 @@ class FinancialEvent extends HiveObject {
       reversesEventId: json['reversesEventId'] as String?,
       adjustmentSign: json['adjustmentSign'] as int?,
       reason: json['reason'] as String?,
+      baseLossMinor: json['baseLossMinor'] as int?,
+      grantedAsChips: json['grantedAsChips'] as bool?,
     );
   }
 }

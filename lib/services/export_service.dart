@@ -6,6 +6,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 import '../models/enums.dart';
+import '../models/financial_event.dart';
 import '../models/session.dart';
 import 'financial_ledger_service.dart';
 import 'report_service.dart';
@@ -181,6 +182,7 @@ class ExportService {
               ],
             ),
           ),
+          ..._rebatePdfSection(session, settlement, fmt),
           pw.Padding(
             padding: const pw.EdgeInsets.symmetric(horizontal: 18),
             child: _sectionTitle('Players'),
@@ -350,6 +352,81 @@ class ExportService {
         ],
       ),
     );
+  }
+
+  static List<pw.Widget> _rebatePdfSection(
+    PokerSession session,
+    SessionSettlementView settlement,
+    CurrencyFormatter fmt,
+  ) {
+    var granted = 0;
+    var returned = 0;
+    var paid = 0;
+    var cashIn = 0;
+    var actual = 0;
+    var retained = 0;
+    final rows = <List<String>>[];
+    for (final row in settlement.players) {
+      final personId = row.player.personId;
+      if (personId == null || personId.isEmpty) continue;
+      final snap = RebateService.snapshot(
+        sessionId: session.id,
+        personId: personId,
+        currency: session.currency,
+      );
+      if (!snap.hasActivity) continue;
+      granted += snap.grantedMinor;
+      returned += snap.returnedMinor;
+      paid += snap.paidOutMinor;
+      cashIn += snap.playerCashInMinor;
+      actual += snap.actualCashPaidMinor;
+      retained += snap.houseRetainedMinor;
+      rows.add([
+        row.player.name,
+        fmt.formatRaw(snap.grossLoss),
+        fmt.formatRaw(snap.granted),
+        fmt.formatRaw(snap.returned),
+        fmt.formatRaw(snap.paidOut),
+        fmt.formatRaw(snap.houseRetained),
+      ]);
+    }
+    if (granted == 0 && cashIn == 0) return const [];
+    return [
+      pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+        child: _sectionTitle('Loss rebate / Discount (this session)'),
+      ),
+      pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+        child: _table(
+          align: const {1: pw.Alignment.centerRight},
+          headers: ['Metric', 'Amount'],
+          data: [
+            ['Player own cash in', fmt.formatRaw(MoneyUnits.toMajor(session.currency, cashIn))],
+            ['Discount granted', fmt.formatRaw(MoneyUnits.toMajor(session.currency, granted))],
+            ['Discount returned to house', fmt.formatRaw(MoneyUnits.toMajor(session.currency, returned))],
+            ['Discount paid to player', fmt.formatRaw(MoneyUnits.toMajor(session.currency, paid))],
+            ['Cash actually paid to player', fmt.formatRaw(MoneyUnits.toMajor(session.currency, actual))],
+            ['House retained from own cash', fmt.formatRaw(MoneyUnits.toMajor(session.currency, retained))],
+          ],
+        ),
+      ),
+      if (rows.isNotEmpty)
+        pw.Padding(
+          padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+          child: _table(
+            headers: [
+              'Player',
+              'Eligible loss',
+              'Granted',
+              'Returned',
+              'Paid out',
+              'House retained',
+            ],
+            data: rows,
+          ),
+        ),
+    ];
   }
 
   static pw.Widget _sectionTitle(String text) => pw.Container(

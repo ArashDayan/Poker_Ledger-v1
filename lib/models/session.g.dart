@@ -57,13 +57,16 @@ class PokerSessionAdapter extends TypeAdapter<PokerSession> {
       payoutPercentages:
           (fields[42] as List?)?.map((e) => (e as num).toDouble()).toList(),
       blindNoticesShown: (fields[43] as List?)?.cast<String>(),
+      rebateEnabled: fields[44] as bool? ?? false,
+      rebateMinLoss: (fields[45] as num?)?.toDouble(),
+      rebatePercent: (fields[46] as num?)?.toDouble(),
     );
   }
 
   @override
   void write(BinaryWriter writer, PokerSession obj) {
     writer
-      ..writeByte(44)
+      ..writeByte(47)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)

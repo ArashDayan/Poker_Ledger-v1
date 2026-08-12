@@ -391,6 +391,9 @@ class SessionProvider extends ChangeNotifier {
     double? tournamentAddOn,
     int? startingStack,
     List<double>? payoutPercentages,
+    bool rebateEnabled = false,
+    double? rebateMinLoss,
+    double? rebatePercent,
   }) async {
     final session = PokerSession(
       id: _uuid.v4(),
@@ -417,6 +420,9 @@ class SessionProvider extends ChangeNotifier {
       tournamentAddOn: tournamentAddOn,
       startingStack: startingStack,
       payoutPercentages: payoutPercentages,
+      rebateEnabled: rebateEnabled,
+      rebateMinLoss: rebateMinLoss,
+      rebatePercent: rebatePercent,
     );
     await HiveService.sessions.put(session.id, session);
     _current = session;
@@ -949,6 +955,9 @@ class SessionProvider extends ChangeNotifier {
     if (rebuyLevelEnforcementEnabled != null) {
       s.rebuyLevelEnforcementEnabled = rebuyLevelEnforcementEnabled;
     }
+    if (rebateEnabled != null) s.rebateEnabled = rebateEnabled;
+    if (rebateMinLoss != null) s.rebateMinLoss = rebateMinLoss;
+    if (rebatePercent != null) s.rebatePercent = rebatePercent;
     await s.save();
     notifyListeners();
   }

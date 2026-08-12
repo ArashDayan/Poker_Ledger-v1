@@ -4,6 +4,7 @@ import '../core/localization/app_localizations.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/currency_formatter.dart';
 import '../screens/player_account/player_account_screen.dart';
+import '../services/rebate_service.dart';
 import '../services/session_settlement_view.dart';
 
 /// Three separate settlement blocks. Never adds them into one number.
@@ -58,6 +59,24 @@ class SessionSettlementSummary extends StatelessWidget {
           _row(tr('settle_deposit_remaining'), fmt.format(fin.depositRemaining),
               color: fin.hasDepositRemaining ? AppColors.gold : null),
         ]),
+        if (_sessionRebate != null) ...[
+          const SizedBox(height: 12),
+          _section(tr('rebate_title'), [
+            _row(tr('rebate_own_cash_in'),
+                fmt.format(_sessionRebate!.playerCashIn)),
+            _row(tr('rebate_granted'), fmt.format(_sessionRebate!.granted)),
+            _row(tr('rebate_returned'), fmt.format(_sessionRebate!.returned)),
+            _row(tr('rebate_paid_out'), fmt.format(_sessionRebate!.paidOut)),
+            _row(tr('rebate_actual_paid'),
+                fmt.format(_sessionRebate!.actualCashPaid)),
+            _row(tr('rebate_house_retained'),
+                fmt.format(_sessionRebate!.houseRetained)),
+          ]),
+          if (_sessionRebate!.chipGrantMinor > 0) ...[
+            const SizedBox(height: 10),
+            _warn(tr('settle_warn_rebate_chips')),
+          ],
+        ],
         if (fin.hasDepositRemaining || fin.hasOpenCredit) ...[
           const SizedBox(height: 10),
           if (fin.hasDepositRemaining)
@@ -121,6 +140,24 @@ class SessionSettlementSummary extends StatelessWidget {
                   fontWeight: FontWeight.bold,
                   color: color ?? AppColors.textPrimary)),
         ],
+      ),
+    );
+  }
+
+  Widget _playerRebateLine(String personId, CurrencyFormatter fmt) {
+    final snap = RebateService.snapshot(
+      sessionId: view.sessionId,
+      personId: personId,
+      currency: view.currency,
+    );
+    if (snap.grantedMinor <= 0) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Text(
+        '${tr('rebate_granted')} ${fmt.format(snap.granted)}'
+        ' · ${tr('rebate_returned')} ${fmt.format(snap.returned)}'
+        ' · ${tr('rebate_paid_out')} ${fmt.format(snap.paidOut)}',
+        style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
       ),
     );
   }
@@ -222,6 +259,9 @@ class SessionSettlementSummary extends StatelessWidget {
                         fontSize: 11, color: AppColors.textSecondary),
                   ),
                 ],
+                if (row.player.personId != null &&
+                    row.player.personId!.isNotEmpty)
+                  _playerRebateLine(row.player.personId!, fmt),
               ],
             ),
           ),

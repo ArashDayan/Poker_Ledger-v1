@@ -131,6 +131,8 @@ class FinancialLedgerService {
     String? linkedTransactionId,
     int? adjustmentSign,
     String? reason,
+    int? baseLossMinor,
+    bool? grantedAsChips,
   }) async {
     _assertBoxOpen();
     _assertKnownPerson(personId);
@@ -175,6 +177,8 @@ class FinancialLedgerService {
       linkedTransactionId: linkedTransactionId,
       adjustmentSign: adjustmentSign,
       reason: reason,
+      baseLossMinor: baseLossMinor,
+      grantedAsChips: grantedAsChips,
     );
     await HiveService.financialEvents.put(event.id, event);
     return event;
@@ -436,6 +440,8 @@ class FinancialLedgerService {
           }
           break;
         case FinancialEventType.adjustment:
+        case FinancialEventType.rebateGranted:
+        case FinancialEventType.rebateRecovered:
           break;
       }
     }
@@ -492,6 +498,8 @@ class FinancialLedgerService {
     switch (event.type) {
       case FinancialEventType.cashInForChips:
       case FinancialEventType.cashOutForChips:
+      case FinancialEventType.rebateGranted:
+      case FinancialEventType.rebateRecovered:
         return 0;
       case FinancialEventType.creditIssued:
       case FinancialEventType.cashOutUnbacked:
@@ -565,4 +573,77 @@ class FinancialLedgerService {
       );
     }
   }
+}
+
+/// Derived session totals for the Financial Ledger. Never stored.
+///
+/// Major-unit getters exist so the UI never re-implements the exponent.
+class SessionFinancialSnapshot {
+  final AppCurrency currency;
+  final int cashInForChipsMinor;
+  final int cashOutForChipsMinor;
+  final int creditIssuedMinor;
+  final int creditRepaidMinor;
+  final int cashOutUnbackedMinor;
+  final int depositInMinor;
+  final int depositUsedForChipsMinor;
+  final int depositReturnedMinor;
+  final int depositRemainingMinor;
+  final int sessionOutstandingMinor;
+  final bool recorded;
+
+  const SessionFinancialSnapshot({
+    required this.currency,
+    required this.cashInForChipsMinor,
+    required this.cashOutForChipsMinor,
+    required this.creditIssuedMinor,
+    required this.creditRepaidMinor,
+    required this.cashOutUnbackedMinor,
+    required this.depositInMinor,
+    required this.depositUsedForChipsMinor,
+    required this.depositReturnedMinor,
+    required this.depositRemainingMinor,
+    required this.sessionOutstandingMinor,
+    required this.recorded,
+  });
+
+  factory SessionFinancialSnapshot.empty(AppCurrency currency) =>
+      SessionFinancialSnapshot(
+        currency: currency,
+        cashInForChipsMinor: 0,
+        cashOutForChipsMinor: 0,
+        creditIssuedMinor: 0,
+        creditRepaidMinor: 0,
+        cashOutUnbackedMinor: 0,
+        depositInMinor: 0,
+        depositUsedForChipsMinor: 0,
+        depositReturnedMinor: 0,
+        depositRemainingMinor: 0,
+        sessionOutstandingMinor: 0,
+        recorded: false,
+      );
+
+  double get cashInForChips =>
+      MoneyUnits.toMajor(currency, cashInForChipsMinor);
+  double get cashOutForChips =>
+      MoneyUnits.toMajor(currency, cashOutForChipsMinor);
+  double get creditIssued => MoneyUnits.toMajor(currency, creditIssuedMinor);
+  double get creditRepaid => MoneyUnits.toMajor(currency, creditRepaidMinor);
+  double get cashOutUnbacked =>
+      MoneyUnits.toMajor(currency, cashOutUnbackedMinor);
+  double get depositIn => MoneyUnits.toMajor(currency, depositInMinor);
+  double get depositUsedForChips =>
+      MoneyUnits.toMajor(currency, depositUsedForChipsMinor);
+  double get depositReturned =>
+      MoneyUnits.toMajor(currency, depositReturnedMinor);
+  double get depositRemaining =>
+      MoneyUnits.toMajor(currency, depositRemainingMinor);
+  double get sessionOutstanding =>
+      MoneyUnits.toMajor(currency, sessionOutstandingMinor);
+
+  bool get hasDepositRemaining => recorded && depositRemainingMinor > 0;
+
+  bool get hasOpenCredit =>
+      recorded &&
+      (creditIssuedMinor - creditRepaidMinor > 0 || cashOutUnbackedMinor > 0);
 }
