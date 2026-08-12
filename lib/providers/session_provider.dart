@@ -76,6 +76,13 @@ class SessionProvider extends ChangeNotifier {
       // mutation that goes through this class, so this is a degraded but
       // fully working mode, never a crash.
     }
+    // Separate try so a missing financial box cannot drop the seating
+    // / chip-ledger watchers. Notify only — no accounting is read here.
+    try {
+      _boxSubscriptions.add(
+        HiveService.financialEvents.watch().listen((_) => _scheduleNotify()),
+      );
+    } catch (_) {}
   }
 
   /// Coalesces a burst of box events into a single rebuild.
@@ -939,6 +946,9 @@ class SessionProvider extends ChangeNotifier {
     double? tieredNoRakeAtOrAbove,
     List<double>? quickRakeAmounts,
     bool? rebuyLevelEnforcementEnabled,
+    bool? rebateEnabled,
+    double? rebateMinLoss,
+    double? rebatePercent,
   }) async {
     if (_current == null) return;
     final s = _current!;
