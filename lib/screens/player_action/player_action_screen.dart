@@ -18,6 +18,7 @@ import '../../widgets/player_chip_holdings.dart';
 import '../../widgets/signature_compare_sheet.dart';
 import '../../widgets/signature_pad.dart';
 import '../house_rules/house_rules_screen.dart';
+import '../player_account/player_account_screen.dart';
 import '../player_history/player_history_screen.dart';
 import 'player_ledger_screen.dart';
 
@@ -292,6 +293,19 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
               ),
             ),
           ),
+          if (player.personId != null && player.personId!.isNotEmpty)
+            IconButton(
+              tooltip: tr('player_account'),
+              icon: const Icon(Icons.account_balance_wallet_outlined),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => PlayerAccountScreen(
+                    personId: player.personId!,
+                    displayName: player.name,
+                  ),
+                ),
+              ),
+            ),
           IconButton(
             tooltip: tr('player_history'),
             icon: const Icon(Icons.history),

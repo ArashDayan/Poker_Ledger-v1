@@ -8,6 +8,7 @@ import 'package:hive/hive.dart';
 import 'package:poker_ledger/models/chip_movement.dart';
 import 'package:poker_ledger/models/chip_type.dart';
 import 'package:poker_ledger/models/enums.dart';
+import 'package:poker_ledger/models/financial_event.dart';
 import 'package:poker_ledger/models/player.dart';
 import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
@@ -32,7 +33,7 @@ Future<void> _open() async {
   await Hive.openBox<ChipType>(HiveService.chipsBox);
   await Hive.openBox<ChipMovement>(HiveService.chipMovementsBox);
   await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
-  await Hive.openBox(HiveService.financialEventsBox);
+  await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
 }
 
 Future<void> _close() async {

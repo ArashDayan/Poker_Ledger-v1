@@ -1,6 +1,7 @@
 import 'package:hive/hive.dart';
 import 'package:poker_ledger/models/chip_movement.dart';
 import 'package:poker_ledger/models/chip_type.dart';
+import 'package:poker_ledger/models/financial_event.dart';
 import 'package:poker_ledger/models/player.dart';
 import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';

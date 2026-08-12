@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import '../models/chip_movement.dart';
 import '../models/chip_type.dart';
+import '../models/financial_event.dart';
 import '../models/player.dart';
 import '../models/player_identity.dart';
 import '../models/session.dart';
@@ -122,10 +123,7 @@ class BackupService {
       // Permanent identities. Separate from player rows so a seat can
       // be restored even when the identity needs a conflict decision.
       'playerIdentities': _exportIdentities(),
-      // Reserved for Step 2. Always present from v5 so a financial
-      // backup from a future build is a known key, never a surprise
-      // field that an older restore would drop on the floor unnoticed.
-      // Step 0/1 never writes financial records, so this is empty.
+      // Financial Ledger. Append-only events merge safely by id.
       'financialEvents': _exportFinancialEvents(),
       // Session JSON already carries tables, house rules, quick-rake
       // slots and timer state; player JSON carries seat, table id and
@@ -150,16 +148,13 @@ class BackupService {
   }
 
   static List<Map<String, dynamic>> _exportFinancialEvents() {
-    // Step 2 will replace this with FinancialEvent.toJson(). Until that
-    // type exists we refuse to serialise whatever happens to sit in the
-    // reserved box — writing untyped maps now would poison a later
-    // typed open.
     try {
-      if (HiveService.financialEvents.isEmpty) return const [];
+      return HiveService.financialEvents.values
+          .map((e) => e.toJson())
+          .toList();
     } catch (_) {
       return const [];
     }
-    return const [];
   }
 
   /// Hive maps are not always JSON-encodable (internal types). Copy
@@ -263,11 +258,9 @@ class BackupService {
       (data['playerIdentities'] as List? ?? []).cast<Map<String, dynamic>>(),
     );
 
-    // Financial events are reserved. Until FinancialEvent exists we
-    // must not write untyped maps into the fail-loud box — a typed
-    // open in Step 2 would then fail loud and lock the banker out.
-    final financialReserved =
-        (data['financialEvents'] as List? ?? []).length;
+    final financialOutcome = await _importFinancialEvents(
+      (data['financialEvents'] as List? ?? []).cast<Map<String, dynamic>>(),
+    );
 
     return BackupImportResult(
       formatVersion: version,
@@ -280,8 +273,36 @@ class BackupService {
       identitiesImported: identityOutcome.imported,
       identitiesSkipped: identityOutcome.skipped,
       identityConflicts: identityOutcome.conflicts,
-      financialEventsReserved: financialReserved,
+      financialEventsImported: financialOutcome.imported,
+      financialEventsSkipped: financialOutcome.skipped,
+      financialEventsReserved: financialOutcome.skipped,
     );
+  }
+
+  static Future<_FinancialImport> _importFinancialEvents(
+    List<Map<String, dynamic>> raw,
+  ) async {
+    if (raw.isEmpty) {
+      return const _FinancialImport(imported: 0, skipped: 0);
+    }
+    var imported = 0;
+    var skipped = 0;
+    try {
+      for (final map in raw) {
+        try {
+          final event = FinancialEvent.fromJson(map);
+          await HiveService.financialEvents.put(event.id, event);
+          imported++;
+        } catch (_) {
+          // Malformed or pre-typed placeholder. Leave it out rather
+          // than poison a fail-loud box.
+          skipped++;
+        }
+      }
+    } catch (_) {
+      return _FinancialImport(imported: 0, skipped: raw.length);
+    }
+    return _FinancialImport(imported: imported, skipped: skipped);
   }
 
   static Future<_IdentityImport> _importIdentities(
@@ -422,6 +443,12 @@ class _IdentityImport {
   });
 }
 
+class _FinancialImport {
+  final int imported;
+  final int skipped;
+  const _FinancialImport({required this.imported, required this.skipped});
+}
+
 class BackupImportResult {
   final int formatVersion;
   final int sessionsImported;
@@ -433,8 +460,10 @@ class BackupImportResult {
   final int identitiesImported;
   final int identitiesSkipped;
   final List<IdentityConflict> identityConflicts;
-  /// Count of financial events present in the file but not written.
-  /// Step 2 will persist these; writing them now would poison the box.
+  final int financialEventsImported;
+  final int financialEventsSkipped;
+  /// Alias of [financialEventsSkipped], kept so Step 0 tests that used
+  /// this name still compile.
   final int financialEventsReserved;
 
   const BackupImportResult({
@@ -448,6 +477,8 @@ class BackupImportResult {
     this.identitiesImported = 0,
     this.identitiesSkipped = 0,
     this.identityConflicts = const [],
+    this.financialEventsImported = 0,
+    this.financialEventsSkipped = 0,
     this.financialEventsReserved = 0,
   });
 

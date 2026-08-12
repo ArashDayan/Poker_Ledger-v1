@@ -1,6 +1,7 @@
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/chip_movement.dart';
 import '../models/chip_type.dart';
+import '../models/financial_event.dart';
 import '../models/player.dart';
 import '../models/player_identity.dart';
 import '../models/session.dart';
@@ -41,13 +42,8 @@ class HiveService {
   /// every financial event attached to those ids.
   static const playerIdentitiesBox = 'player_identities_box';
 
-  /// Reserved for the Financial Ledger (Step 2). Opened empty and
-  /// fail-loud from day one so a future money file can never be
-  /// silently reset by the chip-ledger recovery path. Nothing in
-  /// Step 0/1 writes a financial record into it.
-  ///
-  /// typeIds 12–14 are reserved for FinancialEvent / FinancialEventType
-  /// / PaymentMethod and must not be reused.
+  /// Append-only Financial Ledger. Fail-loud on corruption — a silent
+  /// wipe would erase who owes whom. typeIds 12–14 live here.
   static const financialEventsBox = 'financial_events_box';
 
   /// Boxes that must never be deleted to "recover". A corrupted identity
@@ -81,6 +77,9 @@ class HiveService {
     Hive.registerAdapter(ChipTypeAdapter());
     Hive.registerAdapter(ChipMovementAdapter());
     Hive.registerAdapter(PlayerIdentityAdapter());
+    Hive.registerAdapter(FinancialEventTypeAdapter());
+    Hive.registerAdapter(PaymentMethodAdapter());
+    Hive.registerAdapter(FinancialEventAdapter());
 
     // Each box is opened independently and, if corrupted, individually
     // reset — a bad write killed mid-save in one box (e.g. a phone dying
@@ -99,7 +98,7 @@ class HiveService {
     // If either file is unreadable the app stops and tells the banker,
     // leaving the file untouched.
     await openBoxFailLoud<PlayerIdentity>(playerIdentitiesBox, typed: true);
-    await openBoxFailLoud<dynamic>(financialEventsBox, typed: false);
+    await openBoxFailLoud<FinancialEvent>(financialEventsBox, typed: true);
 
     // The Chip Bank screen must show what is LEFT in the case, not the
     // starting count. This teaches ChipBankService to fold the movement
@@ -164,5 +163,6 @@ class HiveService {
       Hive.box<ChipMovement>(chipMovementsBox);
   static Box<PlayerIdentity> get playerIdentities =>
       Hive.box<PlayerIdentity>(playerIdentitiesBox);
-  static Box get financialEvents => Hive.box(financialEventsBox);
+  static Box<FinancialEvent> get financialEvents =>
+      Hive.box<FinancialEvent>(financialEventsBox);
 }

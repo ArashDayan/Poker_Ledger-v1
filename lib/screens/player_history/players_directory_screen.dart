@@ -6,8 +6,10 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
 import '../../services/player_history_service.dart';
+import '../../services/player_identity_service.dart';
 import '../../services/player_registry_service.dart';
 import '../../widgets/player_type_badge.dart';
+import '../player_account/player_account_screen.dart';
 import 'player_history_screen.dart';
 
 /// Every player the host has ever seated, across all sessions — the
@@ -418,6 +420,17 @@ class _PlayersDirectoryScreenState extends State<PlayersDirectoryScreen> {
                       case 'type':
                         _changeType(c);
                         break;
+                      case 'account':
+                        final hits = PlayerIdentityService.suggest(c.name);
+                        if (hits.length == 1 && mounted) {
+                          Navigator.of(context).push(MaterialPageRoute(
+                            builder: (_) => PlayerAccountScreen(
+                              personId: hits.single.id,
+                              displayName: hits.single.displayName,
+                            ),
+                          ));
+                        }
+                        break;
                       case 'blacklist':
                         _blacklist(c);
                         break;
@@ -427,6 +440,18 @@ class _PlayersDirectoryScreenState extends State<PlayersDirectoryScreen> {
                     }
                   },
                   itemBuilder: (_) => [
+                    if (PlayerIdentityService.suggest(c.name).length == 1)
+                      PopupMenuItem(
+                        value: 'account',
+                        child: Row(
+                          children: [
+                            const Icon(Icons.account_balance_wallet_outlined,
+                                size: 18, color: AppColors.gold),
+                            const SizedBox(width: 10),
+                            Text(tr('view_financial_account')),
+                          ],
+                        ),
+                      ),
                     PopupMenuItem(
                       value: 'type',
                       child: Row(

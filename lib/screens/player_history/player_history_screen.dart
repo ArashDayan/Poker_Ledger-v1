@@ -4,8 +4,10 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../services/player_history_service.dart';
+import '../../services/player_identity_service.dart';
 import '../../services/player_registry_service.dart';
 import '../../widgets/player_type_badge.dart';
+import '../player_account/player_account_screen.dart';
 import '../reports/reports_screen.dart';
 import '../session_shell/session_shell_screen.dart';
 import '../../models/enums.dart';
@@ -30,18 +32,22 @@ class PlayerHistoryScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: Text(career.name)),
       body: career.records.isEmpty
-          ? Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(tr('no_player_sessions'),
+          ? ListView(
+              padding: const EdgeInsets.fromLTRB(16, 24, 16, 32),
+              children: [
+                Text(tr('no_player_sessions'),
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: AppColors.textSecondary)),
-              ),
+                    style: const TextStyle(color: AppColors.textSecondary)),
+                const SizedBox(height: 16),
+                _financialAccountEntry(context),
+              ],
             )
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
               children: [
                 _headline(career, fmt, mixed),
+                const SizedBox(height: 12),
+                _financialAccountEntry(context),
                 const SizedBox(height: 14),
                 _statsGrid(career, fmt, mixed),
                 if (mixed) ...[
@@ -68,6 +74,73 @@ class PlayerHistoryScreen extends StatelessWidget {
                 ...career.recentSessions.map((r) => _sessionRow(context, r)),
               ],
             ),
+    );
+  }
+
+  Widget _financialAccountEntry(BuildContext context) {
+    final matches = PlayerIdentityService.suggest(playerName);
+    if (matches.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceElevated,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.divider),
+        ),
+        child: Text(tr('not_recorded_no_identity'),
+            style: const TextStyle(
+                fontSize: 12, color: AppColors.textSecondary, height: 1.35)),
+      );
+    }
+    if (matches.length == 1) {
+      final identity = matches.single;
+      return ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: AppColors.divider),
+        ),
+        tileColor: AppColors.surfaceElevated,
+        leading: const Icon(Icons.account_balance_wallet_outlined,
+            color: AppColors.gold),
+        title: Text(tr('view_financial_account')),
+        subtitle: Text(tr('outstanding_balance'),
+            style: const TextStyle(fontSize: 11)),
+        trailing: const Icon(Icons.chevron_right, color: AppColors.textSecondary),
+        onTap: () => Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => PlayerAccountScreen(
+            personId: identity.id,
+            displayName: identity.displayName,
+          ),
+        )),
+      );
+    }
+    return Column(
+      children: matches
+          .map((identity) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: const BorderSide(color: AppColors.divider),
+                  ),
+                  tileColor: AppColors.surfaceElevated,
+                  leading: const Icon(Icons.account_balance_wallet_outlined,
+                      color: AppColors.gold),
+                  title: Text(identity.displayName),
+                  subtitle: Text(tr('view_financial_account'),
+                      style: const TextStyle(fontSize: 11)),
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => PlayerAccountScreen(
+                      personId: identity.id,
+                      displayName: identity.displayName,
+                    ),
+                  )),
+                ),
+              ))
+          .toList(),
     );
   }
 

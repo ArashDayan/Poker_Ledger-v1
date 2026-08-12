@@ -1,4 +1,5 @@
 import '../../models/enums.dart';
+import '../../models/financial_event.dart';
 import 'app_localizations.dart';
 
 /// Localized display names for the enums that appear in the UI.
@@ -57,6 +58,42 @@ extension TransactionTypeL10n on TransactionType {
         return tr('transfer_in');
       case TransactionType.dealerTips:
         return tr('dealer_tips');
+    }
+  }
+}
+
+extension FinancialEventTypeL10n on FinancialEventType {
+  String get localizedLabel {
+    switch (this) {
+      case FinancialEventType.cashInForChips:
+        return tr('fin_cash_in_for_chips');
+      case FinancialEventType.cashOutForChips:
+        return tr('fin_cash_out_for_chips');
+      case FinancialEventType.creditIssued:
+        return tr('fin_credit_issued');
+      case FinancialEventType.creditRepaid:
+        return tr('fin_credit_repaid');
+      case FinancialEventType.cashOutUnbacked:
+        return tr('fin_cash_out_unbacked');
+      case FinancialEventType.frontMoneyIn:
+        return tr('fin_front_money_in');
+      case FinancialEventType.frontMoneyOut:
+        return tr('fin_front_money_out');
+      case FinancialEventType.adjustment:
+        return tr('fin_adjustment');
+    }
+  }
+}
+
+extension PaymentMethodL10n on PaymentMethod {
+  String get localizedLabel {
+    switch (this) {
+      case PaymentMethod.cash:
+        return tr('payment_cash');
+      case PaymentMethod.bankTransfer:
+        return tr('payment_bank_transfer');
+      case PaymentMethod.other:
+        return tr('payment_other');
     }
   }
 }
