@@ -7,6 +7,7 @@ import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
 import '../../models/session.dart';
 import '../../providers/session_provider.dart';
+import '../../services/rebate_service.dart';
 import '../../services/table_service.dart';
 import '../../services/session_settlement_view.dart';
 import '../../widgets/balance_check_banner.dart';
@@ -42,6 +43,12 @@ class DashboardTab extends StatelessWidget {
     final balance = provider.balance!;
     final session = provider.current!;
     final settlement = SessionSettlementView.load(session.id, session.currency);
+    final overlay = RebateService.overlayFor(
+      sessionId: session.id,
+      currency: session.currency,
+      rawDiscrepancy: balance.discrepancy,
+      moneyStillInPlay: provider.moneyStillInPlay,
+    );
     bool closing = false;
     return showModalBottomSheet(
       context: context,
@@ -62,7 +69,11 @@ class DashboardTab extends StatelessWidget {
                   style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                 ),
                 const SizedBox(height: 16),
-                BalanceCheckBanner(result: balance, formatter: fmt),
+                BalanceCheckBanner(
+                  result: balance,
+                  formatter: fmt,
+                  discountChips: overlay,
+                ),
                 const SizedBox(height: 12),
                 SessionSettlementSummary(
                   view: settlement,
@@ -213,6 +224,12 @@ class DashboardTab extends StatelessWidget {
     final onBreak = session.status == SessionStatus.onBreak;
     final isEnded = session.status == SessionStatus.ended;
     final balance = provider.balance!;
+    final overlay = RebateService.overlayFor(
+      sessionId: session.id,
+      currency: session.currency,
+      rawDiscrepancy: balance.discrepancy,
+      moneyStillInPlay: provider.moneyStillInPlay,
+    );
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -386,6 +403,18 @@ class DashboardTab extends StatelessWidget {
                   _miniStat('Current Pot', fmt.format(provider.moneyStillInPlay)),
                 ],
               ),
+              if (overlay != null) ...[
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '${tr('rebate_implied_in_play')}: '
+                    '${fmt.format(overlay.impliedStillInPlay)}',
+                    style: const TextStyle(
+                        fontSize: 11, color: AppColors.warning),
+                  ),
+                ),
+              ],
               const SizedBox(height: 4),
               Align(
                 alignment: Alignment.centerLeft,

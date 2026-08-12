@@ -682,6 +682,23 @@ class RebateService {
     );
   }
 
+  /// Null when this session issued no chip Discount. Callers use this
+  /// so a missing overlay cannot invent promotional chips.
+  static DiscountChipReconciliation? overlayFor({
+    required String sessionId,
+    required AppCurrency currency,
+    required double rawDiscrepancy,
+    required double moneyStillInPlay,
+  }) {
+    if (chipGrantsIssuedMinor(sessionId, currency) <= 0) return null;
+    return chipReconciliation(
+      sessionId: sessionId,
+      currency: currency,
+      rawDiscrepancy: rawDiscrepancy,
+      moneyStillInPlay: moneyStillInPlay,
+    );
+  }
+
   /// Session-wide chip-grant total, for the expected checkBalance gap
   /// explanation. Does not change SessionService math.
   static int chipGrantsIssuedMinor(String sessionId, AppCurrency currency) {

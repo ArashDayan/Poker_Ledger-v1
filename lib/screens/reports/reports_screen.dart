@@ -4,8 +4,11 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../services/export_service.dart';
 import '../../services/hive_service.dart';
+import '../../services/rebate_service.dart';
 import '../../services/session_service.dart';
+import '../../services/session_settlement_view.dart';
 import '../../widgets/balance_check_banner.dart';
+import '../../widgets/session_settlement_summary.dart';
 import '../../widgets/stat_card.dart';
 
 /// Standalone-Scaffold wrapper around [ReportsTab] for deep links /
@@ -62,6 +65,12 @@ class _ReportsTabState extends State<ReportsTab> {
     final balance = SessionService.checkBalance(session.id);
     final settlement =
         SessionSettlementView.load(session.id, session.currency);
+    final overlay = RebateService.overlayFor(
+      sessionId: session.id,
+      currency: session.currency,
+      rawDiscrepancy: balance.discrepancy,
+      moneyStillInPlay: settlement.moneyStillInPlay,
+    );
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -70,7 +79,11 @@ class _ReportsTabState extends State<ReportsTab> {
         Text('${session.location} · ${tr('table')} ${session.tableNumber}',
             style: const TextStyle(color: AppColors.textSecondary)),
         const SizedBox(height: 16),
-        BalanceCheckBanner(result: balance, formatter: fmt),
+        BalanceCheckBanner(
+          result: balance,
+          formatter: fmt,
+          discountChips: overlay,
+        ),
         const SizedBox(height: 16),
         GridView.count(
           crossAxisCount: 2,

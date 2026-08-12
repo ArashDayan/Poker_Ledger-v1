@@ -844,6 +844,9 @@ class AppLocalizations {
       'rebate_books_residual': 'Poker-book residual after Discount chips',
       'rebate_implied_in_play': 'Still in play including Discount chips',
       'settle_rebate_chips_explained': 'Poker chip books look short because Discount chips were issued. They are not Buy-in and not own cash. The residual after that reconciling item is zero.',
+      'settle_rebate_chips_in_play': 'Poker books balance. Discount chips are still in play. They are not Money In.',
+      'rebate_promo_in_play': 'Promo chips in play',
+      'rebate_books_explained_short': 'Explained by Discount chips',
     },
     'fa': {
       'app_title': 'دفتر پوکر',
@@ -1670,6 +1673,9 @@ class AppLocalizations {
       'rebate_books_residual': 'مانده دفتر ژتون پس از ژتون تخفیف',
       'rebate_implied_in_play': 'هنوز در بازی با احتساب ژتون تخفیف',
       'settle_rebate_chips_explained': 'دفتر ژتون کوتاه به نظر می‌رسد چون ژتون تخفیف داده شده است. این خرید ورود و پول خود بازیکن نیست. مانده پس از این رقم توضیحی صفر است.',
+      'settle_rebate_chips_in_play': 'دفتر ژتون تراز است. ژتون تخفیف هنوز در بازی است. این مبلغ ورودی پول نیست.',
+      'rebate_promo_in_play': 'ژتون تشویقی در بازی',
+      'rebate_books_explained_short': 'با ژتون تخفیف توضیح داده شد',
     },
   };
 

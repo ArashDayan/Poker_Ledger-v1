@@ -58,6 +58,12 @@ class ExportService {
         SessionSettlementView.load(session.id, session.currency);
     final fmt = CurrencyFormatter(session.currency);
 
+    final overlay = RebateService.overlayFor(
+      sessionId: session.id,
+      currency: session.currency,
+      rawDiscrepancy: balance.discrepancy,
+      moneyStillInPlay: SessionService.moneyStillInPlay(session.id),
+    );
     final extremes = ReportService.sessionExtremes(session);
 
     doc.addPage(
@@ -131,9 +137,28 @@ class ExportService {
               ['Host Profit (rake only)', fmt.formatRaw(SessionService.hostProfit(session.id))],
               [
                 'Balance Status',
-                balance.isBalanced
-                    ? 'BALANCED'
-                    : 'DISCREPANCY: ${fmt.formatRaw(balance.discrepancy.abs())}'
+                overlay != null && overlay.explainsGap
+                    ? 'EXPLAINED BY DISCOUNT CHIPS: '
+                        '${fmt.formatRaw(balance.discrepancy.abs())}'
+                    : balance.isBalanced
+                        ? (overlay != null
+                            ? 'BALANCED (Discount chips still in play)'
+                            : 'BALANCED')
+                        : 'DISCREPANCY: ${fmt.formatRaw(balance.discrepancy.abs())}'
+              ],
+              if (overlay != null) ...[
+                [
+                  'Discount chips issued (not Money In)',
+                  fmt.formatRaw(overlay.issuedMajor),
+                ],
+                [
+                  'Poker-book residual after Discount chips',
+                  fmt.formatRaw(overlay.residualAfterDiscount),
+                ],
+                [
+                  'Still in play including Discount chips',
+                  fmt.formatRaw(overlay.impliedStillInPlay),
+                ],
               ],
             ],
           ),
@@ -257,6 +282,13 @@ class ExportService {
   static Future<File> exportSessionCsv(PokerSession session) async {
     final txs = SessionService.transactionsFor(session.id);
     final players = SessionService.playersFor(session.id);
+    final books = SessionService.checkBalance(session.id);
+    final overlay = RebateService.overlayFor(
+      sessionId: session.id,
+      currency: session.currency,
+      rawDiscrepancy: books.discrepancy,
+      moneyStillInPlay: SessionService.moneyStillInPlay(session.id),
+    );
     final rows = <List<dynamic>>[
       ['Timestamp', 'Type', 'Player', 'Amount', 'Note', 'Signed'],
       for (final t in txs)
@@ -272,6 +304,18 @@ class ExportService {
           t.note ?? '',
           t.hostSignatureBase64 != null ? 'Yes' : 'No',
         ],
+      if (overlay != null) ...[
+        <dynamic>[],
+        ['Discount chips issued (not Money In)', overlay.issuedMajor],
+        [
+          'Poker-book residual after Discount chips',
+          overlay.residualAfterDiscount,
+        ],
+        [
+          'Still in play including Discount chips',
+          overlay.impliedStillInPlay,
+        ],
+      ],
     ];
     final csv = const ListToCsvConverter().convert(rows);
     final dir = await getApplicationDocumentsDirectory();
@@ -395,6 +439,12 @@ class ExportService {
       ]);
     }
     if (granted == 0 && cashIn == 0) return const [];
+    final overlay = RebateService.overlayFor(
+      sessionId: session.id,
+      currency: session.currency,
+      rawDiscrepancy: SessionService.checkBalance(session.id).discrepancy,
+      moneyStillInPlay: SessionService.moneyStillInPlay(session.id),
+    );
     return [
       pw.Padding(
         padding: const pw.EdgeInsets.symmetric(horizontal: 18),
@@ -413,6 +463,11 @@ class ExportService {
             ['Discount paid to player', fmt.formatRaw(MoneyUnits.toMajor(session.currency, paid))],
             ['Cash out paid', fmt.formatRaw(MoneyUnits.toMajor(session.currency, actual))],
             ['House retained from own cash', fmt.formatRaw(MoneyUnits.toMajor(session.currency, retained))],
+            if (overlay != null) ...[
+              ['Discount chips issued (not Money In)', fmt.formatRaw(overlay.issuedMajor)],
+              ['Poker-book residual after Discount chips', fmt.formatRaw(overlay.residualAfterDiscount)],
+              ['Still in play including Discount chips', fmt.formatRaw(overlay.impliedStillInPlay)],
+            ],
           ],
         ),
       ),
