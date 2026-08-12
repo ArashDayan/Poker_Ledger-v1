@@ -60,6 +60,7 @@ Future<FinancialEvent?> askRebateGrant(
                       color: AppColors.textSecondary,
                       height: 1.35)),
               const SizedBox(height: 12),
+              _line(tr('rebate_cycle'), '${suggestion.cycleIndex}'),
               _line(tr('rebate_gross_loss'),
                   fmt.format(MoneyUnits.toMajor(currency, suggestion.grossLossMinor))),
               _line(tr('rebate_eligible_loss'),

@@ -174,6 +174,17 @@ class FinancialEvent extends HiveObject {
   @HiveField(17)
   bool? grantedAsChips;
 
+  /// Discount percent that created this grant (e.g. 10.0 = 10%).
+  /// Frozen at grant time so a later House Rules change cannot rewrite
+  /// this cycle's reconciliation.
+  @HiveField(18)
+  double? grantPercent;
+
+  /// 1-based cycle number inside this session + person + currency.
+  /// Chronology is still authoritative; this is display / audit only.
+  @HiveField(19)
+  int? cycleIndex;
+
   FinancialEvent({
     required this.id,
     required this.personId,
@@ -193,6 +204,8 @@ class FinancialEvent extends HiveObject {
     this.reason,
     this.baseLossMinor,
     this.grantedAsChips,
+    this.grantPercent,
+    this.cycleIndex,
   });
 
   bool get isReversal =>
@@ -219,6 +232,8 @@ class FinancialEvent extends HiveObject {
         'reason': reason,
         'baseLossMinor': baseLossMinor,
         'grantedAsChips': grantedAsChips,
+        'grantPercent': grantPercent,
+        'cycleIndex': cycleIndex,
       };
 
   static FinancialEvent fromJson(Map<String, dynamic> json) {
@@ -252,6 +267,8 @@ class FinancialEvent extends HiveObject {
       reason: json['reason'] as String?,
       baseLossMinor: json['baseLossMinor'] as int?,
       grantedAsChips: json['grantedAsChips'] as bool?,
+      grantPercent: (json['grantPercent'] as num?)?.toDouble(),
+      cycleIndex: json['cycleIndex'] as int?,
     );
   }
 }

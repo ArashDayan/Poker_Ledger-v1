@@ -64,10 +64,15 @@ class SessionSettlementSummary extends StatelessWidget {
           _section(tr('rebate_title'), [
             _row(tr('rebate_own_cash_in'),
                 fmt.format(_sessionRebate!.playerCashIn)),
+            _row(tr('rebate_original_loss'),
+                fmt.format(_sessionRebate!.originalLoss)),
             _row(tr('rebate_granted'), fmt.format(_sessionRebate!.granted)),
             _row(tr('rebate_lost_in_play'),
                 fmt.format(_sessionRebate!.lostInPlay)),
             _row(tr('rebate_clawback'), fmt.format(_sessionRebate!.clawback)),
+            _row(tr('rebate_waived'), fmt.format(_sessionRebate!.waived)),
+            _row(tr('rebate_remaining_loss'),
+                fmt.format(_sessionRebate!.remainingLoss)),
             _row(tr('rebate_paid_out'), fmt.format(_sessionRebate!.paidOut)),
             _row(tr('rebate_actual_paid'),
                 fmt.format(_sessionRebate!.actualCashPaid)),
@@ -135,12 +140,17 @@ class SessionSettlementSummary extends StatelessWidget {
               grantedMinor: acc.grantedMinor + snap.grantedMinor,
               returnedMinor: acc.returnedMinor + snap.returnedMinor,
               clawbackMinor: acc.clawbackMinor + snap.clawbackMinor,
+              waivedMinor: acc.waivedMinor + snap.waivedMinor,
               paidOutMinor: acc.paidOutMinor + snap.paidOutMinor,
               exposedMinor: acc.exposedMinor + snap.exposedMinor,
               actualCashPaidMinor:
                   acc.actualCashPaidMinor + snap.actualCashPaidMinor,
               houseRetainedMinor:
                   acc.houseRetainedMinor + snap.houseRetainedMinor,
+              originalLossMinor:
+                  acc.originalLossMinor + snap.originalLossMinor,
+              remainingLossMinor:
+                  acc.remainingLossMinor + snap.remainingLossMinor,
               chipGrantMinor: acc.chipGrantMinor + snap.chipGrantMinor,
               cashGrantMinor: acc.cashGrantMinor + snap.cashGrantMinor,
               recorded: true,
@@ -221,6 +231,7 @@ class SessionSettlementSummary extends StatelessWidget {
         '${tr('rebate_granted')} ${fmt.format(snap.granted)}'
         ' · ${tr('rebate_lost_in_play')} ${fmt.format(snap.lostInPlay)}'
         ' · ${tr('rebate_clawback')} ${fmt.format(snap.clawback)}'
+        ' · ${tr('rebate_waived')} ${fmt.format(snap.waived)}'
         ' · ${tr('rebate_actual_paid')} ${fmt.format(snap.actualCashPaid)}',
         style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
       ),

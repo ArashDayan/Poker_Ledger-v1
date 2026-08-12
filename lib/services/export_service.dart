@@ -316,6 +316,7 @@ class ExportService {
           overlay.impliedStillInPlay,
         ],
       ],
+      ..._rebateCsvFooter(session),
     ];
     final csv = const ListToCsvConverter().convert(rows);
     final dir = await getApplicationDocumentsDirectory();
@@ -399,6 +400,47 @@ class ExportService {
     );
   }
 
+  static List<List<dynamic>> _rebateCsvFooter(PokerSession session) {
+    var granted = 0;
+    var lostInPlay = 0;
+    var clawback = 0;
+    var waived = 0;
+    var actual = 0;
+    var originalLoss = 0;
+    final settlement =
+        SessionSettlementView.load(session.id, session.currency);
+    for (final row in settlement.players) {
+      final personId = row.player.personId;
+      if (personId == null || personId.isEmpty) continue;
+      final snap = RebateService.snapshot(
+        sessionId: session.id,
+        personId: personId,
+        currency: session.currency,
+      );
+      if (!snap.hasActivity) continue;
+      granted += snap.grantedMinor;
+      lostInPlay += snap.lostInPlayMinor;
+      clawback += snap.clawbackMinor;
+      waived += snap.waivedMinor;
+      actual += snap.actualCashPaidMinor;
+      originalLoss += snap.originalLossMinor;
+    }
+    if (granted == 0 && originalLoss == 0) return const [];
+    return [
+      <dynamic>[],
+      ['Discount original qualifying loss',
+          MoneyUnits.toMajor(session.currency, originalLoss)],
+      ['Discount granted', MoneyUnits.toMajor(session.currency, granted)],
+      ['Discount consumed / lost in play',
+          MoneyUnits.toMajor(session.currency, lostInPlay)],
+      ['Discount reconciled', MoneyUnits.toMajor(session.currency, clawback)],
+      ['Discount waived by Banker',
+          MoneyUnits.toMajor(session.currency, waived)],
+      ['Discount actual cash paid',
+          MoneyUnits.toMajor(session.currency, actual)],
+    ];
+  }
+
   static List<pw.Widget> _rebatePdfSection(
     PokerSession session,
     SessionSettlementView settlement,
@@ -407,10 +449,13 @@ class ExportService {
     var granted = 0;
     var lostInPlay = 0;
     var clawback = 0;
+    var waived = 0;
     var paid = 0;
     var cashIn = 0;
     var actual = 0;
     var retained = 0;
+    var originalLoss = 0;
+    var remainingLoss = 0;
     final rows = <List<String>>[];
     for (final row in settlement.players) {
       final personId = row.player.personId;
@@ -424,16 +469,20 @@ class ExportService {
       granted += snap.grantedMinor;
       lostInPlay += snap.lostInPlayMinor;
       clawback += snap.clawbackMinor;
+      waived += snap.waivedMinor;
       paid += snap.paidOutMinor;
       cashIn += snap.playerCashInMinor;
       actual += snap.actualCashPaidMinor;
       retained += snap.houseRetainedMinor;
+      originalLoss += snap.originalLossMinor;
+      remainingLoss += snap.remainingLossMinor;
       rows.add([
         row.player.name,
-        fmt.formatRaw(snap.grossLoss),
+        fmt.formatRaw(snap.originalLoss),
         fmt.formatRaw(snap.granted),
         fmt.formatRaw(snap.lostInPlay),
         fmt.formatRaw(snap.clawback),
+        fmt.formatRaw(snap.waived),
         fmt.formatRaw(snap.actualCashPaid),
         fmt.formatRaw(snap.houseRetained),
       ]);
@@ -457,9 +506,12 @@ class ExportService {
           headers: ['Metric', 'Amount'],
           data: [
             ['Player own cash in', fmt.formatRaw(MoneyUnits.toMajor(session.currency, cashIn))],
+            ['Original qualifying loss', fmt.formatRaw(MoneyUnits.toMajor(session.currency, originalLoss))],
             ['Discount granted', fmt.formatRaw(MoneyUnits.toMajor(session.currency, granted))],
             ['Discount consumed / lost in play', fmt.formatRaw(MoneyUnits.toMajor(session.currency, lostInPlay))],
-            ['Discount cash recovered / clawed back', fmt.formatRaw(MoneyUnits.toMajor(session.currency, clawback))],
+            ['Discount reconciled', fmt.formatRaw(MoneyUnits.toMajor(session.currency, clawback))],
+            ['Discount waived by Banker', fmt.formatRaw(MoneyUnits.toMajor(session.currency, waived))],
+            ['Remaining original loss', fmt.formatRaw(MoneyUnits.toMajor(session.currency, remainingLoss))],
             ['Discount paid to player', fmt.formatRaw(MoneyUnits.toMajor(session.currency, paid))],
             ['Cash out paid', fmt.formatRaw(MoneyUnits.toMajor(session.currency, actual))],
             ['House retained from own cash', fmt.formatRaw(MoneyUnits.toMajor(session.currency, retained))],
@@ -477,10 +529,11 @@ class ExportService {
           child: _table(
             headers: [
               'Player',
-              'Eligible loss',
+              'Original loss',
               'Granted',
               'Lost in play',
-              'Cash recovered',
+              'Reconciled',
+              'Waived',
               'Cash out paid',
               'House retained',
             ],

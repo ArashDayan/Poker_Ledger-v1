@@ -133,6 +133,8 @@ class FinancialLedgerService {
     String? reason,
     int? baseLossMinor,
     bool? grantedAsChips,
+    double? grantPercent,
+    int? cycleIndex,
   }) async {
     _assertBoxOpen();
     _assertKnownPerson(personId);

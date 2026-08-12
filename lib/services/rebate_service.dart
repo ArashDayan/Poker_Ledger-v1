@@ -10,6 +10,7 @@ import 'hive_service.dart';
 class RebateRecoveryKind {
   static const lostInPlay = 'lost_in_play';
   static const clawback = 'clawback';
+  static const override = 'override';
 }
 
 /// Session-scoped loss-rebate (Discount) configuration.
@@ -27,7 +28,7 @@ class RebateConfig {
   bool get isUsable => enabled && percent > 0 && minLossMinor > 0;
 }
 
-/// Suggested first or incremental grant. Nothing is written until confirm.
+/// Suggested first or later-cycle grant. Nothing is written until confirm.
 class RebateSuggestion {
   final int eligibleLossMinor;
   final int grantMinor;
@@ -35,6 +36,7 @@ class RebateSuggestion {
   final int incrementalLossMinor;
   final bool alreadyQualified;
   final bool lossRealized;
+  final int cycleIndex;
   final String? blockReason;
 
   const RebateSuggestion({
@@ -44,6 +46,7 @@ class RebateSuggestion {
     required this.incrementalLossMinor,
     required this.alreadyQualified,
     this.lossRealized = false,
+    this.cycleIndex = 1,
     this.blockReason,
   });
 
@@ -52,32 +55,70 @@ class RebateSuggestion {
 
 /// What a cash-out does to the still-exposed grant.
 ///
-/// Economic reading (locked):
-///   C <= G  → player receives C; G − C returned as lost-in-play
-///   C >  G  → claw back G from the window; player receives C − G
-/// After either branch the grant cycle is closed. A later cash-out does
-/// not invent another free grant.
+/// Finalized remaining-loss entitlement:
+///   C <= G  → player receives C; G − C lost in play
+///   C >  G  → recon = G − p × max(0, L − C), capped to [0, G]
+///             player receives C − recon
+/// This is not a new percent tax on the cash-out. After either branch
+/// the cycle is closed. Banker override pays C and journals the waived
+/// recon so it can never be reclaimed.
 class RebateRealization {
   final int cashOutMinor;
   final int exposedBeforeMinor;
+  final int originalLossMinor;
+  final int remainingLossMinor;
+  final int remainingEntitlementMinor;
   final int returnedMinor;
   final int paidOutFromDiscountMinor;
   final int clawbackMinor;
+  final int waivedMinor;
   final int actualCashPaidMinor;
+  final double grantPercent;
+  final bool overrideApplied;
   final String? recoveryKind;
 
   const RebateRealization({
     required this.cashOutMinor,
     required this.exposedBeforeMinor,
+    this.originalLossMinor = 0,
+    this.remainingLossMinor = 0,
+    this.remainingEntitlementMinor = 0,
     required this.returnedMinor,
     required this.paidOutFromDiscountMinor,
     required this.clawbackMinor,
+    this.waivedMinor = 0,
     required this.actualCashPaidMinor,
+    this.grantPercent = 0,
+    this.overrideApplied = false,
     this.recoveryKind,
   });
 
-  bool get hasJournalRow => returnedMinor > 0;
+  int get reconciliationMinor =>
+      overrideApplied ? waivedMinor : clawbackMinor;
+
+  int get normalPaidMinor => cashOutMinor - clawbackMinor;
+
+  bool get hasJournalRow => returnedMinor > 0 || waivedMinor > 0;
   bool get closesGrant => exposedBeforeMinor > 0;
+
+  RebateRealization get asOverride {
+    if (clawbackMinor <= 0) return this;
+    return RebateRealization(
+      cashOutMinor: cashOutMinor,
+      exposedBeforeMinor: exposedBeforeMinor,
+      originalLossMinor: originalLossMinor,
+      remainingLossMinor: remainingLossMinor,
+      remainingEntitlementMinor: remainingEntitlementMinor,
+      returnedMinor: 0,
+      paidOutFromDiscountMinor: exposedBeforeMinor,
+      clawbackMinor: 0,
+      waivedMinor: clawbackMinor,
+      actualCashPaidMinor: cashOutMinor,
+      grantPercent: grantPercent,
+      overrideApplied: true,
+      recoveryKind: RebateRecoveryKind.override,
+    );
+  }
 }
 
 /// Derived Discount picture for one person in one session + currency.
@@ -89,12 +130,20 @@ class RebateSnapshot {
   final int grantedMinor;
   final int returnedMinor;
   final int clawbackMinor;
+  final int waivedMinor;
   final int paidOutMinor;
   final int exposedMinor;
   final int actualCashPaidMinor;
   final int houseRetainedMinor;
   final int chipGrantMinor;
   final int cashGrantMinor;
+  final int originalLossMinor;
+  final int remainingLossMinor;
+  final int remainingEntitlementMinor;
+  final double grantPercent;
+  final int cycleIndex;
+  final bool cycleOpen;
+  final String? closeReason;
   final bool recorded;
   final bool hasOwnCashOutEvent;
 
@@ -106,12 +155,20 @@ class RebateSnapshot {
     required this.grantedMinor,
     required this.returnedMinor,
     required this.clawbackMinor,
+    this.waivedMinor = 0,
     required this.paidOutMinor,
     required this.exposedMinor,
     required this.actualCashPaidMinor,
     required this.houseRetainedMinor,
     required this.chipGrantMinor,
     required this.cashGrantMinor,
+    this.originalLossMinor = 0,
+    this.remainingLossMinor = 0,
+    this.remainingEntitlementMinor = 0,
+    this.grantPercent = 0,
+    this.cycleIndex = 0,
+    this.cycleOpen = false,
+    this.closeReason,
     required this.recorded,
     this.hasOwnCashOutEvent = false,
   });
@@ -145,6 +202,7 @@ class RebateSnapshot {
   double get granted => MoneyUnits.toMajor(currency, grantedMinor);
   double get returned => MoneyUnits.toMajor(currency, returnedMinor);
   double get clawback => MoneyUnits.toMajor(currency, clawbackMinor);
+  double get waived => MoneyUnits.toMajor(currency, waivedMinor);
   double get paidOut => MoneyUnits.toMajor(currency, paidOutMinor);
   double get exposed => MoneyUnits.toMajor(currency, exposedMinor);
   double get actualCashPaid =>
@@ -153,6 +211,10 @@ class RebateSnapshot {
   double get chipGrant => MoneyUnits.toMajor(currency, chipGrantMinor);
   double get cashGrant => MoneyUnits.toMajor(currency, cashGrantMinor);
   double get lostInPlay => MoneyUnits.toMajor(currency, lostInPlayMinor);
+  double get originalLoss => MoneyUnits.toMajor(currency, originalLossMinor);
+  double get remainingLoss => MoneyUnits.toMajor(currency, remainingLossMinor);
+  double get remainingEntitlement =>
+      MoneyUnits.toMajor(currency, remainingEntitlementMinor);
   double get playerEconomicNet =>
       MoneyUnits.toMajor(currency, actualCashPaidMinor - playerCashInMinor);
 
@@ -170,6 +232,7 @@ class RebateSnapshot {
 ///   * Session + person + currency scoped. No cross-session carry.
 ///   * Cash game only.
 ///   * Does not import session_service.dart.
+///   * Later cycles are independent. Never GrossLoss − Σ baseLoss.
 class RebateService {
   RebateService._();
 
@@ -204,102 +267,43 @@ class RebateService {
     required String personId,
     required AppCurrency currency,
   }) {
-    final events = FinancialLedgerService.eventsForSession(
-      sessionId,
+    final walk = _walk(
+      sessionId: sessionId,
       personId: personId,
       currency: currency,
     );
-    if (events.isEmpty) return RebateSnapshot.empty(currency);
+    if (!walk.seen) return RebateSnapshot.empty(currency);
 
-    final reversed = events
-        .where((e) => e.isReversal)
-        .map((e) => e.reversesEventId!)
-        .toSet();
-    final active = events
-        .where((e) => !e.isReversal && !reversed.contains(e.id))
-        .toList()
-      ..sort((a, b) {
-        final byTime = a.occurredAt.compareTo(b.occurredAt);
-        if (byTime != 0) return byTime;
-        return a.createdAt.compareTo(b.createdAt);
-      });
-
-    var cashIn = 0;
-    var cashOut = 0;
-    var granted = 0;
-    var returned = 0;
-    var clawback = 0;
-    var exposed = 0;
-    var paidOut = 0;
-    var chipGrant = 0;
-    var cashGrant = 0;
-    var hasOwnCashOutEvent = false;
-
-    for (final e in active) {
-      switch (e.type) {
-        case FinancialEventType.cashInForChips:
-          cashIn += e.amountMinor;
-          break;
-        case FinancialEventType.cashOutForChips:
-          hasOwnCashOutEvent = true;
-          cashOut += e.amountMinor;
-          if (exposed > 0) {
-            final g = exposed;
-            final c = e.amountMinor;
-            if (c < g) {
-              paidOut += c;
-            } else if (c == g) {
-              paidOut += c;
-            }
-            exposed = 0;
-          }
-          break;
-        case FinancialEventType.rebateGranted:
-          granted += e.amountMinor;
-          exposed += e.amountMinor;
-          if (e.grantedAsChips == true) {
-            chipGrant += e.amountMinor;
-          } else {
-            cashGrant += e.amountMinor;
-          }
-          break;
-        case FinancialEventType.rebateRecovered:
-          returned += e.amountMinor;
-          if (e.reason == RebateRecoveryKind.clawback) {
-            clawback += e.amountMinor;
-          }
-          break;
-        default:
-          break;
-      }
-    }
-
-    // Paid-out identity: grant that neither returned nor is still exposed.
-    final derivedPaid = granted - returned - exposed;
-    if (derivedPaid >= 0) {
-      paidOut = derivedPaid;
-    }
-
-    final grossLoss = cashIn > cashOut ? cashIn - cashOut : 0;
-    final actualPaid = cashOut - clawback;
-    final houseRetained = cashIn - actualPaid;
+    final derivedPaid = walk.granted - walk.returned - walk.exposed;
+    final grossLoss =
+        walk.cashIn > walk.cashOut ? walk.cashIn - walk.cashOut : 0;
+    final actualPaid = walk.cashOut - walk.clawback;
+    final houseRetained = walk.cashIn - actualPaid;
 
     return RebateSnapshot(
       currency: currency,
-      playerCashInMinor: cashIn,
-      playerCashOutMinor: cashOut,
+      playerCashInMinor: walk.cashIn,
+      playerCashOutMinor: walk.cashOut,
       grossLossMinor: grossLoss,
-      grantedMinor: granted,
-      returnedMinor: returned,
-      clawbackMinor: clawback,
-      paidOutMinor: paidOut < 0 ? 0 : paidOut,
-      exposedMinor: exposed < 0 ? 0 : exposed,
+      grantedMinor: walk.granted,
+      returnedMinor: walk.returned,
+      clawbackMinor: walk.clawback,
+      waivedMinor: walk.waived,
+      paidOutMinor: derivedPaid < 0 ? 0 : derivedPaid,
+      exposedMinor: walk.exposed < 0 ? 0 : walk.exposed,
       actualCashPaidMinor: actualPaid,
       houseRetainedMinor: houseRetained,
-      chipGrantMinor: chipGrant,
-      cashGrantMinor: cashGrant,
+      chipGrantMinor: walk.chipGrant,
+      cashGrantMinor: walk.cashGrant,
+      originalLossMinor: walk.originalLoss,
+      remainingLossMinor: walk.remainingLoss,
+      remainingEntitlementMinor: walk.remainingEntitlement,
+      grantPercent: walk.lastPercent,
+      cycleIndex: walk.lastCycleIndex,
+      cycleOpen: walk.cycleOpen,
+      closeReason: walk.lastCloseReason,
       recorded: true,
-      hasOwnCashOutEvent: hasOwnCashOutEvent,
+      hasOwnCashOutEvent: walk.hasOwnCashOutEvent,
     );
   }
 
@@ -343,80 +347,100 @@ class RebateService {
       );
     }
 
-    final snap = snapshot(
+    final walk = _walk(
       sessionId: sessionId,
       personId: personId,
       currency: currency,
     );
-    if (chipCashOutWithoutFunding && !snap.hasOwnCashOutEvent) {
+    final snapGross =
+        walk.cashIn > walk.cashOut ? walk.cashIn - walk.cashOut : 0;
+    final cycleLoss = walk.pendingLoss;
+    final already = walk.closedCount > 0 || walk.cycleOpen;
+    final nextIndex = walk.closedCount + (walk.cycleOpen ? 1 : 0) + 1;
+
+    if (chipCashOutWithoutFunding &&
+        walk.pendingOut == 0 &&
+        !bustRealized) {
       return RebateSuggestion(
         eligibleLossMinor: 0,
         grantMinor: 0,
-        grossLossMinor: snap.grossLossMinor,
-        incrementalLossMinor: 0,
-        alreadyQualified: false,
+        grossLossMinor: snapGross,
+        incrementalLossMinor: cycleLoss,
+        alreadyQualified: already,
+        cycleIndex: nextIndex,
         blockReason: 'Cash-out funding was not recorded. '
             'Review the cash-out before granting Discount.',
       );
     }
-    final lossRealized = snap.hasOwnCashOutEvent || bustRealized;
+    if (walk.cycleOpen) {
+      return RebateSuggestion(
+        eligibleLossMinor: 0,
+        grantMinor: 0,
+        grossLossMinor: snapGross,
+        incrementalLossMinor: cycleLoss,
+        alreadyQualified: true,
+        cycleIndex: walk.lastCycleIndex,
+        lossRealized: true,
+        blockReason: 'A Discount cycle is still open.',
+      );
+    }
+    final lossRealized = walk.pendingOut > 0 || bustRealized;
     if (!lossRealized) {
       return RebateSuggestion(
         eligibleLossMinor: 0,
         grantMinor: 0,
-        grossLossMinor: snap.grossLossMinor,
-        incrementalLossMinor: 0,
-        alreadyQualified: false,
+        grossLossMinor: snapGross,
+        incrementalLossMinor: cycleLoss,
+        alreadyQualified: already,
+        cycleIndex: nextIndex,
         blockReason: 'No realized cash-out yet. '
-            'Record a cash-out or a $0 bust before granting Discount.',
+            'Record a cash-out or a \$0 bust before granting Discount.',
       );
     }
-    final consumed = _consumedBaseLoss(sessionId, personId, currency);
-    final already = consumed > 0;
-    final incremental = snap.grossLossMinor - consumed;
-    if (!already && snap.grossLossMinor < cfg.minLossMinor) {
+    if (cycleLoss < cfg.minLossMinor) {
       return RebateSuggestion(
         eligibleLossMinor: 0,
         grantMinor: 0,
-        grossLossMinor: snap.grossLossMinor,
-        incrementalLossMinor: incremental < 0 ? 0 : incremental,
-        alreadyQualified: false,
+        grossLossMinor: snapGross,
+        incrementalLossMinor: cycleLoss,
+        alreadyQualified: already,
+        cycleIndex: nextIndex,
         lossRealized: true,
         blockReason: 'Own-cash loss is below the session minimum.',
       );
     }
-    final eligible = already
-        ? (incremental < 0 ? 0 : incremental)
-        : snap.grossLossMinor;
-    if (eligible <= 0) {
+    if (cycleLoss <= 0) {
       return RebateSuggestion(
         eligibleLossMinor: 0,
         grantMinor: 0,
-        grossLossMinor: snap.grossLossMinor,
-        incrementalLossMinor: incremental < 0 ? 0 : incremental,
+        grossLossMinor: snapGross,
+        incrementalLossMinor: 0,
         alreadyQualified: already,
+        cycleIndex: nextIndex,
         lossRealized: true,
         blockReason: 'No new own-cash loss to rebate.',
       );
     }
-    final grant = _percentOf(eligible, cfg.percent);
+    final grant = _percentOf(cycleLoss, cfg.percent);
     if (grant <= 0) {
       return RebateSuggestion(
-        eligibleLossMinor: eligible,
+        eligibleLossMinor: cycleLoss,
         grantMinor: 0,
-        grossLossMinor: snap.grossLossMinor,
-        incrementalLossMinor: incremental < 0 ? 0 : incremental,
+        grossLossMinor: snapGross,
+        incrementalLossMinor: cycleLoss,
         alreadyQualified: already,
+        cycleIndex: nextIndex,
         lossRealized: true,
         blockReason: 'Calculated Discount rounds to zero.',
       );
     }
     return RebateSuggestion(
-      eligibleLossMinor: eligible,
+      eligibleLossMinor: cycleLoss,
       grantMinor: grant,
-      grossLossMinor: snap.grossLossMinor,
-      incrementalLossMinor: incremental < 0 ? 0 : incremental,
+      grossLossMinor: snapGross,
+      incrementalLossMinor: cycleLoss,
       alreadyQualified: already,
+      cycleIndex: nextIndex,
       lossRealized: true,
     );
   }
@@ -448,6 +472,7 @@ class RebateService {
         suggestion.blockReason ?? 'Cannot grant Discount.',
       );
     }
+    final cfg = configFor(sessionId);
     return FinancialLedgerService.record(
       personId: personId,
       currency: currency,
@@ -457,6 +482,8 @@ class RebateService {
       note: note ?? (asChips ? 'Granted as chips' : 'Granted as cash'),
       baseLossMinor: suggestion.eligibleLossMinor,
       grantedAsChips: asChips,
+      grantPercent: cfg.percent,
+      cycleIndex: suggestion.cycleIndex,
     );
   }
 
@@ -538,28 +565,34 @@ class RebateService {
     required AppCurrency currency,
     required int cashOutMinor,
   }) {
-    // A cash-out already stored on the Financial Ledger closes snapshot
-    // exposure. The type-9 journal may still be missing — recover that
-    // pending plan so lost-in-play cannot vanish.
     final pending = unjournaledRealization(
       sessionId: sessionId,
       personId: personId,
       currency: currency,
     );
     if (pending != null) return pending;
-    final snap = snapshot(
+    final walk = _walk(
       sessionId: sessionId,
       personId: personId,
       currency: currency,
     );
-    return _realize(snap.exposedMinor, cashOutMinor);
+    if (!walk.cycleOpen || walk.openG <= 0) {
+      return _realize(
+        originalLossMinor: 0,
+        exposed: 0,
+        percent: 0,
+        cashOutMinor: cashOutMinor,
+      );
+    }
+    return _realize(
+      originalLossMinor: walk.openL,
+      exposed: walk.openG,
+      percent: walk.openP,
+      cashOutMinor: cashOutMinor,
+    );
   }
 
   /// Cash-out that already closed the grant but has no type-9 row yet.
-  ///
-  /// Snapshot sets exposed = 0 as soon as cashOutForChips is seen, so
-  /// [previewRealization] would otherwise report nothing to journal and
-  /// the $70 lost-in-play would disappear.
   static RebateRealization? unjournaledRealization({
     required String sessionId,
     required String personId,
@@ -570,17 +603,24 @@ class RebateService {
       personId: personId,
       currency: currency,
     );
-    var exposed = 0;
+    final fallback = configFor(sessionId).percent;
+    FinancialEvent? open;
     RebateRealization? pending;
     for (final e in events) {
       switch (e.type) {
         case FinancialEventType.rebateGranted:
-          exposed += e.amountMinor;
+          open = e;
+          pending = null;
           break;
         case FinancialEventType.cashOutForChips:
-          if (exposed > 0) {
-            pending = _realize(exposed, e.amountMinor);
-            exposed = 0;
+          if (open != null) {
+            pending = _realize(
+              originalLossMinor: open.baseLossMinor ?? 0,
+              exposed: open.amountMinor,
+              percent: _percentOfGrant(open, fallback),
+              cashOutMinor: e.amountMinor,
+            );
+            open = null;
           }
           break;
         case FinancialEventType.rebateRecovered:
@@ -594,19 +634,21 @@ class RebateService {
     return pending;
   }
 
-  /// Lost-in-play is always persisted. A cash clawback still needs confirm
-  /// because that changes the cash handed to the player.
+  /// Lost-in-play is always persisted. A cash reconciliation still
+  /// needs confirm because that changes the cash handed to the player.
+  /// Override is a separate persist path.
   static bool shouldPersistRealization(
     RebateRealization plan, {
     required bool? confirmed,
   }) {
     if (!plan.hasJournalRow) return false;
+    if (plan.overrideApplied) return confirmed == true;
     if (plan.clawbackMinor > 0) return confirmed == true;
     return true;
   }
 
   /// Appends rebateRecovered when this cash-out returns Discount value
-  /// to the house. Player still receives the cash-out when C <= G.
+  /// to the house, or journals a Banker override waiver.
   ///
   /// Idempotent: a second call after the type-9 row exists writes nothing.
   static Future<FinancialEvent?> realizeCashOut({
@@ -615,25 +657,34 @@ class RebateService {
     required AppCurrency currency,
     required int cashOutMinor,
     String? linkedTransactionId,
+    bool override = false,
   }) async {
-    final plan = previewRealization(
+    final normal = previewRealization(
       sessionId: sessionId,
       personId: personId,
       currency: currency,
       cashOutMinor: cashOutMinor,
     );
+    final plan = override ? normal.asOverride : normal;
     if (!plan.hasJournalRow) return null;
+    final amount = override ? plan.waivedMinor : plan.returnedMinor;
+    if (amount <= 0) return null;
     return FinancialLedgerService.record(
       personId: personId,
       currency: currency,
       type: FinancialEventType.rebateRecovered,
-      amount: MoneyUnits.toMajor(currency, plan.returnedMinor),
+      amount: MoneyUnits.toMajor(currency, amount),
       sessionId: sessionId,
       linkedTransactionId: linkedTransactionId,
       reason: plan.recoveryKind,
-      note: plan.recoveryKind == RebateRecoveryKind.clawback
-          ? 'Clawback at cash-out'
-          : 'Lost in play',
+      note: override
+          ? 'Banker override: waived '
+              '${MoneyUnits.toMajor(currency, plan.waivedMinor)}'
+          : (plan.recoveryKind == RebateRecoveryKind.clawback
+              ? 'Discount reconciliation at cash-out'
+              : 'Lost in play'),
+      baseLossMinor: plan.originalLossMinor > 0 ? plan.originalLossMinor : null,
+      grantPercent: plan.grantPercent > 0 ? plan.grantPercent : null,
     );
   }
 
@@ -721,72 +772,174 @@ class RebateService {
     return minor;
   }
 
-  static RebateRealization _realize(int exposed, int cashOutMinor) {
+  static RebateRealization _realize({
+    required int originalLossMinor,
+    required int exposed,
+    required double percent,
+    required int cashOutMinor,
+  }) {
     if (exposed <= 0) {
       return RebateRealization(
         cashOutMinor: cashOutMinor,
         exposedBeforeMinor: 0,
+        originalLossMinor: originalLossMinor,
+        remainingLossMinor: 0,
+        remainingEntitlementMinor: 0,
         returnedMinor: 0,
         paidOutFromDiscountMinor: 0,
         clawbackMinor: 0,
         actualCashPaidMinor: cashOutMinor,
+        grantPercent: percent,
       );
     }
-    if (cashOutMinor < exposed) {
+    final remainingLoss = originalLossMinor > cashOutMinor
+        ? originalLossMinor - cashOutMinor
+        : 0;
+    final remainingEntitlement = _percentOf(remainingLoss, percent);
+
+    if (cashOutMinor <= exposed) {
       return RebateRealization(
         cashOutMinor: cashOutMinor,
         exposedBeforeMinor: exposed,
+        originalLossMinor: originalLossMinor,
+        remainingLossMinor: remainingLoss,
+        remainingEntitlementMinor: remainingEntitlement,
         returnedMinor: exposed - cashOutMinor,
         paidOutFromDiscountMinor: cashOutMinor,
         clawbackMinor: 0,
         actualCashPaidMinor: cashOutMinor,
-        recoveryKind: RebateRecoveryKind.lostInPlay,
+        grantPercent: percent,
+        recoveryKind: cashOutMinor < exposed
+            ? RebateRecoveryKind.lostInPlay
+            : null,
       );
     }
-    if (cashOutMinor == exposed) {
-      return RebateRealization(
-        cashOutMinor: cashOutMinor,
-        exposedBeforeMinor: exposed,
-        returnedMinor: 0,
-        paidOutFromDiscountMinor: cashOutMinor,
-        clawbackMinor: 0,
-        actualCashPaidMinor: cashOutMinor,
-      );
-    }
+
+    var recon = exposed - remainingEntitlement;
+    if (recon < 0) recon = 0;
+    if (recon > exposed) recon = exposed;
+
     return RebateRealization(
       cashOutMinor: cashOutMinor,
       exposedBeforeMinor: exposed,
-      returnedMinor: exposed,
+      originalLossMinor: originalLossMinor,
+      remainingLossMinor: remainingLoss,
+      remainingEntitlementMinor: remainingEntitlement,
+      returnedMinor: recon,
       paidOutFromDiscountMinor: 0,
-      clawbackMinor: exposed,
-      actualCashPaidMinor: cashOutMinor - exposed,
+      clawbackMinor: recon,
+      actualCashPaidMinor: cashOutMinor - recon,
+      grantPercent: percent,
       recoveryKind: RebateRecoveryKind.clawback,
     );
   }
 
-  static int _consumedBaseLoss(
-    String sessionId,
-    String personId,
-    AppCurrency currency,
-  ) {
+  static _DiscountWalk _walk({
+    required String sessionId,
+    String? personId,
+    required AppCurrency currency,
+  }) {
     final events = _activeChronological(
       sessionId: sessionId,
       personId: personId,
       currency: currency,
     );
-    var consumed = 0;
-    for (final e in events) {
-      if (e.type != FinancialEventType.rebateGranted) continue;
-      consumed += e.baseLossMinor ?? 0;
+    final fallback = configFor(sessionId).percent;
+    final w = _DiscountWalk();
+    if (events.isEmpty) return w;
+    w.seen = true;
+
+    void closeOpen({required String? reason, RebateRealization? plan}) {
+      if (!w.cycleOpen) return;
+      w.cycleOpen = false;
+      w.exposed = 0;
+      w.closedCount += 1;
+      w.lastCloseReason = reason;
+      if (plan != null) {
+        w.remainingLoss = plan.remainingLossMinor;
+        w.remainingEntitlement = plan.remainingEntitlementMinor;
+      }
+      w.pendingIn = w.nextIn;
+      w.pendingOut = w.nextOut;
+      w.nextIn = 0;
+      w.nextOut = 0;
+      w.openGrant = null;
     }
-    return consumed;
+
+    for (final e in events) {
+      switch (e.type) {
+        case FinancialEventType.cashInForChips:
+          w.cashIn += e.amountMinor;
+          if (w.cycleOpen) {
+            w.nextIn += e.amountMinor;
+          } else {
+            w.pendingIn += e.amountMinor;
+          }
+          break;
+        case FinancialEventType.cashOutForChips:
+          w.hasOwnCashOutEvent = true;
+          w.cashOut += e.amountMinor;
+          if (w.cycleOpen && w.openGrant != null) {
+            final plan = _realize(
+              originalLossMinor: w.openL,
+              exposed: w.openG,
+              percent: w.openP,
+              cashOutMinor: e.amountMinor,
+            );
+            closeOpen(
+              reason: plan.recoveryKind ?? RebateRecoveryKind.clawback,
+              plan: plan,
+            );
+          } else {
+            w.pendingOut += e.amountMinor;
+          }
+          break;
+        case FinancialEventType.rebateGranted:
+          w.granted += e.amountMinor;
+          w.exposed += e.amountMinor;
+          w.originalLoss += e.baseLossMinor ?? 0;
+          w.openGrant = e;
+          w.openL = e.baseLossMinor ?? 0;
+          w.openG = e.amountMinor;
+          w.openP = _percentOfGrant(e, fallback);
+          w.lastPercent = w.openP;
+          w.lastCycleIndex = e.cycleIndex ?? (w.closedCount + 1);
+          w.cycleOpen = true;
+          w.pendingIn = 0;
+          w.pendingOut = 0;
+          if (e.grantedAsChips == true) {
+            w.chipGrant += e.amountMinor;
+          } else {
+            w.cashGrant += e.amountMinor;
+          }
+          break;
+        case FinancialEventType.rebateRecovered:
+          if (e.reason == RebateRecoveryKind.override) {
+            w.waived += e.amountMinor;
+            closeOpen(reason: RebateRecoveryKind.override);
+          } else {
+            w.returned += e.amountMinor;
+            if (e.reason == RebateRecoveryKind.clawback) {
+              w.clawback += e.amountMinor;
+            }
+            if (w.cycleOpen) {
+              closeOpen(reason: e.reason);
+            }
+          }
+          break;
+        default:
+          break;
+      }
+    }
+
+    if (w.cycleOpen) {
+      w.remainingLoss = w.openL;
+      w.remainingEntitlement = _percentOf(w.openL, w.openP);
+    }
+    return w;
   }
 
   /// Active (not reversed, not a reversal) events in occurrence order.
-  ///
-  /// Same exclusion rules as [snapshot]. Used so a cash-out that has
-  /// already closed snapshot exposure can still recover an unjournaled
-  /// type-9 row.
   static List<FinancialEvent> _activeChronological({
     required String sessionId,
     String? personId,
@@ -811,6 +964,17 @@ class RebateService {
       });
   }
 
+  static double _percentOfGrant(FinancialEvent grant, double fallback) {
+    if (grant.grantPercent != null && grant.grantPercent! > 0) {
+      return grant.grantPercent!;
+    }
+    final loss = grant.baseLossMinor ?? 0;
+    if (loss > 0 && grant.amountMinor > 0) {
+      return grant.amountMinor * 100.0 / loss;
+    }
+    return fallback;
+  }
+
   static int _percentOf(int minor, double percent) {
     if (minor <= 0 || percent <= 0) return 0;
     return (minor * percent / 100).round();
@@ -823,6 +987,39 @@ class RebateService {
       return null;
     }
   }
+}
+
+class _DiscountWalk {
+  bool seen = false;
+  int cashIn = 0;
+  int cashOut = 0;
+  int granted = 0;
+  int returned = 0;
+  int clawback = 0;
+  int waived = 0;
+  int exposed = 0;
+  int chipGrant = 0;
+  int cashGrant = 0;
+  bool hasOwnCashOutEvent = false;
+  bool cycleOpen = false;
+  int pendingIn = 0;
+  int pendingOut = 0;
+  int nextIn = 0;
+  int nextOut = 0;
+  int openL = 0;
+  int openG = 0;
+  double openP = 0;
+  int originalLoss = 0;
+  int remainingLoss = 0;
+  int remainingEntitlement = 0;
+  double lastPercent = 0;
+  int lastCycleIndex = 0;
+  String? lastCloseReason;
+  int closedCount = 0;
+  FinancialEvent? openGrant;
+
+  int get pendingLoss =>
+      pendingIn > pendingOut ? pendingIn - pendingOut : 0;
 }
 
 /// Read-only overlay on frozen poker books. Never written into
@@ -842,6 +1039,11 @@ class DiscountChipReconciliation {
     required this.impliedStillInPlay,
   });
 
+  bool get hasIssued => issuedMinor > 0;
+
   bool get explainsGap =>
       issuedMinor > 0 && residualAfterDiscount.abs() < 0.005;
+
+  bool get booksBalancedWithPromoOut =>
+      issuedMinor > 0 && rawDiscrepancy.abs() < 0.005;
 }

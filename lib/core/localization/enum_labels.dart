@@ -95,6 +95,7 @@ extension FinancialEventL10n on FinancialEvent {
     if (type == FinancialEventType.rebateRecovered) {
       if (reason == 'lost_in_play') return tr('fin_rebate_lost_in_play');
       if (reason == 'clawback') return tr('fin_rebate_clawback');
+      if (reason == 'override') return tr('fin_rebate_override');
     }
     return type.localizedLabel;
   }

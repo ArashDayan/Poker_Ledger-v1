@@ -157,13 +157,15 @@ class FinancialEventAdapter extends TypeAdapter<FinancialEvent> {
       reason: fields[15] as String?,
       baseLossMinor: fields[16] as int?,
       grantedAsChips: fields[17] as bool?,
+      grantPercent: (fields[18] as num?)?.toDouble(),
+      cycleIndex: fields[19] as int?,
     );
   }
 
   @override
   void write(BinaryWriter writer, FinancialEvent obj) {
     writer
-      ..writeByte(18)
+      ..writeByte(20)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -199,7 +201,11 @@ class FinancialEventAdapter extends TypeAdapter<FinancialEvent> {
       ..writeByte(16)
       ..write(obj.baseLossMinor)
       ..writeByte(17)
-      ..write(obj.grantedAsChips);
+      ..write(obj.grantedAsChips)
+      ..writeByte(18)
+      ..write(obj.grantPercent)
+      ..writeByte(19)
+      ..write(obj.cycleIndex);
   }
 
   @override

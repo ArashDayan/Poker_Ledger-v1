@@ -172,6 +172,8 @@ void main() {
         sessionId: 'night',
         baseLossMinor: 150000,
         grantedAsChips: true,
+        grantPercent: 10,
+        cycleIndex: 1,
       );
       await HiveService.financialEvents.put(grant.id, grant);
 
@@ -180,6 +182,8 @@ void main() {
           as Map<String, dynamic>;
       expect(exported['baseLossMinor'], 150000);
       expect(exported['grantedAsChips'], isTrue);
+      expect(exported['grantPercent'], 10);
+      expect(exported['cycleIndex'], 1);
       expect(exported['type'], FinancialEventType.rebateGranted.index);
       expect(exported['sessionId'], 'night');
       expect(exported['personId'], person.id);
@@ -192,6 +196,8 @@ void main() {
       expect(restored.amountMinor, 15000);
       expect(restored.baseLossMinor, 150000);
       expect(restored.grantedAsChips, isTrue);
+      expect(restored.grantPercent, 10);
+      expect(restored.cycleIndex, 1);
       expect(restored.sessionId, 'night');
       expect(restored.personId, person.id);
       expect(restored.currency, AppCurrency.usd);

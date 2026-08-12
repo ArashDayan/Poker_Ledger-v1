@@ -426,7 +426,7 @@ void main() {
       expect(snap.paidOut, 80);
     });
 
-    test('12. cash-out above remaining grant claws back only the grant',
+    test('12. cash-out above remaining grant reconciles remaining entitlement',
         () async {
       final s = await _session('s12');
       await _cashIn(s.id, 1500);
@@ -443,6 +443,7 @@ void main() {
         currency: AppCurrency.usd,
         cashOutMinor: 250000,
       );
+      // C=$2,500 > L+G; remaining loss 0; recon = G = $150; paid $2,350.
       expect(plan.clawbackMinor, 15000);
       expect(plan.actualCashPaidMinor, 235000);
       expect(plan.returnedMinor, 15000);
@@ -496,7 +497,7 @@ void main() {
       expect(_snap(s.id).returned, 70);
     });
 
-    test('14/15. later own cash is new contribution; old grant is not cash-in',
+    test('14/15. later own cash is a new cycle and must meet the minimum',
         () async {
       final s = await _session('s14');
       await _cashIn(s.id, 1500);
@@ -521,11 +522,13 @@ void main() {
         sessionId: s.id,
         personId: _personId,
         currency: AppCurrency.usd,
+        bustRealized: true,
       );
-      // GrossLoss = 2000 - 80 = 1920; consumed base 1500; incremental 420
+      // New cycle loss = $500 < session minimum $1,000.
       expect(sug.alreadyQualified, isTrue);
-      expect(sug.incrementalLossMinor, 42000);
-      expect(sug.grantMinor, 4200);
+      expect(sug.incrementalLossMinor, 50000);
+      expect(sug.canGrant, isFalse);
+      expect(sug.blockReason, contains('minimum'));
     });
 
     test('10. losing rebate then new own cash only rebates the new cash',
@@ -560,9 +563,11 @@ void main() {
         sessionId: s.id,
         personId: _personId,
         currency: AppCurrency.usd,
+        bustRealized: true,
       );
-      // GrossLoss ≈ 2000 - 0.01; consumed 1500; incremental ≈ 500
-      expect(sug.grantMinor, 5000);
+      // New cycle loss ≈ $500, below the $1,000 minimum.
+      expect(sug.canGrant, isFalse);
+      expect(sug.blockReason, contains('minimum'));
     });
   });
 
@@ -711,6 +716,7 @@ void main() {
         personId: _personId,
         currency: AppCurrency.usd,
         asChips: true,
+        bustRealized: true,
       );
       await HiveService.chips.put(
         'c50',
@@ -881,7 +887,8 @@ void main() {
       );
     });
 
-    test('Case C distinguishes Discount portion from extra cash-out', () async {
+    test('Case C reconciles remaining entitlement, not the full grant',
+        () async {
       final s = await _session('casec');
       await _cashIn(s.id, 1500);
       await RebateService.grant(
@@ -897,9 +904,12 @@ void main() {
         currency: AppCurrency.usd,
         cashOutMinor: 20000,
       );
+      // C=$200: remaining loss $1,300; entitlement $130; recon $20; paid $180.
       expect(plan.exposedBeforeMinor, 15000);
-      expect(plan.clawbackMinor, 15000);
-      expect(plan.actualCashPaidMinor, 5000);
+      expect(plan.remainingLossMinor, 130000);
+      expect(plan.remainingEntitlementMinor, 13000);
+      expect(plan.clawbackMinor, 2000);
+      expect(plan.actualCashPaidMinor, 18000);
       expect(plan.recoveryKind, RebateRecoveryKind.clawback);
     });
 
@@ -1221,10 +1231,14 @@ void main() {
         sessionId: 'econ',
         baseLossMinor: 150000,
         grantedAsChips: true,
+        grantPercent: 10,
+        cycleIndex: 1,
       );
       final json = original.toJson();
       expect(json['baseLossMinor'], 150000);
       expect(json['grantedAsChips'], isTrue);
+      expect(json['grantPercent'], 10);
+      expect(json['cycleIndex'], 1);
       expect(json['type'], FinancialEventType.rebateGranted.index);
       final copy = FinancialEvent.fromJson(json);
       expect(copy.id, original.id);
@@ -1235,6 +1249,8 @@ void main() {
       expect(copy.sessionId, 'econ');
       expect(copy.baseLossMinor, 150000);
       expect(copy.grantedAsChips, isTrue);
+      expect(copy.grantPercent, 10);
+      expect(copy.cycleIndex, 1);
       expect(copy.reversesEventId, isNull);
     });
 
@@ -1253,6 +1269,8 @@ void main() {
       final copy = FinancialEvent.fromJson(json);
       expect(copy.baseLossMinor, isNull);
       expect(copy.grantedAsChips, isNull);
+      expect(copy.grantPercent, isNull);
+      expect(copy.cycleIndex, isNull);
       expect(copy.type, FinancialEventType.cashInForChips);
     });
 
@@ -1269,6 +1287,8 @@ void main() {
       );
       expect(grant.baseLossMinor, 150000);
       expect(grant.grantedAsChips, isTrue);
+      expect(grant.grantPercent, 10);
+      expect(grant.cycleIndex, 1);
 
       final payload = grant.toJson();
       await HiveService.financialEvents.delete(grant.id);
@@ -1291,7 +1311,395 @@ void main() {
       );
       expect(sug.alreadyQualified, isTrue);
       expect(sug.canGrant, isFalse);
-      expect(sug.blockReason, contains('No new own-cash loss'));
+      expect(sug.blockReason, contains('still open'));
+    });
+  });
+
+  group('finalized remaining-loss lifecycle', () {
+    Future<void> grant1500(String sessionId) async {
+      await _cashIn(sessionId, 1500);
+      await RebateService.grant(
+        sessionId: sessionId,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        asChips: false,
+        bustRealized: true,
+      );
+    }
+
+    test('A: \$1,500 loss at 10% grants \$150', () async {
+      final s = await _session('fa');
+      await grant1500(s.id);
+      final snap = _snap(s.id);
+      expect(snap.granted, 150);
+      expect(snap.originalLoss, 1500);
+      expect(snap.grantPercent, 10);
+      expect(snap.cycleIndex, 1);
+    });
+
+    test('B: \$80 cash-out pays \$80 with \$70 lost in play', () async {
+      final s = await _session('fb');
+      await grant1500(s.id);
+      final plan = RebateService.previewRealization(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 8000,
+      );
+      expect(plan.actualCashPaidMinor, 8000);
+      expect(plan.clawbackMinor, 0);
+      expect(plan.returnedMinor, 7000);
+      await _cashOut(s.id, 80);
+      await RebateService.realizeCashOut(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 8000,
+      );
+      expect(_snap(s.id).lostInPlay, 70);
+      expect(_snap(s.id).actualCashPaid, 80);
+      expect(
+        RebateService.suggest(
+          sessionId: s.id,
+          personId: _personId,
+          currency: AppCurrency.usd,
+          bustRealized: true,
+        ).canGrant,
+        isFalse,
+      );
+    });
+
+    test('C: \$500 cash-out reconciles \$50 and pays \$450', () async {
+      final s = await _session('fc');
+      await grant1500(s.id);
+      final plan = RebateService.previewRealization(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 50000,
+      );
+      expect(plan.remainingLossMinor, 100000);
+      expect(plan.remainingEntitlementMinor, 10000);
+      expect(plan.clawbackMinor, 5000);
+      expect(plan.actualCashPaidMinor, 45000);
+    });
+
+    test('D: \$1,500 cash-out reconciles \$150 and pays \$1,350', () async {
+      final s = await _session('fd');
+      await grant1500(s.id);
+      final plan = RebateService.previewRealization(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 150000,
+      );
+      expect(plan.remainingLossMinor, 0);
+      expect(plan.clawbackMinor, 15000);
+      expect(plan.actualCashPaidMinor, 135000);
+    });
+
+    test('E: \$1,650 cash-out pays \$1,500 and fully settles', () async {
+      final s = await _session('fe');
+      await grant1500(s.id);
+      final plan = RebateService.previewRealization(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 165000,
+      );
+      expect(plan.clawbackMinor, 15000);
+      expect(plan.actualCashPaidMinor, 150000);
+      await _cashOut(s.id, 1650);
+      await RebateService.realizeCashOut(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 165000,
+      );
+      expect(_snap(s.id).exposed, 0);
+      expect(_snap(s.id).clawback, 150);
+    });
+
+    test('F: \$1,700 cash-out still reconciles only \$150 and pays \$1,550',
+        () async {
+      final s = await _session('ff');
+      await grant1500(s.id);
+      final plan = RebateService.previewRealization(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 170000,
+      );
+      expect(plan.clawbackMinor, 15000);
+      expect(plan.actualCashPaidMinor, 155000);
+    });
+
+    test('G: new \$1,200 cycle after settlement grants \$120', () async {
+      final s = await _session('fg');
+      await grant1500(s.id);
+      await _cashOut(s.id, 1650);
+      await RebateService.realizeCashOut(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 165000,
+      );
+      await _cashIn(s.id, 1200);
+      final sug = RebateService.suggest(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        bustRealized: true,
+      );
+      expect(sug.canGrant, isTrue);
+      expect(sug.eligibleLossMinor, 120000);
+      expect(sug.grantMinor, 12000);
+      expect(sug.cycleIndex, 2);
+      final g = await RebateService.grant(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        asChips: false,
+        bustRealized: true,
+      );
+      expect(g.amountMajor, 120);
+      expect(g.baseLossMinor, 120000);
+      expect(g.cycleIndex, 2);
+    });
+
+    test('H: new \$700 cycle below \$1,000 minimum grants nothing', () async {
+      final s = await _session('fh');
+      await grant1500(s.id);
+      await _cashOut(s.id, 1650);
+      await RebateService.realizeCashOut(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 165000,
+      );
+      await _cashIn(s.id, 700);
+      final sug = RebateService.suggest(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        bustRealized: true,
+      );
+      expect(sug.canGrant, isFalse);
+      expect(sug.blockReason, contains('minimum'));
+    });
+
+    test('I: configurable \$500 minimum grants \$50 on a \$500 cycle', () async {
+      final s = await _session('fi', minLoss: 500);
+      await _cashIn(s.id, 500);
+      final sug = RebateService.suggest(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        bustRealized: true,
+      );
+      expect(sug.canGrant, isTrue);
+      expect(sug.grantMinor, 5000);
+    });
+
+    test('J: 15% of a \$1,200 cycle grants \$180', () async {
+      final s = await _session('fj', percent: 15);
+      await _cashIn(s.id, 1200);
+      final sug = RebateService.suggest(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        bustRealized: true,
+      );
+      expect(sug.grantMinor, 18000);
+    });
+
+    test('K: Banker override pays \$200, waives \$20, closes the cycle',
+        () async {
+      final s = await _session('fk');
+      await grant1500(s.id);
+      final normal = RebateService.previewRealization(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 20000,
+      );
+      expect(normal.clawbackMinor, 2000);
+      expect(normal.actualCashPaidMinor, 18000);
+      await _cashOut(s.id, 200);
+      final row = await RebateService.realizeCashOut(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 20000,
+        override: true,
+      );
+      expect(row, isNotNull);
+      expect(row!.reason, RebateRecoveryKind.override);
+      expect(row.amountMajor, 20);
+      final snap = _snap(s.id);
+      expect(snap.waived, 20);
+      expect(snap.clawback, 0);
+      expect(snap.actualCashPaid, 200);
+      expect(snap.houseRetained, 1300);
+      expect(snap.exposed, 0);
+      expect(snap.playerCashOut, 200);
+    });
+
+    test('L: later cash-out cannot reclaim a waived \$20', () async {
+      final s = await _session('fl');
+      await grant1500(s.id);
+      await _cashOut(s.id, 200);
+      await RebateService.realizeCashOut(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 20000,
+        override: true,
+      );
+      final later = RebateService.previewRealization(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 10000,
+      );
+      expect(later.exposedBeforeMinor, 0);
+      expect(later.clawbackMinor, 0);
+      expect(later.waivedMinor, 0);
+      expect(later.hasJournalRow, isFalse);
+      final second = await RebateService.realizeCashOut(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 10000,
+        override: true,
+      );
+      expect(second, isNull);
+      expect(_snap(s.id).waived, 20);
+    });
+
+    test('M: after override a new \$1,200 loss starts cycle 2 at \$120',
+        () async {
+      final s = await _session('fm');
+      await grant1500(s.id);
+      await _cashOut(s.id, 200);
+      await RebateService.realizeCashOut(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 20000,
+        override: true,
+      );
+      await _cashIn(s.id, 1200);
+      final sug = RebateService.suggest(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        bustRealized: true,
+      );
+      expect(sug.canGrant, isTrue);
+      expect(sug.grantMinor, 12000);
+      expect(sug.cycleIndex, 2);
+    });
+
+    test('N: after override a \$700 new cycle is still below the minimum',
+        () async {
+      final s = await _session('fn');
+      await grant1500(s.id);
+      await _cashOut(s.id, 200);
+      await RebateService.realizeCashOut(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 20000,
+        override: true,
+      );
+      await _cashIn(s.id, 700);
+      expect(
+        RebateService.suggest(
+          sessionId: s.id,
+          personId: _personId,
+          currency: AppCurrency.usd,
+          bustRealized: true,
+        ).canGrant,
+        isFalse,
+      );
+    });
+
+    test('O: changing Session B percent does not rewrite Session A history',
+        () async {
+      final a = await _session('fo-a', percent: 10);
+      final b = await _session('fo-b', percent: 10);
+      await _cashIn(a.id, 1500);
+      await RebateService.grant(
+        sessionId: a.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        asChips: false,
+        bustRealized: true,
+      );
+      b.rebatePercent = 15;
+      b.rebateMinLoss = 500;
+      await b.save();
+      expect(_snap(a.id).granted, 150);
+      expect(
+        HiveService.financialEvents.values
+            .firstWhere((e) =>
+                e.sessionId == a.id &&
+                e.type == FinancialEventType.rebateGranted)
+            .grantPercent,
+        10,
+      );
+      final plan = RebateService.previewRealization(
+        sessionId: a.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 50000,
+      );
+      expect(plan.clawbackMinor, 5000);
+      expect(plan.grantPercent, 10);
+    });
+
+    test('P: a Session A loss cannot qualify Discount in Session B', () async {
+      final a = await _session('fp-a');
+      final b = await _session('fp-b');
+      await _cashIn(a.id, 1500);
+      expect(
+        RebateService.suggest(
+          sessionId: b.id,
+          personId: _personId,
+          currency: AppCurrency.usd,
+          bustRealized: true,
+        ).canGrant,
+        isFalse,
+      );
+      expect(_snap(b.id).playerCashIn, 0);
+    });
+
+    test('Cancel is not an override and leaves realization unjournaled',
+        () async {
+      final s = await _session('cancel');
+      await grant1500(s.id);
+      await _cashOut(s.id, 200);
+      final plan = RebateService.previewRealization(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 20000,
+      );
+      expect(plan.clawbackMinor, 2000);
+      expect(
+        RebateService.shouldPersistRealization(plan, confirmed: false),
+        isFalse,
+      );
+      expect(_snap(s.id).waived, 0);
+      expect(_snap(s.id).clawback, 0);
+      final pending = RebateService.unjournaledRealization(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+      );
+      expect(pending, isNotNull);
+      expect(pending!.clawbackMinor, 2000);
     });
   });
 }

@@ -9,10 +9,13 @@ import '../services/rebate_service.dart';
 
 /// Realise an exposed grant against a cash-out.
 ///
-/// Lost-in-play (C < G) is journalled even if the sheet is dismissed,
-/// swiped away, or the route is unmounted — it does not change the cash
-/// handed to the player. A window clawback (C > G) still requires
-/// confirm because that does change cash paid.
+/// Lost-in-play (C <= G) is journalled even if the sheet is dismissed —
+/// it does not change the cash handed to the player.
+///
+/// Remaining-loss reconciliation (C > G) requires Confirm because that
+/// reduces cash paid. Banker Override is a separate button: pay the
+/// full face amount, journal the waived reconciliation, and close the
+/// cycle. Cancel is not an override.
 Future<FinancialEvent?> askRebateRealize(
   BuildContext context, {
   required String sessionId,
@@ -42,11 +45,12 @@ Future<FinancialEvent?> askRebateRealize(
     );
   }
 
-  // No UI available — still persist consumed/lost-in-play.
   if (!context.mounted) return persist(confirmed: null);
 
   final fmt = CurrencyFormatter(currency);
-  final confirmed = await showModalBottomSheet<bool>(
+  final recon = plan.clawbackMinor > 0;
+
+  final choice = await showModalBottomSheet<_RealizeChoice>(
     context: context,
     isScrollControlled: true,
     builder: (ctx) => Padding(
@@ -67,37 +71,79 @@ Future<FinancialEvent?> askRebateRealize(
               style: const TextStyle(
                   fontSize: 12.5, color: AppColors.textSecondary, height: 1.35)),
           const SizedBox(height: 12),
+          _line(tr('rebate_original_loss'),
+              fmt.format(MoneyUnits.toMajor(currency, plan.originalLossMinor))),
           _line(tr('rebate_granted'),
               fmt.format(MoneyUnits.toMajor(currency, plan.exposedBeforeMinor))),
-          _line(tr('rebate_actual_paid'),
-              fmt.format(MoneyUnits.toMajor(currency, plan.actualCashPaidMinor))),
-          if (plan.clawbackMinor > 0) ...[
-            _line(tr('rebate_beyond_discount'),
+          _line(tr('rebate_own_cash_out'),
+              fmt.format(MoneyUnits.toMajor(currency, plan.cashOutMinor))),
+          if (recon) ...[
+            _line(tr('rebate_remaining_loss'),
+                fmt.format(MoneyUnits.toMajor(currency, plan.remainingLossMinor))),
+            _line(tr('rebate_remaining_entitlement'),
                 fmt.format(MoneyUnits.toMajor(
-                    currency, plan.cashOutMinor - plan.exposedBeforeMinor))),
-            _line(tr('rebate_clawback'),
+                    currency, plan.remainingEntitlementMinor))),
+            _line(tr('rebate_reconciliation'),
                 fmt.format(MoneyUnits.toMajor(currency, plan.clawbackMinor))),
+            _line(tr('rebate_normal_paid'),
+                fmt.format(MoneyUnits.toMajor(currency, plan.normalPaidMinor))),
           ] else
             _line(tr('rebate_lost_in_play'),
                 fmt.format(MoneyUnits.toMajor(currency, plan.returnedMinor))),
+          _line(tr('rebate_actual_paid'),
+              fmt.format(MoneyUnits.toMajor(currency, plan.actualCashPaidMinor))),
           const SizedBox(height: 14),
           ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(plan.clawbackMinor > 0
+            onPressed: () => Navigator.pop(ctx, _RealizeChoice.confirm),
+            child: Text(recon
                 ? tr('confirm_rebate_realize')
                 : tr('confirm')),
           ),
-          if (plan.clawbackMinor > 0)
+          if (recon) ...[
+            const SizedBox(height: 8),
+            OutlinedButton(
+              onPressed: () => Navigator.pop(ctx, _RealizeChoice.override),
+              child: Text(tr('rebate_pay_full')),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              tr('rebate_realize_override_hint'),
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.textSecondary, height: 1.35),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${tr('rebate_waived')}: '
+              '${fmt.format(MoneyUnits.toMajor(currency, plan.clawbackMinor))}'
+              ' · ${tr('rebate_override_paid')}: '
+              '${fmt.format(MoneyUnits.toMajor(currency, plan.cashOutMinor))}',
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.textSecondary, height: 1.35),
+            ),
             TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
+              onPressed: () => Navigator.pop(ctx, _RealizeChoice.cancel),
               child: Text(tr('cancel')),
             ),
+          ],
         ],
       ),
     ),
   );
-  return persist(confirmed: confirmed);
+
+  if (choice == _RealizeChoice.override) {
+    return RebateService.realizeCashOut(
+      sessionId: sessionId,
+      personId: personId,
+      currency: currency,
+      cashOutMinor: cashOutMinor,
+      linkedTransactionId: linkedTransactionId,
+      override: true,
+    );
+  }
+  return persist(confirmed: choice == _RealizeChoice.confirm);
 }
+
+enum _RealizeChoice { confirm, override, cancel }
 
 Widget _line(String label, String value) {
   return Padding(

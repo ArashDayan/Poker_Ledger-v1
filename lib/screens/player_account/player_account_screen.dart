@@ -200,15 +200,23 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
                   letterSpacing: 1.1,
                   color: AppColors.textSecondary)),
           const SizedBox(height: 8),
+          if (snap.cycleIndex > 0)
+            _discRow(tr('rebate_cycle'), '${snap.cycleIndex}'),
           _discRow(tr('rebate_own_cash_in'), fmt.format(snap.playerCashIn)),
+          _discRow(tr('rebate_original_loss'), fmt.format(snap.originalLoss)),
           _discRow(tr('rebate_granted'), fmt.format(snap.granted)),
           _discRow(tr('rebate_lost_in_play'), fmt.format(snap.lostInPlay)),
           _discRow(tr('rebate_clawback'), fmt.format(snap.clawback)),
+          _discRow(tr('rebate_waived'), fmt.format(snap.waived)),
+          if (snap.remainingLossMinor > 0 || snap.cycleOpen)
+            _discRow(tr('rebate_remaining_loss'), fmt.format(snap.remainingLoss)),
           if (snap.exposedMinor > 0)
             _discRow(tr('rebate_exposed'), fmt.format(snap.exposed)),
           _discRow(tr('rebate_paid_out'), fmt.format(snap.paidOut)),
           _discRow(tr('rebate_actual_paid'), fmt.format(snap.actualCashPaid)),
           _discRow(tr('rebate_house_retained'), fmt.format(snap.houseRetained)),
+          if (snap.closeReason != null && snap.closeReason!.isNotEmpty)
+            _discRow(tr('rebate_cycle_closed'), _closeReasonLabel(snap.closeReason!)),
         ],
       ),
     );
@@ -815,6 +823,19 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
 
   String _currencyLabel(AppCurrency currency) =>
       currency == AppCurrency.usd ? 'USD' : tr('toman');
+
+  String _closeReasonLabel(String reason) {
+    switch (reason) {
+      case RebateRecoveryKind.lostInPlay:
+        return tr('rebate_close_lost_in_play');
+      case RebateRecoveryKind.override:
+        return tr('rebate_close_override');
+      case RebateRecoveryKind.clawback:
+        return tr('rebate_close_reconciled');
+      default:
+        return reason;
+    }
+  }
 }
 
 class _ConvertChoice {
