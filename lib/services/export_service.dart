@@ -361,7 +361,8 @@ class ExportService {
     CurrencyFormatter fmt,
   ) {
     var granted = 0;
-    var returned = 0;
+    var lostInPlay = 0;
+    var clawback = 0;
     var paid = 0;
     var cashIn = 0;
     var actual = 0;
@@ -377,7 +378,8 @@ class ExportService {
       );
       if (!snap.hasActivity) continue;
       granted += snap.grantedMinor;
-      returned += snap.lostInPlayMinor;
+      lostInPlay += snap.lostInPlayMinor;
+      clawback += snap.clawbackMinor;
       paid += snap.paidOutMinor;
       cashIn += snap.playerCashInMinor;
       actual += snap.actualCashPaidMinor;
@@ -387,7 +389,8 @@ class ExportService {
         fmt.formatRaw(snap.grossLoss),
         fmt.formatRaw(snap.granted),
         fmt.formatRaw(snap.lostInPlay),
-        fmt.formatRaw(snap.paidOut),
+        fmt.formatRaw(snap.clawback),
+        fmt.formatRaw(snap.actualCashPaid),
         fmt.formatRaw(snap.houseRetained),
       ]);
     }
@@ -405,9 +408,10 @@ class ExportService {
           data: [
             ['Player own cash in', fmt.formatRaw(MoneyUnits.toMajor(session.currency, cashIn))],
             ['Discount granted', fmt.formatRaw(MoneyUnits.toMajor(session.currency, granted))],
-            ['Discount lost in play', fmt.formatRaw(MoneyUnits.toMajor(session.currency, returned))],
+            ['Discount consumed / lost in play', fmt.formatRaw(MoneyUnits.toMajor(session.currency, lostInPlay))],
+            ['Discount cash recovered / clawed back', fmt.formatRaw(MoneyUnits.toMajor(session.currency, clawback))],
             ['Discount paid to player', fmt.formatRaw(MoneyUnits.toMajor(session.currency, paid))],
-            ['Cash actually paid to player', fmt.formatRaw(MoneyUnits.toMajor(session.currency, actual))],
+            ['Cash out paid', fmt.formatRaw(MoneyUnits.toMajor(session.currency, actual))],
             ['House retained from own cash', fmt.formatRaw(MoneyUnits.toMajor(session.currency, retained))],
           ],
         ),
@@ -421,7 +425,8 @@ class ExportService {
               'Eligible loss',
               'Granted',
               'Lost in play',
-              'Paid out',
+              'Cash recovered',
+              'Cash out paid',
               'House retained',
             ],
             data: rows,

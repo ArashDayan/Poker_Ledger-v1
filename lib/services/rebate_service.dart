@@ -422,8 +422,11 @@ class RebateService {
   }
 
   /// Records a confirmed grant. Does not write chips; the caller does
-  /// that through [issueGrantChips] so a chip failure cannot invent
-  /// cashInForChips.
+  /// that through [issueGrantChips] / [grantAsChips] so a chip failure
+  /// cannot invent cashInForChips.
+  ///
+  /// [asChips] only marks the event. The UI must call [grantAsChips]
+  /// so `grantedAsChips = true` is never stored without a real issuance.
   static Future<FinancialEvent> grant({
     required String sessionId,
     required String personId,
@@ -457,6 +460,54 @@ class RebateService {
     );
   }
 
+  /// True when [distribution] actually issues at least one chip.
+  static bool hasChipCounts(Map<String, int>? distribution) {
+    if (distribution == null || distribution.isEmpty) return false;
+    for (final n in distribution.values) {
+      if (n > 0) return true;
+    }
+    return false;
+  }
+
+  /// Chip-form grant. Refuses to write `grantedAsChips = true` unless
+  /// a non-empty denomination/count map is issued in the same call.
+  static Future<FinancialEvent> grantAsChips({
+    required String sessionId,
+    required String personId,
+    required AppCurrency currency,
+    required String playerId,
+    required Map<String, int> distribution,
+    String? note,
+    bool bustRealized = false,
+    bool chipCashOutWithoutFunding = false,
+  }) async {
+    if (playerId.isEmpty || !hasChipCounts(distribution)) {
+      throw FinancialLedgerException(
+        'Cannot record a chip Discount without issuing chips.',
+      );
+    }
+    final grant = await RebateService.grant(
+      sessionId: sessionId,
+      personId: personId,
+      currency: currency,
+      asChips: true,
+      note: note,
+      bustRealized: bustRealized,
+      chipCashOutWithoutFunding: chipCashOutWithoutFunding,
+    );
+    try {
+      await issueGrantChips(
+        grantEvent: grant,
+        playerId: playerId,
+        distribution: distribution,
+      );
+    } catch (_) {
+      await reverseGrant(grant.id);
+      rethrow;
+    }
+    return grant;
+  }
+
   /// Physical chips for a chip-form grant. Linked to the grant event id
   /// so void/reverse can unwind them. Never a Buy-in row.
   static Future<List<ChipMovement>> issueGrantChips({
@@ -469,7 +520,7 @@ class RebateService {
         'Only a Discount grant can issue rebate chips.',
       );
     }
-    if (distribution.isEmpty) return Future.value(const []);
+    if (!hasChipCounts(distribution)) return Future.value(const []);
     return ChipTrackingService.recordDistribution(
       distribution: distribution,
       from: ChipLocation.bank,
@@ -487,6 +538,15 @@ class RebateService {
     required AppCurrency currency,
     required int cashOutMinor,
   }) {
+    // A cash-out already stored on the Financial Ledger closes snapshot
+    // exposure. The type-9 journal may still be missing — recover that
+    // pending plan so lost-in-play cannot vanish.
+    final pending = unjournaledRealization(
+      sessionId: sessionId,
+      personId: personId,
+      currency: currency,
+    );
+    if (pending != null) return pending;
     final snap = snapshot(
       sessionId: sessionId,
       personId: personId,
@@ -495,8 +555,60 @@ class RebateService {
     return _realize(snap.exposedMinor, cashOutMinor);
   }
 
+  /// Cash-out that already closed the grant but has no type-9 row yet.
+  ///
+  /// Snapshot sets exposed = 0 as soon as cashOutForChips is seen, so
+  /// [previewRealization] would otherwise report nothing to journal and
+  /// the $70 lost-in-play would disappear.
+  static RebateRealization? unjournaledRealization({
+    required String sessionId,
+    required String personId,
+    required AppCurrency currency,
+  }) {
+    final events = _activeChronological(
+      sessionId: sessionId,
+      personId: personId,
+      currency: currency,
+    );
+    var exposed = 0;
+    RebateRealization? pending;
+    for (final e in events) {
+      switch (e.type) {
+        case FinancialEventType.rebateGranted:
+          exposed += e.amountMinor;
+          break;
+        case FinancialEventType.cashOutForChips:
+          if (exposed > 0) {
+            pending = _realize(exposed, e.amountMinor);
+            exposed = 0;
+          }
+          break;
+        case FinancialEventType.rebateRecovered:
+          pending = null;
+          break;
+        default:
+          break;
+      }
+    }
+    if (pending == null || !pending.hasJournalRow) return null;
+    return pending;
+  }
+
+  /// Lost-in-play is always persisted. A cash clawback still needs confirm
+  /// because that changes the cash handed to the player.
+  static bool shouldPersistRealization(
+    RebateRealization plan, {
+    required bool? confirmed,
+  }) {
+    if (!plan.hasJournalRow) return false;
+    if (plan.clawbackMinor > 0) return confirmed == true;
+    return true;
+  }
+
   /// Appends rebateRecovered when this cash-out returns Discount value
   /// to the house. Player still receives the cash-out when C <= G.
+  ///
+  /// Idempotent: a second call after the type-9 row exists writes nothing.
   static Future<FinancialEvent?> realizeCashOut({
     required String sessionId,
     required String personId,

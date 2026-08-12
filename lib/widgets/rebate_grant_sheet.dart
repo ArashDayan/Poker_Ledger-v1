@@ -9,17 +9,25 @@ import '../services/rebate_service.dart';
 import 'chip_flow.dart';
 
 /// Suggest + confirm a Discount grant. Never writes until Confirm.
+///
+/// [bustRealized] and [chipCashOutWithoutFunding] are the same flags
+/// [RebateService.suggest] / [RebateService.grant] need, so a $0 bust
+/// can reach banker confirmation and an unfunded cash-out cannot.
 Future<FinancialEvent?> askRebateGrant(
   BuildContext context, {
   required String sessionId,
   required String personId,
   required AppCurrency currency,
   String? playerId,
+  bool bustRealized = false,
+  bool chipCashOutWithoutFunding = false,
 }) async {
   final suggestion = RebateService.suggest(
     sessionId: sessionId,
     personId: personId,
     currency: currency,
+    bustRealized: bustRealized,
+    chipCashOutWithoutFunding: chipCashOutWithoutFunding,
   );
   if (!context.mounted) return null;
 
@@ -99,30 +107,44 @@ Future<FinancialEvent?> askRebateGrant(
   );
   if (confirmed != true || !context.mounted) return null;
 
-  final grant = await RebateService.grant(
+  if (asChips) {
+    if (playerId == null || playerId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr('rebate_need_chips'))),
+      );
+      return null;
+    }
+    final dist = await ChipFlow.ask(
+      context,
+      amount: MoneyUnits.toMajor(currency, suggestion.grantMinor),
+      currency: currency,
+    );
+    if (!context.mounted) return null;
+    if (!RebateService.hasChipCounts(dist)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr('rebate_need_chips'))),
+      );
+      return null;
+    }
+    return RebateService.grantAsChips(
+      sessionId: sessionId,
+      personId: personId,
+      currency: currency,
+      playerId: playerId,
+      distribution: dist!,
+      bustRealized: bustRealized,
+      chipCashOutWithoutFunding: chipCashOutWithoutFunding,
+    );
+  }
+
+  return RebateService.grant(
     sessionId: sessionId,
     personId: personId,
     currency: currency,
-    asChips: asChips,
+    asChips: false,
     bustRealized: bustRealized,
     chipCashOutWithoutFunding: chipCashOutWithoutFunding,
   );
-
-  if (asChips && playerId != null && playerId.isNotEmpty && context.mounted) {
-    final dist = await ChipFlow.ask(
-      context,
-      amount: grant.amountMajor,
-      currency: currency,
-    );
-    if (context.mounted && dist != null && dist.isNotEmpty) {
-      await RebateService.issueGrantChips(
-        grantEvent: grant,
-        playerId: playerId,
-        distribution: dist,
-      );
-    }
-  }
-  return grant;
 }
 
 Widget _line(String label, String value) {

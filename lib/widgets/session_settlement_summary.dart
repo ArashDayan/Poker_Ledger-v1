@@ -219,8 +219,9 @@ class SessionSettlementSummary extends StatelessWidget {
       padding: const EdgeInsets.only(top: 2),
       child: Text(
         '${tr('rebate_granted')} ${fmt.format(snap.granted)}'
-        ' · ${tr('rebate_returned')} ${fmt.format(snap.returned)}'
-        ' · ${tr('rebate_paid_out')} ${fmt.format(snap.paidOut)}',
+        ' · ${tr('rebate_lost_in_play')} ${fmt.format(snap.lostInPlay)}'
+        ' · ${tr('rebate_clawback')} ${fmt.format(snap.clawback)}'
+        ' · ${tr('rebate_actual_paid')} ${fmt.format(snap.actualCashPaid)}',
         style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
       ),
     );

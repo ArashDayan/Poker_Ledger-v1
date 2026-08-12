@@ -812,7 +812,7 @@ class AppLocalizations {
       'rebate_house_retained': 'House retained from own cash',
       'rebate_own_cash_in': 'Player own cash in',
       'rebate_own_cash_out': 'Recorded chip cash-out',
-      'rebate_actual_paid': 'Cash actually paid to player',
+      'rebate_actual_paid': 'Cash out paid',
       'rebate_eligible_loss': 'Eligible own-cash loss',
       'rebate_gross_loss': 'Gross own-cash loss',
       'review_discount': 'Review Discount',
@@ -823,7 +823,7 @@ class AppLocalizations {
       'rebate_as_cash_hint': 'Cash paid to the player. Not a chip Buy-in.',
       'rebate_not_eligible': 'No Discount to grant',
       'rebate_realize_title': 'Discount on this cash-out',
-      'rebate_realize_body': 'The player still receives the cash-out amount. Unused Discount that was lost in play returns to the house. A larger cash-out only recovers the remaining grant — never a new percent.',
+      'rebate_realize_body': 'The player still receives the cash-out amount. Unused Discount consumed at the table is recorded as lost in play — it is not a cash payment back to the house. A larger cash-out may recover remaining Discount in cash — never a new percent of the cash-out.',
       'rebate_player_receives': 'Player receives',
       'rebate_returned_now': 'Returned to house now',
       'confirm_rebate_realize': 'Record Discount realisation',
@@ -834,8 +834,11 @@ class AppLocalizations {
       'settle_warn_rebate_chips': 'Discount chips were issued this session. They are not Money In. When cashed they can make poker chip books look short by that amount.',
       'rebate_form_chips': 'as chips',
       'rebate_form_cash': 'as cash',
-      'rebate_lost_in_play': 'Discount lost in play',
-      'rebate_clawback': 'Discount clawed back at window',
+      'rebate_lost_in_play': 'Discount consumed / lost in play',
+      'rebate_clawback': 'Discount cash recovered / clawed back',
+      'fin_rebate_lost_in_play': 'Discount consumed / lost in play',
+      'fin_rebate_clawback': 'Discount cash recovered / clawed back',
+      'rebate_need_chips': 'Choose chip denominations to grant Discount as chips, or switch to cash Discount.',
       'rebate_beyond_discount': 'Cash-out beyond remaining Discount',
       'rebate_chips_issued': 'Discount chips issued (not Money In)',
       'rebate_books_residual': 'Poker-book residual after Discount chips',
@@ -1635,7 +1638,7 @@ class AppLocalizations {
       'rebate_house_retained': 'مانده نزد خانه از پول خود بازیکن',
       'rebate_own_cash_in': 'ورود نقد خود بازیکن',
       'rebate_own_cash_out': 'تسویه ژتون ثبت‌شده',
-      'rebate_actual_paid': 'نقد واقعاً پرداخت‌شده به بازیکن',
+      'rebate_actual_paid': 'تسویه نقد پرداخت‌شده',
       'rebate_eligible_loss': 'زیان نقد واجد شرایط',
       'rebate_gross_loss': 'زیان ناخالص نقد خود بازیکن',
       'review_discount': 'بررسی تخفیف',
@@ -1646,7 +1649,7 @@ class AppLocalizations {
       'rebate_as_cash_hint': 'نقد پرداخت‌شده به بازیکن. خرید ورود ژتون نیست.',
       'rebate_not_eligible': 'تخفیفی برای اعطا نیست',
       'rebate_realize_title': 'تخفیف در این تسویه',
-      'rebate_realize_body': 'بازیکن همان مبلغ تسویه را می‌گیرد. تخفیف استفاده‌نشده‌ای که در بازی باخته به خانه برمی‌گردد. تسویه بزرگ‌تر فقط مانده اعطا را برمی‌گرداند — هرگز درصد جدید.',
+      'rebate_realize_body': 'بازیکن همان مبلغ تسویه را می‌گیرد. تخفیف استفاده‌نشده‌ای که سر میز مصرف شده به‌عنوان باخته در بازی ثبت می‌شود — این پرداخت نقد به خانه نیست. تسویه بزرگ‌تر ممکن است مانده تخفیف را نقد برگرداند — هرگز درصد جدیدی از تسویه.',
       'rebate_player_receives': 'بازیکن دریافت می‌کند',
       'rebate_returned_now': 'الان به خانه برگشت',
       'confirm_rebate_realize': 'ثبت تحقق تخفیف',
@@ -1657,8 +1660,11 @@ class AppLocalizations {
       'settle_warn_rebate_chips': 'در این نشست ژتون تخفیف داده شده است. این مبلغ ورودی پول نیست. هنگام تسویه ممکن است دفتر ژتون به همان اندازه کوتاه به نظر برسد.',
       'rebate_form_chips': 'به‌صورت ژتون',
       'rebate_form_cash': 'به‌صورت نقد',
-      'rebate_lost_in_play': 'تخفیف باخته در بازی',
-      'rebate_clawback': 'تخفیف کسرشده در باجه',
+      'rebate_lost_in_play': 'تخفیف مصرف‌شده / باخته در بازی',
+      'rebate_clawback': 'نقد تخفیف بازیافته / کسرشده',
+      'fin_rebate_lost_in_play': 'تخفیف مصرف‌شده / باخته در بازی',
+      'fin_rebate_clawback': 'نقد تخفیف بازیافته / کسرشده',
+      'rebate_need_chips': 'برای اعطای تخفیف به‌صورت ژتون، تعداد و ارزش ژتون‌ها را انتخاب کنید، یا تخفیف نقدی را برگزینید.',
       'rebate_beyond_discount': 'تسویه بیش از تخفیف باقی‌مانده',
       'rebate_chips_issued': 'ژتون تخفیف داده‌شده (ورودی پول نیست)',
       'rebate_books_residual': 'مانده دفتر ژتون پس از ژتون تخفیف',
@@ -1666,6 +1672,10 @@ class AppLocalizations {
       'settle_rebate_chips_explained': 'دفتر ژتون کوتاه به نظر می‌رسد چون ژتون تخفیف داده شده است. این خرید ورود و پول خود بازیکن نیست. مانده پس از این رقم توضیحی صفر است.',
     },
   };
+
+  /// Stable key set for EN/FA parity checks.
+  static Iterable<String> keysOf(String languageCode) =>
+      _strings[languageCode]?.keys ?? const Iterable.empty();
 
   /// Looks up [key]; falls back to English, then to the key itself.
   String t(String key) => lookup(locale.languageCode, key);

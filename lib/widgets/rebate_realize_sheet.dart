@@ -9,9 +9,10 @@ import '../services/rebate_service.dart';
 
 /// Realise an exposed grant against a cash-out.
 ///
-/// Lost-in-play (C < G) is journalled even if the sheet is dismissed —
-/// it does not change the cash handed to the player. A window clawback
-/// (C > G) still requires confirm because that does change cash paid.
+/// Lost-in-play (C < G) is journalled even if the sheet is dismissed,
+/// swiped away, or the route is unmounted — it does not change the cash
+/// handed to the player. A window clawback (C > G) still requires
+/// confirm because that does change cash paid.
 Future<FinancialEvent?> askRebateRealize(
   BuildContext context, {
   required String sessionId,
@@ -27,6 +28,22 @@ Future<FinancialEvent?> askRebateRealize(
     cashOutMinor: cashOutMinor,
   );
   if (!plan.closesGrant) return null;
+
+  Future<FinancialEvent?> persist({required bool? confirmed}) {
+    if (!RebateService.shouldPersistRealization(plan, confirmed: confirmed)) {
+      return Future.value(null);
+    }
+    return RebateService.realizeCashOut(
+      sessionId: sessionId,
+      personId: personId,
+      currency: currency,
+      cashOutMinor: cashOutMinor,
+      linkedTransactionId: linkedTransactionId,
+    );
+  }
+
+  // No UI available — still persist consumed/lost-in-play.
+  if (!context.mounted) return persist(confirmed: null);
 
   final fmt = CurrencyFormatter(currency);
   final confirmed = await showModalBottomSheet<bool>(
@@ -52,7 +69,7 @@ Future<FinancialEvent?> askRebateRealize(
           const SizedBox(height: 12),
           _line(tr('rebate_granted'),
               fmt.format(MoneyUnits.toMajor(currency, plan.exposedBeforeMinor))),
-          _line(tr('rebate_player_receives'),
+          _line(tr('rebate_actual_paid'),
               fmt.format(MoneyUnits.toMajor(currency, plan.actualCashPaidMinor))),
           if (plan.clawbackMinor > 0) ...[
             _line(tr('rebate_beyond_discount'),
@@ -79,14 +96,7 @@ Future<FinancialEvent?> askRebateRealize(
       ),
     ),
   );
-  if (confirmed != true) return null;
-  return RebateService.realizeCashOut(
-    sessionId: sessionId,
-    personId: personId,
-    currency: currency,
-    cashOutMinor: cashOutMinor,
-    linkedTransactionId: linkedTransactionId,
-  );
+  return persist(confirmed: confirmed);
 }
 
 Widget _line(String label, String value) {

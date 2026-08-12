@@ -4,6 +4,7 @@
 // SessionService formulas are never read or written.
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:poker_ledger/core/localization/app_localizations.dart';
@@ -23,6 +24,7 @@ import 'package:poker_ledger/services/hive_service.dart';
 import 'package:poker_ledger/services/player_identity_service.dart';
 import 'package:poker_ledger/services/rebate_service.dart';
 import 'package:poker_ledger/services/session_service.dart';
+import 'package:poker_ledger/widgets/rebate_grant_sheet.dart';
 
 import 'test_helper.dart';
 
@@ -639,6 +641,7 @@ void main() {
         personId: _personId,
         currency: AppCurrency.usd,
         asChips: false,
+        bustRealized: true,
       );
       await RebateService.reverseGrant(g.id);
       expect(_snap(s.id).granted, 0);
@@ -782,6 +785,16 @@ void main() {
       );
       expect(plan.closesGrant, isFalse);
       expect(plan.actualCashPaidMinor, 0);
+      expect(
+        await FinancialCapture.recordCashOutFunding(
+          personId: _personId,
+          currency: AppCurrency.usd,
+          funding: ChipCashOutFunding.paidCash,
+          amount: 0,
+          sessionId: s.id,
+        ),
+        isNull,
+      );
       final sug = RebateService.suggest(
         sessionId: s.id,
         personId: _personId,
@@ -790,6 +803,26 @@ void main() {
       );
       expect(sug.canGrant, isTrue);
       expect(sug.grantMinor, 15000);
+      await RebateService.grant(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        asChips: false,
+        bustRealized: true,
+      );
+      expect(_snap(s.id).granted, 150);
+      expect(
+        FinancialLedgerService.eventsForSession(
+          s.id,
+          personId: _personId,
+          currency: AppCurrency.usd,
+        ).where((e) => e.type == FinancialEventType.cashOutForChips),
+        isEmpty,
+      );
+      expect(
+        FinancialLedgerService.balance(_personId, AppCurrency.usd).amountMinor,
+        0,
+      );
     });
 
     test('13b. not-recorded cash-out does not invent cashOutForChips', () async {
@@ -911,6 +944,207 @@ void main() {
     });
   });
 
+  group('close-out C1–C5', () {
+    test('askRebateGrant accepts bust and unfunded flags', () {
+      Future<FinancialEvent?> Function(
+        BuildContext, {
+        required String sessionId,
+        required String personId,
+        required AppCurrency currency,
+        String? playerId,
+        bool bustRealized,
+        bool chipCashOutWithoutFunding,
+      }) fn = askRebateGrant;
+      expect(fn, isNotNull);
+    });
+
+    test('lost-in-play journals after cash-out even if the sheet is dismissed',
+        () async {
+      final s = await _session('dismiss');
+      await _cashIn(s.id, 1500);
+      await RebateService.grant(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        asChips: false,
+        bustRealized: true,
+      );
+      await _cashOut(s.id, 80);
+      final plan = RebateService.previewRealization(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 8000,
+      );
+      expect(plan.returnedMinor, 7000);
+      expect(plan.clawbackMinor, 0);
+      expect(plan.actualCashPaidMinor, 8000);
+      expect(plan.recoveryKind, RebateRecoveryKind.lostInPlay);
+      expect(
+        RebateService.shouldPersistRealization(plan, confirmed: null),
+        isTrue,
+      );
+      expect(
+        RebateService.shouldPersistRealization(plan, confirmed: false),
+        isTrue,
+      );
+      final first = await RebateService.realizeCashOut(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 8000,
+      );
+      expect(first, isNotNull);
+      expect(first!.reason, RebateRecoveryKind.lostInPlay);
+      expect(first.amountMajor, 70);
+      final snap = _snap(s.id);
+      expect(snap.playerCashOut, 80);
+      expect(snap.granted, 150);
+      expect(snap.lostInPlay, 70);
+      expect(snap.clawback, 0);
+      expect(snap.actualCashPaid, 80);
+      expect(snap.houseRetained, 1420);
+      expect(snap.paidOut, 80);
+      expect(snap.exposed, 0);
+      expect(
+        FinancialLedgerService.snapshotForSession(
+          s.id,
+          currency: AppCurrency.usd,
+          personId: _personId,
+        ).cashOutForChips,
+        80,
+      );
+      final second = await RebateService.realizeCashOut(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 8000,
+      );
+      expect(second, isNull);
+      expect(
+        FinancialLedgerService.eventsForSession(
+          s.id,
+          personId: _personId,
+          currency: AppCurrency.usd,
+        )
+            .where((e) =>
+                e.type == FinancialEventType.rebateRecovered && !e.isReversal)
+            .length,
+        1,
+      );
+    });
+
+    test('clawback still requires confirm and is not lost-in-play', () async {
+      final s = await _session('claw');
+      await _cashIn(s.id, 1500);
+      await RebateService.grant(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        asChips: false,
+        bustRealized: true,
+      );
+      final plan = RebateService.previewRealization(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        cashOutMinor: 250000,
+      );
+      expect(plan.clawbackMinor, 15000);
+      expect(plan.recoveryKind, RebateRecoveryKind.clawback);
+      expect(
+        RebateService.shouldPersistRealization(plan, confirmed: null),
+        isFalse,
+      );
+      expect(
+        RebateService.shouldPersistRealization(plan, confirmed: false),
+        isFalse,
+      );
+      expect(
+        RebateService.shouldPersistRealization(plan, confirmed: true),
+        isTrue,
+      );
+    });
+
+    test('chip Discount cannot be recorded without issuing chips', () async {
+      final s = await _session('nochip');
+      await _seat(s.id);
+      await _cashIn(s.id, 1500);
+      expect(
+        () => RebateService.grantAsChips(
+          sessionId: s.id,
+          personId: _personId,
+          currency: AppCurrency.usd,
+          playerId: 'seat-1',
+          distribution: const {},
+          bustRealized: true,
+        ),
+        throwsA(isA<FinancialLedgerException>()),
+      );
+      expect(_snap(s.id).granted, 0);
+      expect(_snap(s.id).chipGrant, 0);
+      expect(
+        RebateService.chipGrantsIssuedMinor(s.id, AppCurrency.usd),
+        0,
+      );
+    });
+
+    test('cash Discount stays off the chip books', () async {
+      final s = await _session('cashform');
+      final p = await _seat(s.id);
+      await SessionService.recordTransaction(
+        sessionId: s.id,
+        playerId: p.id,
+        type: TransactionType.buyIn,
+        amount: 1500,
+        hostSignatureBase64: 'sig',
+      );
+      await _cashIn(s.id, 1500);
+      await RebateService.grant(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        asChips: false,
+        bustRealized: true,
+      );
+      expect(_snap(s.id).cashGrant, 150);
+      expect(_snap(s.id).chipGrant, 0);
+      expect(SessionService.checkBalance(s.id).moneyIn, 1500);
+      expect(SessionService.moneyStillInPlay(s.id), 1500);
+      expect(SessionService.hostProfit(s.id), 0);
+      expect(
+        RebateService.chipGrantsIssuedMinor(s.id, AppCurrency.usd),
+        0,
+      );
+      expect(ChipTrackingService.allMovements(sessionId: s.id), isEmpty);
+    });
+
+    test('grantAsChips writes the flag only after chips move', () async {
+      final s = await _session('chipok');
+      await _seat(s.id);
+      await _cashIn(s.id, 1500);
+      await HiveService.chips.put(
+        'c50',
+        ChipType(id: 'c50', value: 50, quantity: 20),
+      );
+      final grant = await RebateService.grantAsChips(
+        sessionId: s.id,
+        personId: _personId,
+        currency: AppCurrency.usd,
+        playerId: 'seat-1',
+        distribution: const {'c50': 3},
+        bustRealized: true,
+      );
+      expect(grant.grantedAsChips, isTrue);
+      expect(_snap(s.id).chipGrant, 150);
+      expect(SessionService.totalBuyIn(s.id), 0);
+      final moves = ChipTrackingService.allMovements(sessionId: s.id);
+      expect(moves, hasLength(1));
+      expect(moves.first.reasonEnum, ChipMovementReason.lossRebate);
+      expect(moves.first.transactionId, grant.id);
+    });
+  });
+
   group('localization', () {
     test('24. EN/FA rebate keys exist and differ', () {
       const keys = [
@@ -919,8 +1153,15 @@ void main() {
         'rebate_returned',
         'rebate_paid_out',
         'rebate_house_retained',
+        'rebate_lost_in_play',
+        'rebate_clawback',
+        'rebate_actual_paid',
+        'rebate_exposed',
         'fin_rebate_granted',
         'fin_rebate_recovered',
+        'fin_rebate_lost_in_play',
+        'fin_rebate_clawback',
+        'rebate_need_chips',
         'reason_loss_rebate',
         'confirm_rebate_grant',
         'rebate_as_chips',
@@ -933,6 +1174,13 @@ void main() {
         expect(fa, isNot(key), reason: key);
         expect(en, isNot(fa), reason: key);
       }
+    });
+
+    test('EN and FA key sets stay in parity', () {
+      expect(
+        AppLocalizations.keysOf('en').toSet(),
+        AppLocalizations.keysOf('fa').toSet(),
+      );
     });
   });
 }

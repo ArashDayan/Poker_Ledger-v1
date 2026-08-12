@@ -89,6 +89,17 @@ extension FinancialEventTypeL10n on FinancialEventType {
   }
 }
 
+extension FinancialEventL10n on FinancialEvent {
+  /// Type label that splits lost-in-play from a cash clawback.
+  String get localizedTypeLabel {
+    if (type == FinancialEventType.rebateRecovered) {
+      if (reason == 'lost_in_play') return tr('fin_rebate_lost_in_play');
+      if (reason == 'clawback') return tr('fin_rebate_clawback');
+    }
+    return type.localizedLabel;
+  }
+}
+
 extension PaymentMethodL10n on PaymentMethod {
   String get localizedLabel {
     switch (this) {

@@ -72,6 +72,10 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
             _notRecordedCard()
           else
             ...account.balances.map(_balanceCard),
+          if (_discountSnapshot != null) ...[
+            const SizedBox(height: 10),
+            _discountCard(_discountSnapshot!),
+          ],
           const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: _acceptDeposit,
@@ -198,7 +202,10 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
           const SizedBox(height: 8),
           _discRow(tr('rebate_own_cash_in'), fmt.format(snap.playerCashIn)),
           _discRow(tr('rebate_granted'), fmt.format(snap.granted)),
-          _discRow(tr('rebate_returned'), fmt.format(snap.returned)),
+          _discRow(tr('rebate_lost_in_play'), fmt.format(snap.lostInPlay)),
+          _discRow(tr('rebate_clawback'), fmt.format(snap.clawback)),
+          if (snap.exposedMinor > 0)
+            _discRow(tr('rebate_exposed'), fmt.format(snap.exposed)),
           _discRow(tr('rebate_paid_out'), fmt.format(snap.paidOut)),
           _discRow(tr('rebate_actual_paid'), fmt.format(snap.actualCashPaid)),
           _discRow(tr('rebate_house_retained'), fmt.format(snap.houseRetained)),
@@ -702,8 +709,8 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
                 children: [
                   Text(
                     isReversal
-                        ? '${tr('fin_reversal_of')} ${e.type.localizedLabel}'
-                        : e.type.localizedLabel,
+                        ? '${tr('fin_reversal_of')} ${e.localizedTypeLabel}'
+                        : e.localizedTypeLabel,
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 13.5,
