@@ -29,13 +29,14 @@ class PlayerAdapter extends TypeAdapter<Player> {
       addOnCount: (fields[14] as int?) ?? 0,
       sampleSignature2Base64: fields[15] as String?,
       sampleSignature2At: fields[16] as DateTime?,
+      personId: fields[17] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, Player obj) {
     writer
-      ..writeByte(17)
+      ..writeByte(18)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -69,6 +70,8 @@ class PlayerAdapter extends TypeAdapter<Player> {
       ..writeByte(15)
       ..write(obj.sampleSignature2Base64)
       ..writeByte(16)
-      ..write(obj.sampleSignature2At);
+      ..write(obj.sampleSignature2At)
+      ..writeByte(17)
+      ..write(obj.personId);
   }
 }

@@ -54,6 +54,8 @@ String describeReason(ChipMovementReason r) {
       return tr('chip_exchange');
     case ChipMovementReason.reversal:
       return tr('undo');
+    case ChipMovementReason.lossRebate:
+      return tr('reason_loss_rebate');
   }
 }
 

@@ -7,10 +7,13 @@ import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
 import '../../models/player.dart';
 import '../../providers/session_provider.dart';
+import '../../services/financial_capture_flow.dart';
+import '../../services/player_identity_service.dart';
 import '../../services/player_registry_service.dart';
 import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/table_service.dart';
+import '../../widgets/identity_link_sheet.dart';
 import '../../widgets/player_card.dart';
 import '../../widgets/player_type_badge.dart';
 import '../../widgets/signature_compare_sheet.dart';
@@ -315,8 +318,39 @@ class PlayersTab extends StatelessWidget {
                       if (!proceed) return;
                     }
 
-                    final buyIn = double.tryParse(buyInCtrl.text.replaceAll(',', ''));
+                    // IDENTITY GATE — creation path only.
+                    //
+                    // A name match is only a suggestion. The service
+                    // never auto-links; this dialog is the confirmation
+                    // the rule requires. Cancel aborts the add so a
+                    // dismissed prompt cannot silently create a
+                    // duplicate person or merge two people.
                     final name = nameCtrl.text.trim();
+                    String? personId;
+                    try {
+                      personId =
+                          await PlayerIdentityService.resolveForSeating(
+                        name: name,
+                        confirm: (suggestions) => confirmIdentityLink(
+                          ctx,
+                          typedName: name,
+                          suggestions: suggestions,
+                        ),
+                      );
+                    } catch (e) {
+                      if (ctx.mounted) {
+                        ScaffoldMessenger.of(ctx).showSnackBar(
+                            SnackBar(content: Text('$e')));
+                      }
+                      return;
+                    }
+                    if (personId == null &&
+                        PlayerIdentityService.suggest(name).isNotEmpty) {
+                      // Suggestions existed and the banker cancelled.
+                      return;
+                    }
+
+                    final buyIn = double.tryParse(buyInCtrl.text.replaceAll(',', ''));
                     final tagList = tags.toList();
                     final sample = sampleSignature.isEmpty ? null : sampleSignature;
                     // Sample 2 is captured in this same sheet, so it has
@@ -339,6 +373,7 @@ class PlayersTab extends StatelessWidget {
                           // Explicit destination when the sheet was
                           // opened from a table's empty seat.
                           tableId: presetTableId,
+                          personId: personId,
                         );
                         AppSounds.play(SoundEffect.addPlayer);
                       } catch (e) {
@@ -381,6 +416,7 @@ class PlayersTab extends StatelessWidget {
                         sampleSignatureBase64: sample,
                         sampleSignature2Base64: sample2,
                         tableId: presetTableId,
+                        personId: personId,
                       );
                       if (context.mounted) {
                         // The opening buy-in is the last transaction the
@@ -398,6 +434,17 @@ class PlayersTab extends StatelessWidget {
                             transactionId: tx.last.id,
                             playerId: created.id,
                           );
+                          if (context.mounted) {
+                            await captureFundingAfterChipTx(
+                              context,
+                              player: created,
+                              chipType: TransactionType.buyIn,
+                              amount: result.amount,
+                              currency: provider.current!.currency,
+                              sessionId: provider.current!.id,
+                              transactionId: tx.last.id,
+                            );
+                          }
                         }
                       }
                       AppSounds.play(SoundEffect.buyIn);
@@ -476,6 +523,17 @@ class PlayersTab extends StatelessWidget {
             sessionId: session.id,
             transactionId: tx.id,
             playerId: player.id);
+        if (context.mounted) {
+          await captureFundingAfterChipTx(
+            context,
+            player: player,
+            chipType: type,
+            amount: result.amount,
+            currency: session.currency,
+            sessionId: session.id,
+            transactionId: tx.id,
+          );
+        }
       }
       AppSounds.play(AppSounds.forTransaction(type));
     } catch (e) {

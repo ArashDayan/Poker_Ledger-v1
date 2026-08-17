@@ -1,7 +1,9 @@
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/chip_movement.dart';
 import '../models/chip_type.dart';
+import '../models/financial_event.dart';
 import '../models/player.dart';
+import '../models/player_identity.dart';
 import '../models/session.dart';
 import '../models/transaction.dart';
 import 'chip_tracking_service.dart';
@@ -35,6 +37,23 @@ class HiveService {
   /// audit trail must survive even if the inventory itself is reset.
   static const chipMovementsBox = 'chip_movements_box';
 
+  /// Permanent player identities (`personId`). Fail-loud on corruption —
+  /// silently wiping this box would orphan every linked seat and, later,
+  /// every financial event attached to those ids.
+  static const playerIdentitiesBox = 'player_identities_box';
+
+  /// Append-only Financial Ledger. Fail-loud on corruption — a silent
+  /// wipe would erase who owes whom. typeIds 12–14 live here.
+  static const financialEventsBox = 'financial_events_box';
+
+  /// Boxes that must never be deleted to "recover". A corrupted identity
+  /// or financial file is surfaced to the banker; the bytes stay on disk
+  /// so a backup can still be taken off the device.
+  static const Set<String> failLoudBoxes = {
+    playerIdentitiesBox,
+    financialEventsBox,
+  };
+
   static Future<void> init() async {
     try {
       await Hive.initFlutter();
@@ -57,6 +76,10 @@ class HiveService {
     Hive.registerAdapter(PokerSessionAdapter());
     Hive.registerAdapter(ChipTypeAdapter());
     Hive.registerAdapter(ChipMovementAdapter());
+    Hive.registerAdapter(PlayerIdentityAdapter());
+    Hive.registerAdapter(FinancialEventTypeAdapter());
+    Hive.registerAdapter(PaymentMethodAdapter());
+    Hive.registerAdapter(FinancialEventAdapter());
 
     // Each box is opened independently and, if corrupted, individually
     // reset — a bad write killed mid-save in one box (e.g. a phone dying
@@ -70,6 +93,12 @@ class HiveService {
     await _openBoxSafely<dynamic>(settingsBox, typed: false);
     await _openBoxSafely<ChipType>(chipsBox, typed: true);
     await _openBoxSafely<ChipMovement>(chipMovementsBox, typed: true);
+
+    // Identity and (later) financial data are not recoverable by wiping.
+    // If either file is unreadable the app stops and tells the banker,
+    // leaving the file untouched.
+    await openBoxFailLoud<PlayerIdentity>(playerIdentitiesBox, typed: true);
+    await openBoxFailLoud<FinancialEvent>(financialEventsBox, typed: true);
 
     // The Chip Bank screen must show what is LEFT in the case, not the
     // starting count. This teaches ChipBankService to fold the movement
@@ -101,6 +130,29 @@ class HiveService {
     }
   }
 
+  /// Opens a box. On failure the existing file is left untouched and a
+  /// [StorageInitException] is thrown. Used for identity and financial
+  /// storage — those must never be silently wiped (C-3).
+  static Future<void> openBoxFailLoud<T>(
+    String name, {
+    required bool typed,
+  }) async {
+    try {
+      if (typed) {
+        await Hive.openBox<T>(name);
+      } else {
+        await Hive.openBox(name);
+      }
+    } catch (e) {
+      throw StorageInitException(
+        "Local storage for '$name' could not be opened. "
+        'The existing file was left untouched so no data is lost. '
+        'Copy it off the device or restore from a backup before retrying. '
+        'Detail: $e',
+      );
+    }
+  }
+
   static Box<PokerSession> get sessions => Hive.box<PokerSession>(sessionsBox);
   static Box<Player> get players => Hive.box<Player>(playersBox);
   static Box<LedgerTransaction> get transactions =>
@@ -109,4 +161,8 @@ class HiveService {
   static Box<ChipType> get chips => Hive.box<ChipType>(chipsBox);
   static Box<ChipMovement> get chipMovements =>
       Hive.box<ChipMovement>(chipMovementsBox);
+  static Box<PlayerIdentity> get playerIdentities =>
+      Hive.box<PlayerIdentity>(playerIdentitiesBox);
+  static Box<FinancialEvent> get financialEvents =>
+      Hive.box<FinancialEvent>(financialEventsBox);
 }

@@ -136,7 +136,11 @@ enum ChipMovementReason {
 
   /// Chips physically moved between two places for any other reason,
   /// including player-to-player winnings.
-  transfer;
+  transfer,
+
+  /// Promotional loss-rebate chips. NOT a buy-in, NOT a rebuy, NOT
+  /// cashInForChips. SessionService money formulas never see this.
+  lossRebate;
 
   static ChipMovementReason parse(String? raw) {
     for (final r in ChipMovementReason.values) {

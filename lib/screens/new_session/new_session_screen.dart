@@ -39,9 +39,16 @@ class _NewSessionScreenState extends State<NewSessionScreen> {
   final _tStack = TextEditingController(text: '10000');
   final _tLevelMinutes = TextEditingController(text: '20');
   DateTime _dateTime = DateTime.now();
+
+  /// Banker-defined end of the Session working period (Discount
+  /// deadline). Optional; any duration. Null = no planned end.
+  DateTime? _plannedEndAt;
   AppCurrency _currency = AppCurrency.usd;
   RakeMode _rakeMode = RakeMode.percentage;
   bool _showHouseRules = false;
+  bool _rebateEnabled = false;
+  final _rebateMin = TextEditingController(text: '1000');
+  final _rebatePercent = TextEditingController(text: '10');
 
   @override
   void initState() {
@@ -93,7 +100,37 @@ class _NewSessionScreenState extends State<NewSessionScreen> {
     if (time == null) return;
     setState(() {
       _dateTime = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+      // A start moved past the previously chosen period end would leave
+      // an inverted period. Drop it instead of storing a contradiction.
+      if (_plannedEndAt != null && !_plannedEndAt!.isAfter(_dateTime)) {
+        _plannedEndAt = null;
+      }
     });
+  }
+
+  Future<void> _pickPlannedEnd() async {
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _plannedEndAt ?? _dateTime.add(const Duration(hours: 12)),
+      firstDate: _dateTime,
+      lastDate: _dateTime.add(const Duration(days: 365)),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(
+          _plannedEndAt ?? _dateTime.add(const Duration(hours: 12))),
+    );
+    if (time == null) return;
+    final picked =
+        DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    if (!picked.isAfter(_dateTime)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr('session_period_invalid'))),
+      );
+      return;
+    }
+    setState(() => _plannedEndAt = picked);
   }
 
   Future<void> _submit() async {
@@ -133,6 +170,15 @@ class _NewSessionScreenState extends State<NewSessionScreen> {
       startingStack: _mode == SessionMode.tournament
           ? int.tryParse(_tStack.text.replaceAll(',', ''))
           : null,
+      rebateEnabled: _mode == SessionMode.cashGame && _rebateEnabled,
+      rebateMinLoss: _mode == SessionMode.cashGame
+          ? double.tryParse(_rebateMin.text.replaceAll(',', ''))
+          : null,
+      rebatePercent: _mode == SessionMode.cashGame
+          ? double.tryParse(_rebatePercent.text.replaceAll(',', ''))
+          : null,
+      plannedEndAt:
+          _mode == SessionMode.cashGame && _rebateEnabled ? _plannedEndAt : null,
     );
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
@@ -425,6 +471,56 @@ class _NewSessionScreenState extends State<NewSessionScreen> {
                   ),
                 ],
               ),
+            ],
+            if (_mode == SessionMode.cashGame) ...[
+              const SizedBox(height: 22),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(tr('rebate_enabled')),
+                subtitle: Text(tr('rebate_hint'),
+                    style: const TextStyle(fontSize: 11)),
+                value: _rebateEnabled,
+                onChanged: (v) => setState(() => _rebateEnabled = v),
+              ),
+              if (_rebateEnabled) ...[
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: _rebateMin,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: _moneyDecoration(tr('rebate_min_loss')),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _rebatePercent,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(labelText: tr('rebate_percent')),
+                ),
+                const SizedBox(height: 12),
+                InkWell(
+                  onTap: _pickPlannedEnd,
+                  child: InputDecorator(
+                    decoration: InputDecoration(
+                      labelText: tr('session_period_end'),
+                      helperText: tr('session_period_hint'),
+                      suffixIcon: _plannedEndAt == null
+                          ? null
+                          : IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () =>
+                                  setState(() => _plannedEndAt = null),
+                            ),
+                    ),
+                    child: Text(
+                      _plannedEndAt == null
+                          ? tr('session_period_not_set')
+                          : '${_plannedEndAt!.toLocal()}'.substring(0, 16),
+                      style: const TextStyle(color: AppColors.textPrimary),
+                    ),
+                  ),
+                ),
+              ],
             ],
             const SizedBox(height: 24),
             ElevatedButton(onPressed: _submit, child: Text(tr('create_session'))),

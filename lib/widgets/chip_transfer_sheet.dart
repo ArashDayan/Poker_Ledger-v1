@@ -460,7 +460,10 @@ class _TransferFooter extends StatelessWidget {
   String? get _blocker {
     if (!hasBoth) return tr('choose_both_players');
     if (chipCount <= 0) return tr('select_chips_to_transfer');
-    if (!sourceCanCover) return tr('player_lacks_chips');
+    // The limit is the source player's RECORDED chip holding (the chip
+    // movement ledger), never any financial figure. If the physical
+    // stack is higher, record a physical-count adjustment first.
+    if (!sourceCanCover) return tr('player_lacks_chips_explained');
     return null;
   }
 

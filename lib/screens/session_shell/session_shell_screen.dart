@@ -10,12 +10,15 @@ import '../../models/session.dart';
 import '../../providers/chip_bank_provider.dart';
 import '../../providers/session_provider.dart';
 import '../../providers/settings_provider.dart';
+import '../../services/financial_ledger_service.dart';
 import '../../services/hive_service.dart';
+import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
 import '../../widgets/chip_exchange_sheet.dart';
 import '../../widgets/chip_transfer_sheet.dart';
 import '../../widgets/poker_chip_logo.dart';
 import '../../widgets/table_selector_bar.dart';
+import '../../widgets/void_linked_financial_sheet.dart';
 import '../chip_bank/session_reconciliation_screen.dart';
 import '../dashboard/dashboard_tab.dart';
 import '../history/transaction_history_screen.dart';
@@ -297,15 +300,36 @@ class _SessionShellScreenState extends State<SessionShellScreen> {
     );
   }
 
-  void _handleUndo(BuildContext context, SessionProvider provider, PokerSession session) {
+  Future<void> _handleUndo(BuildContext context, SessionProvider provider, PokerSession session) async {
+    final txs = SessionService.transactionsFor(session.id);
+    if (txs.isEmpty) return;
+    final last = txs.last;
+    final linked = FinancialLedgerService.activeEventsLinkedTo(last.id);
+    VoidChipFinancialChoice? choice;
+    if (linked.isNotEmpty) {
+      choice = await askVoidChipWithLinkedFinancial(
+        context,
+        transactionId: last.id,
+        formatter: CurrencyFormatter(session.currency),
+      );
+      if (choice == null || !context.mounted) return;
+    }
     final voided = provider.undo();
     if (voided == null || !context.mounted) return;
+    if (choice == VoidChipFinancialChoice.chipAndReverseLinked) {
+      await FinancialLedgerService.reverseLinkedTo(voided.id);
+    } else if (choice == VoidChipFinancialChoice.chipOnly && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr('void_chip_only_warn'))),
+      );
+    }
     final fmt = CurrencyFormatter(session.currency);
     final playerName = voided.playerId == null
         ? 'the table'
         : provider.players
             .firstWhere((p) => p.id == voided.playerId, orElse: () => provider.players.first)
             .name;
+    if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('${tr('undone')}: ${voided.type.localizedLabel} · ${fmt.format(voided.amount)} · $playerName'),

@@ -1,7 +1,9 @@
 import 'package:hive/hive.dart';
 import 'package:poker_ledger/models/chip_movement.dart';
 import 'package:poker_ledger/models/chip_type.dart';
+import 'package:poker_ledger/models/financial_event.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 
@@ -19,4 +21,12 @@ void registerTestAdapters() {
   if (!Hive.isAdapterRegistered(6)) Hive.registerAdapter(PokerSessionAdapter());
   if (!Hive.isAdapterRegistered(9)) Hive.registerAdapter(ChipTypeAdapter());
   if (!Hive.isAdapterRegistered(10)) Hive.registerAdapter(ChipMovementAdapter());
+  if (!Hive.isAdapterRegistered(11)) Hive.registerAdapter(PlayerIdentityAdapter());
+  if (!Hive.isAdapterRegistered(13)) {
+    Hive.registerAdapter(FinancialEventTypeAdapter());
+  }
+  if (!Hive.isAdapterRegistered(14)) {
+    Hive.registerAdapter(PaymentMethodAdapter());
+  }
+  if (!Hive.isAdapterRegistered(12)) Hive.registerAdapter(FinancialEventAdapter());
 }

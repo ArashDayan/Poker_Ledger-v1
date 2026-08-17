@@ -10,10 +10,12 @@ import '../../models/enums.dart';
 import '../../models/player.dart';
 import '../../models/transaction.dart';
 import '../../providers/session_provider.dart';
+import '../../services/financial_ledger_service.dart';
 import '../../services/session_service.dart';
 import '../../widgets/chip_composition_editor.dart';
 import '../../widgets/chip_flow.dart';
 import '../../widgets/confirm_action_dialog.dart';
+import '../../widgets/void_linked_financial_sheet.dart';
 import '../../widgets/signature_compare_sheet.dart';
 import '../../widgets/signature_pad.dart';
 
@@ -195,12 +197,32 @@ class _HistoryTabState extends State<HistoryTab> {
       await provider.unvoidTransactionById(tx.id);
       return;
     }
-    final confirmed = await confirmSensitiveAction(
+    final linked = FinancialLedgerService.activeEventsLinkedTo(tx.id);
+    if (linked.isEmpty) {
+      final confirmed = await confirmSensitiveAction(
+        context,
+        title: tr('void_transaction'),
+        message: tr('void_tx_message'),
+      );
+      if (confirmed) await provider.voidTransactionById(tx.id);
+      return;
+    }
+    if (!mounted) return;
+    final fmt = CurrencyFormatter(provider.current!.currency);
+    final choice = await askVoidChipWithLinkedFinancial(
       context,
-      title: tr('void_transaction'),
-      message: tr('void_tx_message'),
+      transactionId: tx.id,
+      formatter: fmt,
     );
-    if (confirmed) await provider.voidTransactionById(tx.id);
+    if (choice == null || !mounted) return;
+    await provider.voidTransactionById(tx.id);
+    if (choice == VoidChipFinancialChoice.chipAndReverseLinked) {
+      await FinancialLedgerService.reverseLinkedTo(tx.id);
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr('void_chip_only_warn'))),
+      );
+    }
   }
 
   Future<void> _delete(LedgerTransaction tx) async {

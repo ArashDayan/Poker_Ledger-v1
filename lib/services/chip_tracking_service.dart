@@ -602,6 +602,91 @@ class ChipTrackingService {
     );
   }
 
+  /// Reconciles one player's RECORDED holding with the ACTUAL physical
+  /// count of their stack.
+  ///
+  /// WHY THIS EXISTS
+  /// Chip holdings are derived purely from recorded movements. Chips won
+  /// at the table only enter the log when somebody records them (a P2P
+  /// transfer), so a player can physically hold more than the log shows
+  /// — e.g. bought in for 2M, won 3M, never recorded. A denomination
+  /// exchange against that player then refuses, because it correctly
+  /// trusts the log. This method is the auditable bridge: the banker
+  /// counts the stack and the ledger is brought to match reality.
+  ///
+  /// APPEND-ONLY. Every prior movement is left exactly as stored; this
+  /// appends one compensating [ChipMovementReason.adjustment] movement
+  /// per denomination whose count differs, so the audit trail shows the
+  /// recorded state, the count, and the correction. After the call:
+  ///
+  ///     derived holding == physical counted holding
+  ///
+  /// PHYSICAL ONLY — NO MONEY ANYWHERE.
+  /// No [LedgerTransaction], no FinancialEvent, no buy-in/rebuy/cash-out,
+  /// no rake, nothing the settlement engine or the Discount engine can
+  /// see. A chip-only operation must stay chip-only.
+  ///
+  /// The compensating counterparty is the Bank: an unrecorded surplus
+  /// came from somewhere the ledger never tracked, and the reconciliation
+  /// report surfaces that as a bank-side discrepancy to be verified by a
+  /// physical case count — the honest signal, never silently absorbed.
+  ///
+  /// [counted] maps chipTypeId to the number of chips physically
+  /// counted; denominations absent from the map count as zero.
+  /// Returns the movements appended (empty when the count already
+  /// matches — nothing to record, and a zero adjustment would be noise).
+  static Future<List<ChipMovement>> adjustPlayerHoldingToCount({
+    required String playerId,
+    required Map<String, int> counted,
+    String? sessionId,
+    String? note,
+  }) async {
+    if (playerId.isEmpty) {
+      throw ArgumentError('Adjustment needs a player.');
+    }
+    if (counted.isEmpty) {
+      throw ArgumentError('Physical count cannot be empty');
+    }
+    for (final q in counted.values) {
+      if (q < 0) {
+        throw ArgumentError('A physical count cannot be negative');
+      }
+    }
+
+    final location = ChipLocation.player(playerId);
+    final tag = 'count:${_uuid.v4()}';
+    final made = <ChipMovement>[];
+
+    // Every denomination that exists either in the inventory or in the
+    // recorded holding — so chips the bank never stocked but the log
+    // somehow holds can still be corrected.
+    final ids = <String>{...counted.keys};
+    for (final chip in ChipBankService.allChips()) {
+      ids.add(chip.id);
+    }
+
+    for (final id in ids) {
+      final target = counted[id] ?? 0;
+      final held = quantityAt(location, id);
+      final delta = target - held;
+      if (delta == 0) continue;
+      made.add(await record(
+        chipTypeId: id,
+        quantity: delta.abs(),
+        // Surplus: chips surface into the recorded holding (bank is the
+        // accounting counterparty). Shortfall: they return to it.
+        from: delta > 0 ? ChipLocation.bank : location,
+        to: delta > 0 ? location : ChipLocation.bank,
+        reason: ChipMovementReason.adjustment,
+        sessionId: sessionId,
+        note: note == null
+            ? '$tag recorded=$held counted=$target'
+            : '$tag recorded=$held counted=$target · $note',
+      ));
+    }
+    return made;
+  }
+
   // -----------------------------------------------------------------
   // Derived balances
   // -----------------------------------------------------------------

@@ -6,6 +6,7 @@ import '../models/player.dart';
 import '../models/session.dart';
 import '../models/transaction.dart';
 import '../services/hive_service.dart';
+import '../services/player_identity_service.dart';
 import '../services/session_service.dart';
 import '../services/chip_tracking_service.dart';
 import '../services/table_service.dart';
@@ -75,6 +76,13 @@ class SessionProvider extends ChangeNotifier {
       // mutation that goes through this class, so this is a degraded but
       // fully working mode, never a crash.
     }
+    // Separate try so a missing financial box cannot drop the seating
+    // / chip-ledger watchers. Notify only — no accounting is read here.
+    try {
+      _boxSubscriptions.add(
+        HiveService.financialEvents.watch().listen((_) => _scheduleNotify()),
+      );
+    } catch (_) {}
   }
 
   /// Coalesces a burst of box events into a single rebuild.
@@ -390,6 +398,10 @@ class SessionProvider extends ChangeNotifier {
     double? tournamentAddOn,
     int? startingStack,
     List<double>? payoutPercentages,
+    bool rebateEnabled = false,
+    double? rebateMinLoss,
+    double? rebatePercent,
+    DateTime? plannedEndAt,
   }) async {
     final session = PokerSession(
       id: _uuid.v4(),
@@ -416,6 +428,10 @@ class SessionProvider extends ChangeNotifier {
       tournamentAddOn: tournamentAddOn,
       startingStack: startingStack,
       payoutPercentages: payoutPercentages,
+      rebateEnabled: rebateEnabled,
+      rebateMinLoss: rebateMinLoss,
+      rebatePercent: rebatePercent,
+      plannedEndAt: plannedEndAt,
     );
     await HiveService.sessions.put(session.id, session);
     _current = session;
@@ -451,6 +467,11 @@ class SessionProvider extends ChangeNotifier {
     /// working and players created with only one sample stay valid.
     String? sampleSignature2Base64,
     String? tableId,
+    /// Permanent identity to attach to this seat. Null leaves the seat
+    /// unlinked — the correct state for every caller that has not gone
+    /// through confirm-on-suggest. This method never invents or
+    /// suggests a personId.
+    String? personId,
   }) async {
     if (_current == null) throw StateError('No active session.');
 
@@ -511,6 +532,7 @@ class SessionProvider extends ChangeNotifier {
           (sampleSignature2Base64 != null && sampleSignature2Base64.isNotEmpty)
               ? DateTime.now()
               : null,
+      personId: personId,
     );
     await HiveService.players.put(player.id, player);
     notifyListeners();
@@ -532,6 +554,7 @@ class SessionProvider extends ChangeNotifier {
     String? sampleSignatureBase64,
     String? sampleSignature2Base64,
     String? tableId,
+    String? personId,
   }) async {
     final player = await addPlayer(
       name: name,
@@ -541,6 +564,7 @@ class SessionProvider extends ChangeNotifier {
       sampleSignatureBase64: sampleSignatureBase64,
       sampleSignature2Base64: sampleSignature2Base64,
       tableId: tableId,
+      personId: personId,
     );
     if (buyInAmount != null && buyInAmount > 0) {
       if (hostSignatureBase64 == null || hostSignatureBase64.isEmpty) {
@@ -587,6 +611,12 @@ class SessionProvider extends ChangeNotifier {
 
   Future<void> updatePlayer(Player player) async {
     await player.save();
+    // A rename updates the identity's display spelling only. The
+    // personId itself never changes here — that would be a merge.
+    final linkedId = player.personId;
+    if (linkedId != null && linkedId.isNotEmpty) {
+      await PlayerIdentityService.touchDisplayName(linkedId, player.name);
+    }
     notifyListeners();
   }
 
@@ -918,6 +948,11 @@ class SessionProvider extends ChangeNotifier {
     double? tieredNoRakeAtOrAbove,
     List<double>? quickRakeAmounts,
     bool? rebuyLevelEnforcementEnabled,
+    bool? rebateEnabled,
+    double? rebateMinLoss,
+    double? rebatePercent,
+    DateTime? plannedEndAt,
+    bool clearPlannedEndAt = false,
   }) async {
     if (_current == null) return;
     final s = _current!;
@@ -933,6 +968,14 @@ class SessionProvider extends ChangeNotifier {
     if (quickRakeAmounts != null) s.quickRakeAmounts = quickRakeAmounts;
     if (rebuyLevelEnforcementEnabled != null) {
       s.rebuyLevelEnforcementEnabled = rebuyLevelEnforcementEnabled;
+    }
+    if (rebateEnabled != null) s.rebateEnabled = rebateEnabled;
+    if (rebateMinLoss != null) s.rebateMinLoss = rebateMinLoss;
+    if (rebatePercent != null) s.rebatePercent = rebatePercent;
+    if (clearPlannedEndAt) {
+      s.plannedEndAt = null;
+    } else if (plannedEndAt != null) {
+      s.plannedEndAt = plannedEndAt;
     }
     await s.save();
     notifyListeners();

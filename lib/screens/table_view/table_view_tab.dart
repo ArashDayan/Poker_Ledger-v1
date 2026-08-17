@@ -7,6 +7,7 @@ import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
 import '../../models/player.dart';
 import '../../providers/session_provider.dart';
+import '../../services/financial_capture_flow.dart';
 import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/table_service.dart';
@@ -86,6 +87,17 @@ class TableViewTab extends StatelessWidget {
             sessionId: session.id,
             transactionId: tx.id,
             playerId: player.id);
+        if (context.mounted) {
+          await captureFundingAfterChipTx(
+            context,
+            player: player,
+            chipType: type,
+            amount: result.amount,
+            currency: session.currency,
+            sessionId: session.id,
+            transactionId: tx.id,
+          );
+        }
       }
       AppSounds.play(AppSounds.forTransaction(type));
     } catch (e) {

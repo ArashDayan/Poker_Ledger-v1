@@ -8,6 +8,7 @@ import '../../core/utils/validators.dart';
 import '../../models/enums.dart';
 import '../../models/player.dart';
 import '../../providers/session_provider.dart';
+import '../../services/financial_capture_flow.dart';
 import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
 import '../../models/chip_movement.dart';
@@ -18,6 +19,7 @@ import '../../widgets/player_chip_holdings.dart';
 import '../../widgets/signature_compare_sheet.dart';
 import '../../widgets/signature_pad.dart';
 import '../house_rules/house_rules_screen.dart';
+import '../player_account/player_account_screen.dart';
 import '../player_history/player_history_screen.dart';
 import 'player_ledger_screen.dart';
 
@@ -181,6 +183,18 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
         }
       }
 
+      if (mounted) {
+        await captureFundingAfterChipTx(
+          context,
+          player: provider.livePlayer(widget.player),
+          chipType: _type,
+          amount: amount,
+          currency: session.currency,
+          sessionId: session.id,
+          transactionId: tx.id,
+        );
+      }
+
       AppSounds.play(AppSounds.forTransaction(_type));
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -292,6 +306,21 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
               ),
             ),
           ),
+          if (player.personId != null && player.personId!.isNotEmpty)
+            IconButton(
+              tooltip: tr('player_account'),
+              icon: const Icon(Icons.account_balance_wallet_outlined),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => PlayerAccountScreen(
+                    personId: player.personId!,
+                    displayName: player.name,
+                    sessionCurrency: session.currency,
+                    sessionId: session.id,
+                  ),
+                ),
+              ),
+            ),
           IconButton(
             tooltip: tr('player_history'),
             icon: const Icon(Icons.history),

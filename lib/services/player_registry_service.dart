@@ -45,9 +45,17 @@ class PlayerRegistryService {
 
   /// Settings-box key prefixes. Plain string maps rather than a typed
   /// box so no adapter/typeId is introduced.
-  static const _blacklistKey = 'player_blacklist';
-  static const _tagKey = 'player_tag_override';
-  static const _noteKey = 'player_blacklist_note';
+  ///
+  /// Public so [BackupService] can include them in the portable
+  /// settings whitelist — they used to be omitted, which silently
+  /// dropped the blacklist from every backup.
+  static const blacklistKey = 'player_blacklist';
+  static const tagKey = 'player_tag_override';
+  static const noteKey = 'player_blacklist_note';
+
+  static const _blacklistKey = blacklistKey;
+  static const _tagKey = tagKey;
+  static const _noteKey = noteKey;
 
   static String keyFor(String name) => PlayerHistoryService.normaliseName(name);
 

@@ -4,8 +4,11 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../services/export_service.dart';
 import '../../services/hive_service.dart';
+import '../../services/rebate_service.dart';
 import '../../services/session_service.dart';
+import '../../services/session_settlement_view.dart';
 import '../../widgets/balance_check_banner.dart';
+import '../../widgets/session_settlement_summary.dart';
 import '../../widgets/stat_card.dart';
 
 /// Standalone-Scaffold wrapper around [ReportsTab] for deep links /
@@ -60,7 +63,14 @@ class _ReportsTabState extends State<ReportsTab> {
     final session = HiveService.sessions.get(widget.sessionId)!;
     final fmt = CurrencyFormatter(session.currency);
     final balance = SessionService.checkBalance(session.id);
-    final players = SessionService.playersFor(session.id);
+    final settlement =
+        SessionSettlementView.load(session.id, session.currency);
+    final overlay = RebateService.overlayFor(
+      sessionId: session.id,
+      currency: session.currency,
+      rawDiscrepancy: balance.discrepancy,
+      moneyStillInPlay: settlement.moneyStillInPlay,
+    );
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -69,7 +79,11 @@ class _ReportsTabState extends State<ReportsTab> {
         Text('${session.location} · ${tr('table')} ${session.tableNumber}',
             style: const TextStyle(color: AppColors.textSecondary)),
         const SizedBox(height: 16),
-        BalanceCheckBanner(result: balance, formatter: fmt),
+        BalanceCheckBanner(
+          result: balance,
+          formatter: fmt,
+          discountChips: overlay,
+        ),
         const SizedBox(height: 16),
         GridView.count(
           crossAxisCount: 2,
@@ -81,7 +95,7 @@ class _ReportsTabState extends State<ReportsTab> {
           children: [
             StatCard(label: tr('money_in_buyin_rebuy'), icon: Icons.arrow_downward,
                 value: fmt.format(balance.moneyIn)),
-            StatCard(label: tr('money_out_cashout_rake'), icon: Icons.arrow_upward,
+            StatCard(label: tr('money_out_cashout_rake_tips'), icon: Icons.arrow_upward,
                 value: fmt.format(balance.moneyOut)),
             StatCard(
               label: tr('difference'),
@@ -92,31 +106,20 @@ class _ReportsTabState extends State<ReportsTab> {
             StatCard(label: tr('rake_collected'), icon: Icons.percent,
                 value: fmt.format(SessionService.totalRake(session.id)),
                 valueColor: AppColors.gold),
-            StatCard(label: tr('cash_drops'), icon: Icons.safety_check,
-                value: fmt.format(SessionService.totalCashDrop(session.id))),
+            StatCard(label: tr('dealer_tips'), icon: Icons.volunteer_activism,
+                value: fmt.format(SessionService.totalDealerTips(session.id)),
+                valueColor: AppColors.warning),
             StatCard(label: tr('host_profit'), icon: Icons.savings,
                 value: fmt.format(SessionService.hostProfit(session.id)),
                 valueColor: AppColors.accentGreen),
           ],
         ),
-        const SizedBox(height: 20),
-        Text(tr('players'), style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-        const SizedBox(height: 8),
-        ...players.map((p) {
-          final pl = SessionService.playerProfitLoss(session.id, p.id);
-          return Card(
-            child: ListTile(
-              title: Text('${tr('seat')} ${p.seatNumber} · ${p.name}'),
-              trailing: Text(
-                '${pl >= 0 ? '+' : ''}${fmt.format(pl)}',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: pl >= 0 ? AppColors.accentGreen : AppColors.danger,
-                ),
-              ),
-            ),
-          );
-        }),
+        const SizedBox(height: 16),
+        SessionSettlementSummary(
+          view: settlement,
+          formatter: fmt,
+          showPlayers: true,
+        ),
         const SizedBox(height: 24),
         Row(
           children: [

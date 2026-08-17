@@ -9,6 +9,7 @@ import '../models/enums.dart';
 import '../models/player.dart';
 import '../providers/chip_bank_provider.dart';
 import '../services/chip_tracking_service.dart';
+import 'chip_holding_adjustment_sheet.dart';
 import 'chip_picker_list.dart';
 
 /// Colouring up / breaking down: a player swaps denominations with the
@@ -131,6 +132,32 @@ class _ChipExchangeSheetState extends State<_ChipExchangeSheet> {
       _bankCanCover &&
       _playerCanCover &&
       !_saving;
+
+  /// The player's full recorded holding value, shown so the banker can
+  /// see exactly what the validation compares against — the derived
+  /// chip ledger, never the financial buy-in.
+  double get _recordedHoldingValue {
+    final p = _player;
+    if (p == null) return 0;
+    return ChipTrackingService.playerHolding(p.id).totalValue;
+  }
+
+  /// Opens the physical-count adjustment, then re-reads the ledger so
+  /// this sheet immediately reflects the corrected holding.
+  Future<void> _openAdjustment() async {
+    final p = _player;
+    if (p == null) return;
+    await showChipHoldingAdjustmentSheet(
+      context,
+      players: widget.players,
+      currency: widget.currency,
+      sessionId: widget.sessionId,
+      initialPlayer: p,
+    );
+    if (!mounted) return;
+    context.read<ChipBankProvider>().refresh();
+    setState(() {});
+  }
 
   Future<void> _confirm() async {
     final p = _player;
@@ -261,6 +288,34 @@ class _ChipExchangeSheetState extends State<_ChipExchangeSheet> {
                             }),
                   ),
 
+                  const SizedBox(height: 10),
+
+                  // The number the cover-gate compares against. Shown
+                  // up front so a refusal can never look like an
+                  // arbitrary buy-in limit.
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 9),
+                    decoration: BoxDecoration(
+                      color: AppColors.gold.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(tr('current_recorded_holding'),
+                            style: const TextStyle(
+                                fontSize: 12.5,
+                                color: AppColors.textSecondary)),
+                        Text(fmt.formatRaw(_recordedHoldingValue),
+                            style: const TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+
                   const SizedBox(height: 18),
 
                   // --- Given to bank -----------------------------
@@ -335,6 +390,7 @@ class _ChipExchangeSheetState extends State<_ChipExchangeSheet> {
               canConfirm: _canConfirm,
               onCancel: () => Navigator.pop(context, false),
               onConfirm: _confirm,
+              onAdjust: _openAdjustment,
             ),
           ],
         ),
@@ -402,6 +458,9 @@ class _ExchangeFooter extends StatelessWidget {
   final VoidCallback onCancel;
   final VoidCallback onConfirm;
 
+  /// Opens the physical-count adjustment sheet.
+  final VoidCallback onAdjust;
+
   const _ExchangeFooter({
     required this.fmt,
     required this.given,
@@ -414,6 +473,7 @@ class _ExchangeFooter extends StatelessWidget {
     required this.canConfirm,
     required this.onCancel,
     required this.onConfirm,
+    required this.onAdjust,
   });
 
   /// The single most important number on this sheet: anything other than
@@ -424,7 +484,10 @@ class _ExchangeFooter extends StatelessWidget {
     if (!hasPlayer) return tr('choose_player_first');
     if (given <= 0 && received <= 0) return tr('exchange_empty');
     if (!balanced) return tr('exchange_must_balance');
-    if (!playerCanCover) return tr('player_lacks_chips');
+    // Deliberately explanatory: the limit is the RECORDED chip holding,
+    // never the financial buy-in, and the way forward when the physical
+    // stack is higher is a physical-count adjustment.
+    if (!playerCanCover) return tr('player_lacks_chips_explained');
     if (!bankCanCover) return tr('bank_cannot_cover');
     return null;
   }
@@ -511,6 +574,15 @@ class _ExchangeFooter extends StatelessWidget {
               blocker,
               textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 11, color: AppColors.warning),
+            ),
+          ],
+          if (hasPlayer && !playerCanCover) ...[
+            const SizedBox(height: 6),
+            TextButton.icon(
+              onPressed: saving ? null : onAdjust,
+              icon: const Icon(Icons.fact_check_outlined, size: 16),
+              label: Text(tr('open_count_adjustment'),
+                  style: const TextStyle(fontSize: 12)),
             ),
           ],
           const SizedBox(height: 6),

@@ -6,9 +6,13 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 import '../models/enums.dart';
+import '../models/financial_event.dart';
 import '../models/session.dart';
+import 'financial_ledger_service.dart';
+import 'rebate_service.dart';
 import 'report_service.dart';
 import 'session_service.dart';
+import 'session_settlement_view.dart';
 import 'tournament_service.dart';
 import '../core/utils/currency_formatter.dart';
 
@@ -46,8 +50,20 @@ class ExportService {
     final players = SessionService.playersFor(session.id);
     final txs = SessionService.transactionsFor(session.id);
     final balance = SessionService.checkBalance(session.id);
+    final fin = FinancialLedgerService.snapshotForSession(
+      session.id,
+      currency: session.currency,
+    );
+    final settlement =
+        SessionSettlementView.load(session.id, session.currency);
     final fmt = CurrencyFormatter(session.currency);
 
+    final overlay = RebateService.overlayFor(
+      sessionId: session.id,
+      currency: session.currency,
+      rawDiscrepancy: balance.discrepancy,
+      moneyStillInPlay: SessionService.moneyStillInPlay(session.id),
+    );
     final extremes = ReportService.sessionExtremes(session);
 
     doc.addPage(
@@ -113,15 +129,36 @@ class ExportService {
               ['Money In (Buy-in + Rebuy)', fmt.formatRaw(balance.moneyIn)],
               ['Total Cash-out', fmt.formatRaw(SessionService.totalCashOut(session.id))],
               ['Rake Collected', fmt.formatRaw(SessionService.totalRake(session.id))],
-              ['Money Out (Cash-out + Rake)', fmt.formatRaw(balance.moneyOut)],
+              ['Dealer Tips (in Money Out, not Host Profit)',
+                  fmt.formatRaw(SessionService.totalDealerTips(session.id))],
+              ['Money Out (Cash-out + Rake + Dealer Tips)', fmt.formatRaw(balance.moneyOut)],
               ['Cash Drops (tracked, not part of settlement)',
                   fmt.formatRaw(SessionService.totalCashDrop(session.id))],
-              ['Host Profit', fmt.formatRaw(SessionService.hostProfit(session.id))],
+              ['Host Profit (rake only)', fmt.formatRaw(SessionService.hostProfit(session.id))],
               [
                 'Balance Status',
-                balance.isBalanced
-                    ? 'BALANCED'
-                    : 'DISCREPANCY: ${fmt.formatRaw(balance.discrepancy.abs())}'
+                overlay != null && overlay.explainsGap
+                    ? 'EXPLAINED BY DISCOUNT CHIPS: '
+                        '${fmt.formatRaw(balance.discrepancy.abs())}'
+                    : balance.isBalanced
+                        ? (overlay != null
+                            ? 'BALANCED (Discount chips still in play)'
+                            : 'BALANCED')
+                        : 'DISCREPANCY: ${fmt.formatRaw(balance.discrepancy.abs())}'
+              ],
+              if (overlay != null) ...[
+                [
+                  'Discount chips issued (not Money In)',
+                  fmt.formatRaw(overlay.issuedMajor),
+                ],
+                [
+                  'Poker-book residual after Discount chips',
+                  fmt.formatRaw(overlay.residualAfterDiscount),
+                ],
+                [
+                  'Still in play including Discount chips',
+                  fmt.formatRaw(overlay.impliedStillInPlay),
+                ],
               ],
             ],
           ),
@@ -137,6 +174,43 @@ class ExportService {
             ),
           pw.Padding(
             padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+            child: _sectionTitle('Financial account (this session)'),
+          ),
+          pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+            child: _table(
+              align: const {1: pw.Alignment.centerRight},
+              headers: ['Metric', 'Amount'],
+              data: [
+                ['Credit issued', fmt.formatRaw(fin.creditIssued)],
+                ['Credit repaid', fmt.formatRaw(fin.creditRepaid)],
+                ['Unbacked cash-out', fmt.formatRaw(fin.cashOutUnbacked)],
+                ['Cash paid for chips', fmt.formatRaw(fin.cashInForChips)],
+                ['Cash received for returned chips',
+                    fmt.formatRaw(fin.cashOutForChips)],
+              ],
+            ),
+          ),
+          pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+            child: _sectionTitle('Deposit (this session)'),
+          ),
+          pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+            child: _table(
+              align: const {1: pw.Alignment.centerRight},
+              headers: ['Metric', 'Amount'],
+              data: [
+                ['Deposit received', fmt.formatRaw(fin.depositIn)],
+                ['Deposit used for chips', fmt.formatRaw(fin.depositUsedForChips)],
+                ['Deposit returned', fmt.formatRaw(fin.depositReturned)],
+                ['Deposit remaining', fmt.formatRaw(fin.depositRemaining)],
+              ],
+            ),
+          ),
+          ..._rebatePdfSection(session, settlement, fmt),
+          pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(horizontal: 18),
             child: _sectionTitle('Players'),
           ),
           pw.Padding(
@@ -148,16 +222,19 @@ class ExportService {
               3: pw.Alignment.centerRight,
               4: pw.Alignment.centerRight,
             },
-            headers: ['Seat', 'Name', 'Buy-in+Rebuy', 'Cash-out', 'P/L'],
-            data: players.map((p) {
-              final totalIn = SessionService.playerTotalIn(session.id, p.id);
-              final totalOut = SessionService.playerTotalCashOut(session.id, p.id);
+            headers: [
+              'Seat', 'Name', 'Buy-in+Rebuy', 'Cash-out', 'P/L',
+              'Cashed out', 'Deposit remaining',
+            ],
+            data: settlement.players.map((row) {
               return [
-                p.seatNumber.toString(),
-                p.name,
-                fmt.formatRaw(totalIn),
-                fmt.formatRaw(totalOut),
-                fmt.formatRaw(SessionService.playerProfitLoss(session.id, p.id)),
+                row.player.seatNumber.toString(),
+                row.player.name,
+                fmt.formatRaw(row.buyIn + row.rebuy),
+                fmt.formatRaw(row.cashOut),
+                fmt.formatRaw(row.chipProfitLoss),
+                row.hasCashedOut ? 'Yes' : 'No',
+                fmt.formatRaw(row.financial.depositRemaining),
               ];
             }).toList(),
           ),
@@ -205,6 +282,13 @@ class ExportService {
   static Future<File> exportSessionCsv(PokerSession session) async {
     final txs = SessionService.transactionsFor(session.id);
     final players = SessionService.playersFor(session.id);
+    final books = SessionService.checkBalance(session.id);
+    final overlay = RebateService.overlayFor(
+      sessionId: session.id,
+      currency: session.currency,
+      rawDiscrepancy: books.discrepancy,
+      moneyStillInPlay: SessionService.moneyStillInPlay(session.id),
+    );
     final rows = <List<dynamic>>[
       ['Timestamp', 'Type', 'Player', 'Amount', 'Note', 'Signed'],
       for (final t in txs)
@@ -220,6 +304,19 @@ class ExportService {
           t.note ?? '',
           t.hostSignatureBase64 != null ? 'Yes' : 'No',
         ],
+      if (overlay != null) ...[
+        <dynamic>[],
+        ['Discount chips issued (not Money In)', overlay.issuedMajor],
+        [
+          'Poker-book residual after Discount chips',
+          overlay.residualAfterDiscount,
+        ],
+        [
+          'Still in play including Discount chips',
+          overlay.impliedStillInPlay,
+        ],
+      ],
+      ..._rebateCsvFooter(session),
     ];
     final csv = const ListToCsvConverter().convert(rows);
     final dir = await getApplicationDocumentsDirectory();
@@ -301,6 +398,149 @@ class ExportService {
         ],
       ),
     );
+  }
+
+  static List<List<dynamic>> _rebateCsvFooter(PokerSession session) {
+    var granted = 0;
+    var lostInPlay = 0;
+    var clawback = 0;
+    var waived = 0;
+    var actual = 0;
+    var originalLoss = 0;
+    final settlement =
+        SessionSettlementView.load(session.id, session.currency);
+    for (final row in settlement.players) {
+      final personId = row.player.personId;
+      if (personId == null || personId.isEmpty) continue;
+      final snap = RebateService.snapshot(
+        sessionId: session.id,
+        personId: personId,
+        currency: session.currency,
+      );
+      if (!snap.hasActivity) continue;
+      granted += snap.grantedMinor;
+      lostInPlay += snap.lostInPlayMinor;
+      clawback += snap.clawbackMinor;
+      waived += snap.waivedMinor;
+      actual += snap.actualCashPaidMinor;
+      originalLoss += snap.originalLossMinor;
+    }
+    if (granted == 0 && originalLoss == 0) return const [];
+    return [
+      <dynamic>[],
+      ['Discount original qualifying loss',
+          MoneyUnits.toMajor(session.currency, originalLoss)],
+      ['Discount granted', MoneyUnits.toMajor(session.currency, granted)],
+      ['Discount consumed / lost in play',
+          MoneyUnits.toMajor(session.currency, lostInPlay)],
+      ['Discount reconciled', MoneyUnits.toMajor(session.currency, clawback)],
+      ['Discount waived by Banker',
+          MoneyUnits.toMajor(session.currency, waived)],
+      ['Discount actual cash paid',
+          MoneyUnits.toMajor(session.currency, actual)],
+    ];
+  }
+
+  static List<pw.Widget> _rebatePdfSection(
+    PokerSession session,
+    SessionSettlementView settlement,
+    CurrencyFormatter fmt,
+  ) {
+    var granted = 0;
+    var lostInPlay = 0;
+    var clawback = 0;
+    var waived = 0;
+    var paid = 0;
+    var cashIn = 0;
+    var actual = 0;
+    var retained = 0;
+    var originalLoss = 0;
+    var remainingLoss = 0;
+    final rows = <List<String>>[];
+    for (final row in settlement.players) {
+      final personId = row.player.personId;
+      if (personId == null || personId.isEmpty) continue;
+      final snap = RebateService.snapshot(
+        sessionId: session.id,
+        personId: personId,
+        currency: session.currency,
+      );
+      if (!snap.hasActivity) continue;
+      granted += snap.grantedMinor;
+      lostInPlay += snap.lostInPlayMinor;
+      clawback += snap.clawbackMinor;
+      waived += snap.waivedMinor;
+      paid += snap.paidOutMinor;
+      cashIn += snap.playerCashInMinor;
+      actual += snap.actualCashPaidMinor;
+      retained += snap.houseRetainedMinor;
+      originalLoss += snap.originalLossMinor;
+      remainingLoss += snap.remainingLossMinor;
+      rows.add([
+        row.player.name,
+        fmt.formatRaw(snap.originalLoss),
+        fmt.formatRaw(snap.granted),
+        fmt.formatRaw(snap.lostInPlay),
+        fmt.formatRaw(snap.clawback),
+        fmt.formatRaw(snap.waived),
+        fmt.formatRaw(snap.actualCashPaid),
+        fmt.formatRaw(snap.houseRetained),
+      ]);
+    }
+    if (granted == 0 && cashIn == 0) return const [];
+    final overlay = RebateService.overlayFor(
+      sessionId: session.id,
+      currency: session.currency,
+      rawDiscrepancy: SessionService.checkBalance(session.id).discrepancy,
+      moneyStillInPlay: SessionService.moneyStillInPlay(session.id),
+    );
+    return [
+      pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+        child: _sectionTitle('Loss rebate / Discount (this session)'),
+      ),
+      pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+        child: _table(
+          align: const {1: pw.Alignment.centerRight},
+          headers: ['Metric', 'Amount'],
+          data: [
+            ['Player own cash in', fmt.formatRaw(MoneyUnits.toMajor(session.currency, cashIn))],
+            ['Original qualifying loss', fmt.formatRaw(MoneyUnits.toMajor(session.currency, originalLoss))],
+            ['Discount granted', fmt.formatRaw(MoneyUnits.toMajor(session.currency, granted))],
+            ['Discount consumed / lost in play', fmt.formatRaw(MoneyUnits.toMajor(session.currency, lostInPlay))],
+            ['Discount reconciled', fmt.formatRaw(MoneyUnits.toMajor(session.currency, clawback))],
+            ['Discount waived by Banker', fmt.formatRaw(MoneyUnits.toMajor(session.currency, waived))],
+            ['Remaining original loss', fmt.formatRaw(MoneyUnits.toMajor(session.currency, remainingLoss))],
+            ['Discount paid to player', fmt.formatRaw(MoneyUnits.toMajor(session.currency, paid))],
+            ['Cash out paid', fmt.formatRaw(MoneyUnits.toMajor(session.currency, actual))],
+            ['House retained from own cash', fmt.formatRaw(MoneyUnits.toMajor(session.currency, retained))],
+            if (overlay != null) ...[
+              ['Discount chips issued (not Money In)', fmt.formatRaw(overlay.issuedMajor)],
+              ['Poker-book residual after Discount chips', fmt.formatRaw(overlay.residualAfterDiscount)],
+              ['Still in play including Discount chips', fmt.formatRaw(overlay.impliedStillInPlay)],
+            ],
+          ],
+        ),
+      ),
+      if (rows.isNotEmpty)
+        pw.Padding(
+          padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+          child: _table(
+            headers: [
+              'Player',
+              'Original loss',
+              'Granted',
+              'Lost in play',
+              'Reconciled',
+              'Waived',
+              'Cash out paid',
+              'House retained',
+            ],
+            data: rows,
+          ),
+        ),
+    ];
   }
 
   static pw.Widget _sectionTitle(String text) => pw.Container(

@@ -36,6 +36,12 @@ class _HouseRulesScreenState extends State<HouseRulesScreen> {
   late final TextEditingController _tieredCutoff;
   late List<TextEditingController> _quickRakeSlots;
   late bool _rebuyLevelEnforcementEnabled;
+  late bool _rebateEnabled;
+  late final TextEditingController _rebateMin;
+  late final TextEditingController _rebatePercent;
+
+  /// Banker-defined Session/Discount period end (working copy).
+  late DateTime? _plannedEndAt;
 
   @override
   void initState() {
@@ -57,6 +63,40 @@ class _HouseRulesScreenState extends State<HouseRulesScreen> {
         text: (s?.tieredNoRakeAtOrAbove ?? RakeCalculator.defaultNoRakeAtOrAbove).toStringAsFixed(0));
     _quickRakeSlots = QuickRakeSlotsEditor.controllersFrom(s?.quickRakeAmounts);
     _rebuyLevelEnforcementEnabled = s?.rebuyLevelEnforcementEnabled ?? true;
+    _rebateEnabled = s?.rebateEnabled ?? false;
+    _rebateMin = TextEditingController(
+        text: (s?.rebateMinLoss ?? 1000).toStringAsFixed(0));
+    _rebatePercent = TextEditingController(
+        text: (s?.rebatePercent ?? 10).toStringAsFixed(0));
+    _plannedEndAt = s?.plannedEndAt;
+  }
+
+  Future<void> _pickPlannedEnd() async {
+    final session = context.read<SessionProvider>().current;
+    if (session == null) return;
+    final start = session.dateTime;
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _plannedEndAt ?? start.add(const Duration(hours: 12)),
+      firstDate: start,
+      lastDate: start.add(const Duration(days: 365)),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(
+          _plannedEndAt ?? start.add(const Duration(hours: 12))),
+    );
+    if (time == null) return;
+    final picked =
+        DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    if (!picked.isAfter(start)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr('session_period_invalid'))),
+      );
+      return;
+    }
+    setState(() => _plannedEndAt = picked);
   }
 
   Future<void> _save() async {
@@ -73,6 +113,11 @@ class _HouseRulesScreenState extends State<HouseRulesScreen> {
       tieredNoRakeAtOrAbove: double.tryParse(_tieredCutoff.text.replaceAll(',', '')),
       quickRakeAmounts: QuickRakeSlotsEditor.valuesFrom(_quickRakeSlots),
       rebuyLevelEnforcementEnabled: _rebuyLevelEnforcementEnabled,
+      rebateEnabled: _rebateEnabled,
+      rebateMinLoss: double.tryParse(_rebateMin.text.replaceAll(',', '')),
+      rebatePercent: double.tryParse(_rebatePercent.text.replaceAll(',', '')),
+      plannedEndAt: _plannedEndAt,
+      clearPlannedEndAt: _plannedEndAt == null,
     );
     if (!mounted) return;
     setState(() => _editing = false);
@@ -184,6 +229,63 @@ class _HouseRulesScreenState extends State<HouseRulesScreen> {
               amounts: QuickRakeSlotsEditor.valuesFrom(_quickRakeSlots),
               formatter: fmt,
             ),
+          ],
+          if (session.mode == SessionMode.cashGame) ...[
+            const SizedBox(height: 24),
+            _sectionTitle(tr('rebate_title')),
+            Text(tr('rebate_hint'),
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.textSecondary)),
+            const SizedBox(height: 8),
+            if (_editing) ...[
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(tr('rebate_enabled')),
+                value: _rebateEnabled,
+                onChanged: (v) => setState(() => _rebateEnabled = v),
+              ),
+              if (_rebateEnabled) ...[
+                _editableRow(tr('rebate_min_loss'), _rebateMin, isCurrency: true),
+                _editableRow(tr('rebate_percent'), _rebatePercent),
+                const SizedBox(height: 4),
+                InkWell(
+                  onTap: _pickPlannedEnd,
+                  child: InputDecorator(
+                    decoration: InputDecoration(
+                      labelText: tr('session_period_end'),
+                      helperText: tr('session_period_hint'),
+                      suffixIcon: _plannedEndAt == null
+                          ? null
+                          : IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () =>
+                                  setState(() => _plannedEndAt = null),
+                            ),
+                    ),
+                    child: Text(
+                      _plannedEndAt == null
+                          ? tr('session_period_not_set')
+                          : '${_plannedEndAt!.toLocal()}'.substring(0, 16),
+                      style: const TextStyle(color: AppColors.textPrimary),
+                    ),
+                  ),
+                ),
+              ],
+            ] else ...[
+              _readRow(tr('rebate_enabled'),
+                  _rebateEnabled ? tr('active') : tr('closed')),
+              if (_rebateEnabled) ...[
+                _readRow(tr('rebate_min_loss'),
+                    fmt.format(session.rebateMinLoss ?? 0)),
+                _readRow(tr('rebate_percent'),
+                    '${session.rebatePercent ?? 0}%'),
+                _readRow(
+                    tr('session_period_end'),
+                    session.plannedEndAt == null
+                        ? tr('session_period_not_set')
+                        : '${session.plannedEndAt!.toLocal()}'.substring(0, 16)),
+              ],
+            ],
           ],
           const SizedBox(height: 24),
           if (_editing)
