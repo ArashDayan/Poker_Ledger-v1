@@ -170,17 +170,58 @@ class _PickerRow extends StatelessWidget {
                     fontSize: 11.5, color: AppColors.accentGreen),
               ),
             ),
-          _Stepper(value: quantity, onChanged: onChanged),
+          _QtyField(value: quantity, onChanged: onChanged),
         ],
       ),
     );
   }
 }
 
-class _Stepper extends StatelessWidget {
+/// Quantity the banker can type (50 × 100) or nudge with +/−.
+class _QtyField extends StatefulWidget {
   final int value;
   final ValueChanged<int> onChanged;
-  const _Stepper({required this.value, required this.onChanged});
+  const _QtyField({required this.value, required this.onChanged});
+
+  @override
+  State<_QtyField> createState() => _QtyFieldState();
+}
+
+class _QtyFieldState extends State<_QtyField> {
+  late final TextEditingController _ctrl;
+  late final FocusNode _focus;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.value == 0 ? '' : '${widget.value}');
+    _focus = FocusNode();
+  }
+
+  @override
+  void didUpdateWidget(covariant _QtyField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.value != widget.value && !_focus.hasFocus) {
+      final next = widget.value == 0 ? '' : '${widget.value}';
+      if (_ctrl.text != next) _ctrl.text = next;
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _commit(String raw) {
+    final parsed = int.tryParse(raw.trim());
+    if (parsed == null || parsed < 0) {
+      widget.onChanged(0);
+      return;
+    }
+    widget.onChanged(parsed);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -189,23 +230,36 @@ class _Stepper extends StatelessWidget {
       children: [
         _SmallButton(
           icon: Icons.remove,
-          onTap: value > 0 ? () => onChanged(value - 1) : null,
+          onTap: widget.value > 0 ? () => widget.onChanged(widget.value - 1) : null,
         ),
-        Container(
-          width: 36,
-          alignment: Alignment.center,
-          child: Text(
-            '$value',
+        SizedBox(
+          width: 44,
+          height: 32,
+          child: TextField(
+            controller: _ctrl,
+            focusNode: _focus,
+            keyboardType: TextInputType.number,
+            textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.bold,
-              color: value > 0
+              color: widget.value > 0
                   ? AppColors.textPrimary
                   : AppColors.textSecondary,
             ),
+            decoration: const InputDecoration(
+              isDense: true,
+              contentPadding: EdgeInsets.symmetric(vertical: 6),
+              border: InputBorder.none,
+              hintText: '0',
+            ),
+            onChanged: _commit,
           ),
         ),
-        _SmallButton(icon: Icons.add, onTap: () => onChanged(value + 1)),
+        _SmallButton(
+          icon: Icons.add,
+          onTap: () => widget.onChanged(widget.value + 1),
+        ),
       ],
     );
   }

@@ -49,7 +49,7 @@ class PlayerLedgerScreen extends StatelessWidget {
     final rake = SessionService.playerRakeTotal(session.id, live.id);
     // Cross-session career, so the banker sees this player's whole
     // record without leaving the page.
-    final career = PlayerHistoryService.careerForName(live.name);
+    final career = PlayerHistoryService.careerFor(live);
     final tableNameFor = _tableNamer(session);
 
     return Scaffold(

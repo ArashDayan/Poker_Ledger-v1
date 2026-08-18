@@ -20,6 +20,7 @@ import '../../widgets/signature_compare_sheet.dart';
 import '../../widgets/signature_pad.dart';
 import '../../widgets/table_selector_bar.dart';
 import '../../widgets/chip_flow.dart';
+import '../../widgets/discount_review_entry.dart';
 import '../../widgets/quick_transaction_sheet.dart';
 import '../player_action/player_action_screen.dart';
 import '../player_action/player_ledger_screen.dart';
@@ -397,9 +398,15 @@ class PlayersTab extends StatelessWidget {
                       sessionId: provider.current!.id,
                     );
                     if (result == null) return;
-                    // Chip composition for the opening buy-in, asked
-                    // before the player is created so cancelling it
-                    // cancels nothing.
+                    final funding = await collectRequiredFunding(
+                      context,
+                      chipType: TransactionType.buyIn,
+                      amount: result.amount,
+                      currency: provider.current!.currency,
+                    );
+                    if (!funding.shouldCommit || !context.mounted) return;
+                    // Chip composition is optional. Skip / dismiss does
+                    // not abort the already-confirmed buy-in + funding.
                     final openingDist = await ChipFlow.ask(
                       context,
                       amount: result.amount,
@@ -435,7 +442,7 @@ class PlayersTab extends StatelessWidget {
                             playerId: created.id,
                           );
                           if (context.mounted) {
-                            await captureFundingAfterChipTx(
+                            await applyCollectedFunding(
                               context,
                               player: created,
                               chipType: TransactionType.buyIn,
@@ -443,6 +450,7 @@ class PlayersTab extends StatelessWidget {
                               currency: provider.current!.currency,
                               sessionId: provider.current!.id,
                               transactionId: tx.last.id,
+                              funding: funding,
                             );
                           }
                         }
@@ -504,6 +512,14 @@ class PlayersTab extends StatelessWidget {
     );
     if (result == null) return;
 
+    final funding = await collectRequiredFunding(
+      context,
+      chipType: type,
+      amount: result.amount,
+      currency: session.currency,
+    );
+    if (!funding.shouldCommit || !context.mounted) return;
+
     final dist = ChipFlow.appliesTo(type)
         ? await ChipFlow.ask(context,
             amount: result.amount, currency: session.currency)
@@ -524,7 +540,7 @@ class PlayersTab extends StatelessWidget {
             transactionId: tx.id,
             playerId: player.id);
         if (context.mounted) {
-          await captureFundingAfterChipTx(
+          await applyCollectedFunding(
             context,
             player: player,
             chipType: type,
@@ -532,6 +548,7 @@ class PlayersTab extends StatelessWidget {
             currency: session.currency,
             sessionId: session.id,
             transactionId: tx.id,
+            funding: funding,
           );
         }
       }
@@ -600,6 +617,7 @@ class PlayersTab extends StatelessWidget {
                 rebuy: SessionService.playerRebuyOnly(session.id, p.id),
                 cashOut: SessionService.playerTotalCashOut(session.id, p.id),
                 profitLoss: SessionService.playerProfitLoss(session.id, p.id),
+                hasCashedOut: SessionService.hasCashedOut(session.id, p.id),
                 formatter: fmt,
                 onToggleSettled: () => provider.toggleSettled(p),
                 onEdit: () => showAddPlayerSheet(context, existing: p),
@@ -611,6 +629,13 @@ class PlayersTab extends StatelessWidget {
                 onLedger: () => Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) => PlayerLedgerScreen(player: p))),
               ),
+              const SizedBox(height: 6),
+              DiscountReviewTile(
+                sessionId: session.id,
+                currency: session.currency,
+                player: p,
+              ),
+              const SizedBox(height: 6),
               Row(
                 children: [
                   Expanded(
@@ -636,7 +661,9 @@ class PlayersTab extends StatelessWidget {
                     child: _quickChip(context, '', Icons.history,
                         () => Navigator.of(context).push(MaterialPageRoute(
                             builder: (_) =>
-                                PlayerHistoryScreen(playerName: p.name)))),
+                                PlayerHistoryScreen(
+                                    playerName: p.name,
+                                    personId: p.personId)))),
                   ),
                 ],
               ),

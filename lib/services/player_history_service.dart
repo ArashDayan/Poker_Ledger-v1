@@ -35,13 +35,29 @@ class PlayerCareer {
   /// Display name (as most recently spelled).
   final String name;
 
-  /// Normalised key used to group appearances — see
-  /// [PlayerHistoryService.normaliseName].
+  /// Normalised name key (legacy grouping) or `person:<id>`.
   final String key;
+
+  /// Permanent identity when this career is a real person. Null means
+  /// a legacy name-only group that was never linked — not a personId.
+  final String? personId;
+
+  /// True when seats were grouped only by display name because they
+  /// have no personId. Those rows are not a financial account.
+  final bool isLegacyNameGroup;
 
   final List<PlayerSessionRecord> records;
 
-  PlayerCareer({required this.name, required this.key, required this.records});
+  PlayerCareer({
+    required this.name,
+    required this.key,
+    required this.records,
+    this.personId,
+    this.isLegacyNameGroup = false,
+  });
+
+  bool get hasPersistentIdentity =>
+      personId != null && personId!.isNotEmpty && !isLegacyNameGroup;
 
   int get sessionsPlayed => records.length;
 
@@ -185,6 +201,7 @@ class PlayerHistoryService {
         name: records.first.player.name.trim(),
         key: key,
         records: records,
+        isLegacyNameGroup: true,
       ));
     });
 
@@ -197,8 +214,44 @@ class PlayerHistoryService {
     return careers;
   }
 
-  /// The career for one player row (i.e. "show me this person's history").
-  static PlayerCareer careerFor(Player player) => careerForName(player.name);
+  /// Identity-scoped when the seat is linked; otherwise the legacy
+  /// name group. Does not invent a personId.
+  static PlayerCareer careerFor(Player player) {
+    final id = player.personId;
+    if (id != null && id.isNotEmpty) {
+      return careerForPersonId(id, fallbackName: player.name);
+    }
+    return careerForName(player.name);
+  }
+
+  /// Seats linked to [personId] only. Another human with the same
+  /// display name is never included.
+  static PlayerCareer careerForPersonId(String personId,
+      {String? fallbackName}) {
+    final records = <PlayerSessionRecord>[];
+    for (final p in HiveService.players.values) {
+      if (p.personId != personId) continue;
+      final r = recordFor(p);
+      if (r != null) records.add(r);
+    }
+    records.sort((a, b) => b.date.compareTo(a.date));
+    String name = fallbackName?.trim() ?? '';
+    try {
+      final identity = HiveService.playerIdentities.get(personId);
+      if (identity != null && identity.displayName.trim().isNotEmpty) {
+        name = identity.displayName.trim();
+      }
+    } catch (_) {}
+    if (name.isEmpty && records.isNotEmpty) {
+      name = records.first.player.name.trim();
+    }
+    return PlayerCareer(
+      name: name,
+      key: 'person:$personId',
+      records: records,
+      personId: personId,
+    );
+  }
 
   static PlayerCareer careerForName(String name) {
     final key = normaliseName(name);
@@ -213,14 +266,71 @@ class PlayerHistoryService {
       name: records.isNotEmpty ? records.first.player.name.trim() : name.trim(),
       key: key,
       records: records,
+      isLegacyNameGroup: true,
     );
   }
 
-  /// Careers matching a search string, for the Players directory.
+  /// Player Bank: one row per identity, plus unlinked seats by name.
+  static List<PlayerCareer> bankCareers() {
+    final out = <PlayerCareer>[];
+    try {
+      for (final identity in HiveService.playerIdentities.values) {
+        out.add(careerForPersonId(identity.id,
+            fallbackName: identity.displayName));
+      }
+    } catch (_) {}
+
+    final leftover = <String, List<Player>>{};
+    for (final p in HiveService.players.values) {
+      if (p.personId != null && p.personId!.isNotEmpty) continue;
+      if (p.name.trim().isEmpty) continue;
+      leftover.putIfAbsent(normaliseName(p.name), () => []).add(p);
+    }
+    leftover.forEach((key, players) {
+      final records = <PlayerSessionRecord>[];
+      for (final p in players) {
+        final r = recordFor(p);
+        if (r != null) records.add(r);
+      }
+      if (records.isEmpty) return;
+      records.sort((a, b) => b.date.compareTo(a.date));
+      out.add(PlayerCareer(
+        name: records.first.player.name.trim(),
+        key: 'legacy:$key',
+        records: records,
+        isLegacyNameGroup: true,
+      ));
+    });
+
+    out.sort((a, b) {
+      final aLast = a.lastPlayed;
+      final bLast = b.lastPlayed;
+      if (aLast == null && bLast == null) {
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      }
+      if (aLast == null) return 1;
+      if (bLast == null) return -1;
+      return bLast.compareTo(aLast);
+    });
+    return out;
+  }
+
+  /// Legacy name search (reports / old callers).
   static List<PlayerCareer> search(String query) {
     final q = query.trim().toLowerCase();
     final all = allCareers();
     if (q.isEmpty) return all;
     return all.where((c) => c.name.toLowerCase().contains(q)).toList();
+  }
+
+  static List<PlayerCareer> searchBank(String query) {
+    final q = query.trim().toLowerCase();
+    final all = bankCareers();
+    if (q.isEmpty) return all;
+    return all.where((c) {
+      if (c.name.toLowerCase().contains(q)) return true;
+      final id = c.personId;
+      return id != null && id.toLowerCase().contains(q);
+    }).toList();
   }
 }

@@ -49,6 +49,11 @@ class PlayerAccountScreen extends StatefulWidget {
 class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
   @override
   Widget build(BuildContext context) {
+    // Rebuild when the session ledger or financial box notifies — do not
+    // wait for a route-return setState.
+    try {
+      context.watch<SessionProvider>();
+    } catch (_) {}
     final account = FinancialLedgerService.accountFor(widget.personId);
     final name = widget.displayName ?? account.displayName;
 
@@ -72,6 +77,10 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
             _notRecordedCard()
           else
             ...account.balances.map(_balanceCard),
+          if (_sessionChipNote != null) ...[
+            const SizedBox(height: 10),
+            _sessionChipNote!,
+          ],
           if (_discountSnapshot != null) ...[
             const SizedBox(height: 10),
             _discountCard(_discountSnapshot!),
@@ -96,7 +105,7 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
               label: Text(tr('return_deposit')),
             ),
           ],
-          if (_canReviewDiscount) ...[
+          if (widget.sessionId != null && widget.sessionId!.isNotEmpty) ...[
             const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: _reviewDiscount,
@@ -141,10 +150,62 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
     );
   }
 
-  bool get _canReviewDiscount {
+  /// Chip-ledger cash-out for this session vs Financial Ledger. Never
+  /// added into Outstanding Balance.
+  Widget? get _sessionChipNote {
     final sessionId = widget.sessionId;
-    if (sessionId == null || sessionId.isEmpty) return false;
-    return RebateService.configFor(sessionId).isUsable;
+    if (sessionId == null || sessionId.isEmpty) return null;
+    final seated = DepositToChips.seatedPlayer(sessionId, widget.personId);
+    if (seated == null) return null;
+    final chipOut =
+        SessionService.playerTotalCashOut(sessionId, seated.id);
+    final chipIn = SessionService.playerTotalIn(sessionId, seated.id);
+    final fin = FinancialLedgerService.snapshotForSession(
+      sessionId,
+      currency: _actionCurrency,
+      personId: widget.personId,
+    );
+    if (chipIn <= 0 && chipOut <= 0 && !fin.recorded) return null;
+    final fmt = CurrencyFormatter(_actionCurrency);
+    final unfundedChipOut = chipOut > 0 && fin.cashOutForChipsMinor == 0;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceElevated,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(tr('session_chip_books'),
+              style: const TextStyle(
+                  fontSize: 11,
+                  letterSpacing: 1.1,
+                  color: AppColors.textSecondary)),
+          const SizedBox(height: 6),
+          Text(
+            '${tr('settle_buy_in')}/${tr('settle_rebuy')}: ${fmt.format(chipIn)}'
+            ' · ${tr('settle_cash_out')}: ${fmt.format(chipOut)}',
+            style: const TextStyle(fontSize: 13),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${tr('settle_cash_in_for_chips')}: ${fmt.format(fin.cashInForChips)}'
+            ' · ${tr('settle_cash_out_for_chips')}: ${fmt.format(fin.cashOutForChips)}',
+            style: const TextStyle(
+                fontSize: 12.5, color: AppColors.textSecondary),
+          ),
+          if (unfundedChipOut) ...[
+            const SizedBox(height: 6),
+            Text(tr('chip_cashout_not_on_financial'),
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.warning, height: 1.35)),
+          ],
+        ],
+      ),
+    );
   }
 
   RebateSnapshot? get _discountSnapshot {

@@ -15,6 +15,7 @@ import '../../widgets/quick_transaction_sheet.dart';
 import '../../widgets/chip_flow.dart';
 import '../../widgets/poker_table_view.dart';
 import '../../widgets/quick_rake_sheet.dart';
+import '../../widgets/discount_review_entry.dart';
 import '../../widgets/table_selector_bar.dart';
 import '../players/players_tab.dart';
 import '../player_action/player_ledger_screen.dart';
@@ -66,8 +67,14 @@ class TableViewTab extends StatelessWidget {
       sessionId: session.id,
     );
     if (result == null) return;
-    // Optional chip composition, asked BEFORE the money is written so
-    // cancelling out of it cancels nothing.
+    final funding = await collectRequiredFunding(
+      context,
+      chipType: type,
+      amount: result.amount,
+      currency: session.currency,
+    );
+    if (!funding.shouldCommit || !context.mounted) return;
+    // Optional chip composition. Skip / dismiss does not abort.
     final dist = ChipFlow.appliesTo(type)
         ? await ChipFlow.ask(context,
             amount: result.amount, currency: session.currency)
@@ -88,7 +95,7 @@ class TableViewTab extends StatelessWidget {
             transactionId: tx.id,
             playerId: player.id);
         if (context.mounted) {
-          await captureFundingAfterChipTx(
+          await applyCollectedFunding(
             context,
             player: player,
             chipType: type,
@@ -96,6 +103,7 @@ class TableViewTab extends StatelessWidget {
             currency: session.currency,
             sessionId: session.id,
             transactionId: tx.id,
+            funding: funding,
           );
         }
       }
@@ -156,6 +164,21 @@ class TableViewTab extends StatelessWidget {
                 showQuickRakeSheet(context, player: player);
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.savings_outlined, color: AppColors.gold),
+              title: Text(tr('review_discount')),
+              subtitle: Text(tr('discount_from_seat_hint'),
+                  style: const TextStyle(fontSize: 11)),
+              onTap: () {
+                Navigator.pop(ctx);
+                openDiscountReview(
+                  context,
+                  sessionId: provider.current!.id,
+                  currency: provider.current!.currency,
+                  player: player,
+                );
+              },
+            ),
             const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.edit_outlined, color: AppColors.textSecondary),
@@ -211,6 +234,8 @@ class TableViewTab extends StatelessWidget {
               ? 0
               : SessionService.playerProfitLoss(session.id, bySeat[n]!.id),
           settled: bySeat[n] != null && !bySeat[n]!.isActive,
+          hasCashedOut: bySeat[n] != null &&
+              SessionService.hasCashedOut(session.id, bySeat[n]!.id),
           // STRICTLY the seat-count boundary. Deliberately NOT widened
           // for a seat that happens to hold a player: a seat outside the
           // configured count is locked, full stop. If a table was shrunk

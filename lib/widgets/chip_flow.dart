@@ -58,8 +58,12 @@ class ChipFlow {
   /// Whether the banker has any inventory configured at all. With no
   /// denominations defined there is nothing to compose, so every caller
   /// silently skips the step.
-  static bool isConfigured(BuildContext context) =>
-      context.read<ChipBankProvider>().chips.isNotEmpty;
+  static bool isConfigured(BuildContext context) {
+    try {
+      context.read<ChipBankProvider>().refresh();
+    } catch (_) {}
+    return ChipBankService.allChips().isNotEmpty;
+  }
 
   /// Asks the banker for a chip composition.
   ///

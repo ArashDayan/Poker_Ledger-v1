@@ -40,6 +40,9 @@ class _SessionListScreenState extends State<SessionListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Session writes (new night, end session) notify this provider so
+    // the home list is not stuck until the banker pops a route.
+    context.watch<SessionProvider>();
     final all = HiveService.sessions.values.toList()
       ..sort((a, b) => b.dateTime.compareTo(a.dateTime));
 

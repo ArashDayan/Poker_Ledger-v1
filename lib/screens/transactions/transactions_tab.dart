@@ -114,6 +114,14 @@ class TransactionsTab extends StatelessWidget {
     );
     if (result == null || !context.mounted) return;
 
+    final funding = await collectRequiredFunding(
+      context,
+      chipType: type,
+      amount: result.amount,
+      currency: session.currency,
+    );
+    if (!funding.shouldCommit || !context.mounted) return;
+
     final dist = ChipFlow.appliesTo(type)
         ? await ChipFlow.ask(context,
             amount: result.amount, currency: session.currency)
@@ -134,7 +142,7 @@ class TransactionsTab extends StatelessWidget {
             transactionId: tx.id,
             playerId: player.id);
         if (context.mounted) {
-          await captureFundingAfterChipTx(
+          await applyCollectedFunding(
             context,
             player: player,
             chipType: type,
@@ -142,6 +150,7 @@ class TransactionsTab extends StatelessWidget {
             currency: session.currency,
             sessionId: session.id,
             transactionId: tx.id,
+            funding: funding,
           );
         }
       }

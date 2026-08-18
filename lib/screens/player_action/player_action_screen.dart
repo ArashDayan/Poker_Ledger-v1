@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../core/localization/enum_labels.dart';
 import 'package:provider/provider.dart';
+import '../../core/player_result_visual.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/validators.dart';
@@ -15,6 +16,7 @@ import '../../models/chip_movement.dart';
 import '../../providers/chip_bank_provider.dart';
 import '../../services/chip_tracking_service.dart';
 import '../../widgets/chip_distribution_sheet.dart';
+import '../../widgets/discount_review_entry.dart';
 import '../../widgets/player_chip_holdings.dart';
 import '../../widgets/signature_compare_sheet.dart';
 import '../../widgets/signature_pad.dart';
@@ -135,17 +137,21 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
       if (!proceed) return;
     }
 
-    // OPTIONAL physical chip step. Runs BEFORE the money is recorded so
-    // that cancelling out of it cancels nothing — and if the banker
-    // skips it, the transaction below is completely unchanged from
-    // before this feature existed.
+    final funding = await collectRequiredFunding(
+      context,
+      chipType: _type,
+      amount: amount,
+      currency: session.currency,
+    );
+    if (!funding.shouldCommit || !mounted) return;
+
+    // OPTIONAL physical chip step. Skip / dismiss records no chips.
     Map<String, int>? distribution;
     if (_chipTrackingApplies && context.read<ChipBankProvider>().chips.isNotEmpty) {
       distribution = await _askChipDistribution(session.currency, amount);
-      // Null means the sheet was dismissed — treat as "skip", never as
-      // a reason to abandon the money entry.
       if (distribution != null && distribution.isEmpty) distribution = null;
     }
+    if (!mounted) return;
 
     setState(() => _submitting = true);
     try {
@@ -184,7 +190,7 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
       }
 
       if (mounted) {
-        await captureFundingAfterChipTx(
+        await applyCollectedFunding(
           context,
           player: provider.livePlayer(widget.player),
           chipType: _type,
@@ -192,6 +198,7 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
           currency: session.currency,
           sessionId: session.id,
           transactionId: tx.id,
+          funding: funding,
         );
       }
 
@@ -291,6 +298,12 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
     final totalIn = SessionService.playerTotalIn(session.id, player.id);
     final totalOut = SessionService.playerTotalCashOut(session.id, player.id);
     final netResult = SessionService.playerProfitLoss(session.id, player.id);
+    final cashedOut = SessionService.hasCashedOut(session.id, player.id);
+    final resultVisual = PlayerResultVisuals.of(
+      occupied: true,
+      hasCashedOut: cashedOut,
+      profitLoss: netResult,
+    );
     final rebuysUsed = SessionService.rebuyCountForPlayer(session.id, player.id);
 
     return Scaffold(
@@ -327,7 +340,8 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(
                 builder: (_) =>
-                    PlayerHistoryScreen(playerName: player.name),
+                    PlayerHistoryScreen(
+                        playerName: player.name, personId: player.personId),
               ),
             ),
           ),
@@ -354,7 +368,7 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
                   _infoRow(
                     'Net Result',
                     '${netResult >= 0 ? '+' : ''}${fmt.format(netResult)}',
-                    valueColor: netResult >= 0 ? AppColors.accentGreen : AppColors.danger,
+                    valueColor: PlayerResultVisuals.amountColor(resultVisual),
                   ),
                   if (rebuysUsed > 0 || session.currentLevel > 1) ...[
                     const SizedBox(height: 6),
@@ -375,6 +389,12 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
               playerId: player.id,
               sessionId: session.id,
               currency: session.currency,
+            ),
+            const SizedBox(height: 10),
+            DiscountReviewTile(
+              sessionId: session.id,
+              currency: session.currency,
+              player: player,
             ),
             const SizedBox(height: 12),
 

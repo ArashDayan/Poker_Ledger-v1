@@ -65,7 +65,9 @@ class _SessionShellScreenState extends State<SessionShellScreen> {
     super.initState();
     final session = HiveService.sessions.get(widget.sessionId);
     if (session != null) {
-      context.read<SessionProvider>().loadSession(session);
+      final provider = context.read<SessionProvider>();
+      provider.loadSession(session);
+      provider.retryFailedWatchers();
     }
     // Drives the live timer on the Dashboard tab without every tab needing
     // its own ticker.

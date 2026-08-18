@@ -17,15 +17,25 @@ import '../../models/enums.dart';
 /// Read-only: this screen never writes to the ledger. It aggregates
 /// transactions that already exist, so it cannot affect settlement.
 class PlayerHistoryScreen extends StatelessWidget {
-  /// The player's name — careers are grouped by name, since a Player row
-  /// belongs to a single session (see PlayerHistoryService).
+  /// Display name. Used only when [personId] is missing (legacy seats).
   final String playerName;
 
-  const PlayerHistoryScreen({super.key, required this.playerName});
+  /// Permanent identity. When set, session history and the Financial
+  /// Account are this person only.
+  final String? personId;
+
+  const PlayerHistoryScreen({
+    super.key,
+    required this.playerName,
+    this.personId,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final career = PlayerHistoryService.careerForName(playerName);
+    final career = (personId != null && personId!.isNotEmpty)
+        ? PlayerHistoryService.careerForPersonId(personId!,
+            fallbackName: playerName)
+        : PlayerHistoryService.careerForName(playerName);
     final fmt = CurrencyFormatter(career.currency);
     final mixed = !career.hasConsistentCurrency;
 
@@ -46,6 +56,14 @@ class PlayerHistoryScreen extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
               children: [
                 _headline(career, fmt, mixed),
+                if (career.isLegacyNameGroup) ...[
+                  const SizedBox(height: 10),
+                  Text(tr('identity_legacy_history_note'),
+                      style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                          height: 1.35)),
+                ],
                 const SizedBox(height: 12),
                 _financialAccountEntry(context),
                 const SizedBox(height: 14),
@@ -78,23 +96,9 @@ class PlayerHistoryScreen extends StatelessWidget {
   }
 
   Widget _financialAccountEntry(BuildContext context) {
-    final matches = PlayerIdentityService.suggest(playerName);
-    if (matches.isEmpty) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: AppColors.surfaceElevated,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.divider),
-        ),
-        child: Text(tr('not_recorded_no_identity'),
-            style: const TextStyle(
-                fontSize: 12, color: AppColors.textSecondary, height: 1.35)),
-      );
-    }
-    if (matches.length == 1) {
-      final identity = matches.single;
+    final linkedId = personId;
+    if (linkedId != null && linkedId.isNotEmpty) {
+      final identity = PlayerIdentityService.byId(linkedId);
       return ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 12),
         shape: RoundedRectangleBorder(
@@ -105,42 +109,33 @@ class PlayerHistoryScreen extends StatelessWidget {
         leading: const Icon(Icons.account_balance_wallet_outlined,
             color: AppColors.gold),
         title: Text(tr('view_financial_account')),
-        subtitle: Text(tr('outstanding_balance'),
-            style: const TextStyle(fontSize: 11)),
+        subtitle: Text(
+          identity?.displayName ?? playerName,
+          style: const TextStyle(fontSize: 11),
+        ),
         trailing: const Icon(Icons.chevron_right, color: AppColors.textSecondary),
         onTap: () => Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => PlayerAccountScreen(
-            personId: identity.id,
-            displayName: identity.displayName,
+            personId: linkedId,
+            displayName: identity?.displayName ?? playerName,
           ),
         )),
       );
     }
-    return Column(
-      children: matches
-          .map((identity) => Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: const BorderSide(color: AppColors.divider),
-                  ),
-                  tileColor: AppColors.surfaceElevated,
-                  leading: const Icon(Icons.account_balance_wallet_outlined,
-                      color: AppColors.gold),
-                  title: Text(identity.displayName),
-                  subtitle: Text(tr('view_financial_account'),
-                      style: const TextStyle(fontSize: 11)),
-                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => PlayerAccountScreen(
-                      personId: identity.id,
-                      displayName: identity.displayName,
-                    ),
-                  )),
-                ),
-              ))
-          .toList(),
+
+    // Unlinked / legacy seats stay unlinked. A name match is not a
+    // personId — opening an account here would silently pick an identity.
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceElevated,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Text(tr('not_recorded_no_identity'),
+          style: const TextStyle(
+              fontSize: 12, color: AppColors.textSecondary, height: 1.35)),
     );
   }
 
@@ -160,9 +155,10 @@ class PlayerHistoryScreen extends StatelessWidget {
           // Classification and access status, stated before the numbers
           // so the banker sees WHO this is before HOW MUCH they are worth.
           Builder(builder: (_) {
-            final tag = PlayerRegistryService.tagForName(c.name);
+            final tag = PlayerRegistryService.tagForPersonId(c.personId, c.name);
             final blacklisted =
-                PlayerRegistryService.isBlacklistedName(c.name);
+                PlayerRegistryService.statusForPersonId(c.personId, c.name)
+                    .isBlacklisted;
             if (tag == null && !blacklisted) return const SizedBox.shrink();
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),

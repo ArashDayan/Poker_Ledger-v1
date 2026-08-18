@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import '../models/player.dart';
 import '../models/session.dart';
 import '../models/transaction.dart';
+import '../services/box_watch_hub.dart';
 import '../services/hive_service.dart';
 import '../services/player_identity_service.dart';
 import '../services/session_service.dart';
@@ -44,45 +45,71 @@ class SessionProvider extends ChangeNotifier {
   /// well: it makes the update synchronous for the common path, while the
   /// watchers act as the safety net. Both are coalesced (see
   /// [_scheduleNotify]) so a burst of writes still causes only one rebuild.
-  final List<StreamSubscription> _boxSubscriptions = [];
+  late final BoxWatchHub _watchHub;
   bool _notifyScheduled = false;
   bool _disposed = false;
+  int _revision = 0;
 
   SessionProvider() {
-    _attachBoxWatchers();
+    _watchHub = BoxWatchHub(onEvent: _onBoxEvent);
+    attachWatchers();
   }
 
-  void _attachBoxWatchers() {
+  /// Monotonic counter incremented on every listener notify. Screens can
+  /// include it in a ValueKey so an IndexedStack child cannot keep a
+  /// stale Element when the ledger changes.
+  int get revision => _revision;
+
+  bool get watchersHealthy =>
+      _watchHub.isAttached('players') &&
+      _watchHub.isAttached('transactions') &&
+      _watchHub.isAttached('sessions');
+
+  Set<String> get attachedWatcherNames => _watchHub.attachedNames;
+  Set<String> get failedWatcherNames => _watchHub.failedNames;
+
+  void _onBoxEvent() {
+    _refreshCurrentFromBox();
+    _scheduleNotify();
+  }
+
+  void _refreshCurrentFromBox() {
+    if (_current == null) return;
     try {
-      _boxSubscriptions.addAll([
-        HiveService.players.watch().listen((_) => _scheduleNotify()),
-        HiveService.transactions.watch().listen((_) => _scheduleNotify()),
-        // The sessions watcher also refreshes the cached _current object.
-        // Hive can hand back a different instance after a write from
-        // another code path, and keeping the old one is how a stale
-        // session (old house rules, old table list, old timer state)
-        // survives until the banker reopens the session.
-        HiveService.sessions.watch().listen((event) {
-          if (_current != null && event.key == _current!.id) {
-            final fresh = HiveService.sessions.get(_current!.id);
-            if (fresh != null) _current = fresh;
-          }
-          _scheduleNotify();
-        }),
-      ]);
+      final fresh = HiveService.sessions.get(_current!.id);
+      if (fresh != null) _current = fresh;
     } catch (_) {
-      // Boxes not open (e.g. a unit test constructing the provider before
-      // Hive init). The explicit notifyListeners() calls still cover every
-      // mutation that goes through this class, so this is a degraded but
-      // fully working mode, never a crash.
+      // Box not readable; keep the in-memory session.
     }
-    // Separate try so a missing financial box cannot drop the seating
-    // / chip-ledger watchers. Notify only — no accounting is read here.
-    try {
-      _boxSubscriptions.add(
-        HiveService.financialEvents.watch().listen((_) => _scheduleNotify()),
-      );
-    } catch (_) {}
+  }
+
+  /// Attach (or retry) Hive watchers one box at a time.
+  ///
+  /// Safe to call repeatedly. Used from the constructor, [loadSession]
+  /// and [reloadCurrent] so a cold start that constructed this provider
+  /// before a box was open does not stay permanently stale.
+  bool attachWatchers() {
+    if (_disposed) return false;
+    _watchHub.attach('players', () => HiveService.players.watch());
+    _watchHub.attach('transactions', () => HiveService.transactions.watch());
+    _watchHub.attach('sessions', () {
+      return HiveService.sessions.watch().map((event) {
+        if (_current != null && event.key == _current!.id) {
+          _refreshCurrentFromBox();
+        }
+        return event;
+      });
+    });
+    _watchHub.attach(
+        'financialEvents', () => HiveService.financialEvents.watch());
+    return watchersHealthy;
+  }
+
+  /// Re-attempts any watcher that failed last time. Not a poll loop —
+  /// called when a session is opened or the banker returns to the shell.
+  bool retryFailedWatchers() {
+    attachWatchers();
+    return watchersHealthy;
   }
 
   /// Coalesces a burst of box events into a single rebuild.
@@ -96,7 +123,10 @@ class SessionProvider extends ChangeNotifier {
     _notifyScheduled = true;
     scheduleMicrotask(() {
       _notifyScheduled = false;
-      if (!_disposed) notifyListeners();
+      if (!_disposed) {
+        _revision++;
+        notifyListeners();
+      }
     });
   }
 
@@ -107,16 +137,17 @@ class SessionProvider extends ChangeNotifier {
   /// up by the watchers, but calling this makes the refresh immediate
   /// rather than a microtask later.
   void refresh() {
-    if (!_disposed) notifyListeners();
+    if (_disposed) return;
+    attachWatchers();
+    _refreshCurrentFromBox();
+    _revision++;
+    notifyListeners();
   }
 
   @override
   void dispose() {
     _disposed = true;
-    for (final sub in _boxSubscriptions) {
-      sub.cancel();
-    }
-    _boxSubscriptions.clear();
+    _watchHub.dispose();
     super.dispose();
   }
 
@@ -450,8 +481,9 @@ class SessionProvider extends ChangeNotifier {
   /// applied from a pushed screen) so the shell never renders a stale copy.
   void reloadCurrent() {
     if (_current == null) return;
-    final fresh = HiveService.sessions.get(_current!.id);
-    if (fresh != null) _current = fresh;
+    attachWatchers();
+    _refreshCurrentFromBox();
+    _revision++;
     notifyListeners();
   }
 

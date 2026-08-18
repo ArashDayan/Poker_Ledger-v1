@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/localization/app_localizations.dart';
+import '../core/player_result_visual.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/currency_formatter.dart';
 import '../models/player.dart';
@@ -24,6 +25,7 @@ class PlayerCard extends StatelessWidget {
   final double rebuy;
   final double cashOut;
   final double profitLoss;
+  final bool hasCashedOut;
   final CurrencyFormatter formatter;
   final VoidCallback onTap;
   final VoidCallback onToggleSettled;
@@ -43,6 +45,7 @@ class PlayerCard extends StatelessWidget {
     required this.rebuy,
     required this.cashOut,
     required this.profitLoss,
+    this.hasCashedOut = false,
     required this.formatter,
     required this.onTap,
     required this.onToggleSettled,
@@ -53,7 +56,11 @@ class PlayerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isUp = profitLoss >= 0;
+    final visual = PlayerResultVisuals.of(
+      occupied: true,
+      hasCashedOut: hasCashedOut,
+      profitLoss: profitLoss,
+    );
     final settled = !player.isActive;
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 3),
@@ -110,15 +117,19 @@ class PlayerCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    '${isUp ? '+' : ''}${formatter.format(profitLoss)}',
+                    '${profitLoss >= 0 ? '+' : ''}${formatter.format(profitLoss)}',
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 14,
-                      color: isUp ? AppColors.accentGreen : AppColors.danger,
+                      color: PlayerResultVisuals.amountColor(visual),
                     ),
                   ),
-                  Text(settled ? 'Settled' : 'Playing',
-                      style: const TextStyle(fontSize: 9.5, color: AppColors.textSecondary)),
+                  Text(
+                    hasCashedOut
+                        ? tr('settle_cashed_out')
+                        : (settled ? tr('settled') : tr('playing')),
+                    style: const TextStyle(fontSize: 9.5, color: AppColors.textSecondary),
+                  ),
                 ],
               ),
               if (onLedger != null)
