@@ -356,7 +356,12 @@ void main() {
       // The physical identity holds: every chip is somewhere.
       final report = ChipTrackingService.audit();
       expect(report.balances, isTrue);
-      expect(report.totalAccountedFor, startingValue);
+
+      final totalAccountedValue = report.lines.fold<double>(
+        0,
+        (sum, line) => sum + (line.accountedFor * line.chipValue),
+      );
+      expect(totalAccountedValue, startingValue);
       // Exchange changed composition, not value.
       expect(ChipTrackingService.playerHolding('p1').totalValue, 5000000);
     });

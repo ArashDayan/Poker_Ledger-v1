@@ -10,6 +10,7 @@ import 'package:hive/hive.dart';
 import 'package:poker_ledger/models/player.dart';
 import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
+import 'package:poker_ledger/core/localization/app_localizations.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/providers/session_provider.dart';
 import 'package:poker_ledger/services/hive_service.dart';
@@ -92,7 +93,7 @@ void main() {
     });
 
     test('Hive typeId 11 is PlayerIdentity', () {
-      expect(const PlayerIdentityAdapter().typeId, 11);
+      expect(PlayerIdentityAdapter().typeId, 11);
     });
   });
 

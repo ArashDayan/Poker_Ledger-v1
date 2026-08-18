@@ -350,7 +350,7 @@ void main() {
   });
 
   group('economic example and recovery', () {
-    test('canonical $1500 / $150 / $80 / $70 / house $1420', () async {
+    test('canonical \$1500 / \$150 / \$80 / \$70 / house \$1420', () async {
       final s = await _session('econ');
       await _cashIn(s.id, 1500);
       await RebateService.grant(
@@ -380,6 +380,7 @@ void main() {
       expect(plan.recoveryKind, RebateRecoveryKind.lostInPlay);
 
       await _cashOut(s.id, 80);
+      await Future.delayed(const Duration(milliseconds: 30));
       await RebateService.realizeCashOut(
         sessionId: s.id,
         personId: _personId,
@@ -409,7 +410,7 @@ void main() {
       );
     });
 
-    test('11. $150 grant + $80 cash-out recovers $70, player receives $80',
+    test('11. \$150 grant + \$80 cash-out recovers \$70, player receives \$80',
         () async {
       final s = await _session('s11', minLoss: 100);
       await _cashIn(s.id, 1500);
@@ -421,6 +422,7 @@ void main() {
         bustRealized: true,
       );
       await _cashOut(s.id, 80);
+      await Future.delayed(const Duration(milliseconds: 30));
       await RebateService.realizeCashOut(
         sessionId: s.id,
         personId: _personId,
@@ -468,9 +470,10 @@ void main() {
       expect(snap.houseRetained, 1500 - 2350);
     });
 
-    test('13. multiple cash-outs do not invent a second $150', () async {
+    test('13. multiple cash-outs do not invent a second \$150', () async {
       final s = await _session('s13');
       await _cashIn(s.id, 1500);
+      await Future.delayed(const Duration(milliseconds: 30));
       await RebateService.grant(
         sessionId: s.id,
         personId: _personId,
@@ -478,7 +481,9 @@ void main() {
         asChips: true,
         bustRealized: true,
       );
+      await Future.delayed(const Duration(milliseconds: 30));
       await _cashOut(s.id, 80);
+      await Future.delayed(const Duration(milliseconds: 30));
       await RebateService.realizeCashOut(
         sessionId: s.id,
         personId: _personId,
@@ -493,6 +498,7 @@ void main() {
       );
       expect(later.exposedBeforeMinor, 0);
       expect(later.returnedMinor, 0);
+      await Future.delayed(const Duration(milliseconds: 30));
       await _cashOut(s.id, 200);
       await RebateService.realizeCashOut(
         sessionId: s.id,
@@ -516,6 +522,7 @@ void main() {
         bustRealized: true,
       );
       await _cashOut(s.id, 80);
+      await Future.delayed(const Duration(milliseconds: 30));
       await RebateService.realizeCashOut(
         sessionId: s.id,
         personId: _personId,
@@ -787,7 +794,7 @@ void main() {
       expect(sug.blockReason, contains('realized'));
     });
 
-    test('12b. $0 bust realises loss and allows a grant', () async {
+    test('12b. \$0 bust realises loss and allows a grant', () async {
       final s = await _session('bust');
       await _cashIn(s.id, 1500);
       final plan = RebateService.previewRealization(
@@ -1202,7 +1209,7 @@ void main() {
   });
 
   group('D1/D2 compile and backup integrity', () {
-    test('unjournaled realization after cash-out is $70 lost in play',
+    test('unjournaled realization after cash-out is \$70 lost in play',
         () async {
       final s = await _session('pending');
       await _cashIn(s.id, 1500);
@@ -1213,6 +1220,8 @@ void main() {
         asChips: false,
         bustRealized: true,
       );
+      // Ensure the cash-out happens after the grant timestamp.
+      await Future.delayed(const Duration(milliseconds: 30));
       await _cashOut(s.id, 80);
       final pending = RebateService.unjournaledRealization(
         sessionId: s.id,
@@ -1281,7 +1290,7 @@ void main() {
       expect(copy.type, FinancialEventType.cashInForChips);
     });
 
-    test('restored grant keeps consumed base loss so the same $1500 is not rebated again',
+    test('restored grant keeps consumed base loss so the same \$1500 is not rebated again',
         () async {
       final s = await _session('restore');
       await _cashIn(s.id, 1500);
@@ -1357,6 +1366,7 @@ void main() {
       expect(plan.clawbackMinor, 0);
       expect(plan.returnedMinor, 7000);
       await _cashOut(s.id, 80);
+      await Future.delayed(const Duration(milliseconds: 30));
       await RebateService.realizeCashOut(
         sessionId: s.id,
         personId: _personId,
@@ -1686,6 +1696,8 @@ void main() {
         () async {
       final s = await _session('cancel');
       await grant1500(s.id);
+      // Ensure the cash-out happens after the grant timestamp.
+      await Future.delayed(const Duration(milliseconds: 30));
       await _cashOut(s.id, 200);
       final plan = RebateService.previewRealization(
         sessionId: s.id,
@@ -1895,6 +1907,7 @@ void main() {
       );
       // Cycle 1: lose 2,000 → Discount 200.
       await _cashIn(s.id, 2000);
+      await Future.delayed(const Duration(milliseconds: 30));
       await RebateService.grant(
         sessionId: s.id,
         personId: _personId,
@@ -1904,6 +1917,7 @@ void main() {
       );
       // Close cycle 1 with a dust cash-out (grant lost in play).
       await _cashOut(s.id, 0.01);
+      await Future.delayed(const Duration(milliseconds: 30));
       await RebateService.realizeCashOut(
         sessionId: s.id,
         personId: _personId,
@@ -1921,6 +1935,7 @@ void main() {
 
       // Cycle 2: another 1,000 lost → Discount 100.
       await _cashIn(s.id, 1000);
+      await Future.delayed(const Duration(milliseconds: 30));
       final sug2 = RebateService.suggest(
         sessionId: s.id,
         personId: _personId,
@@ -1940,6 +1955,7 @@ void main() {
         bustRealized: true,
       );
       await _cashOut(s.id, 0.01);
+      await Future.delayed(const Duration(milliseconds: 30));
       await RebateService.realizeCashOut(
         sessionId: s.id,
         personId: _personId,
@@ -1949,6 +1965,7 @@ void main() {
 
       // Cycle 3: another 5,000 lost → Discount 500.
       await _cashIn(s.id, 5000);
+      await Future.delayed(const Duration(milliseconds: 30));
       final sug3 = RebateService.suggest(
         sessionId: s.id,
         personId: _personId,

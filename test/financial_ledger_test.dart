@@ -10,6 +10,8 @@ import 'package:hive/hive.dart';
 import 'package:poker_ledger/core/localization/app_localizations.dart';
 import 'package:poker_ledger/models/enums.dart';
 import 'package:poker_ledger/models/financial_event.dart';
+import 'package:poker_ledger/models/chip_type.dart';
+import 'package:poker_ledger/models/chip_movement.dart';
 import 'package:poker_ledger/models/player.dart';
 import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
@@ -35,6 +37,8 @@ Future<void> _open() async {
   await Hive.openBox(HiveService.settingsBox);
   await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
   await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
+  await Hive.openBox<ChipType>(HiveService.chipsBox);
+  await Hive.openBox<ChipMovement>(HiveService.chipMovementsBox);
   final identity = await PlayerIdentityService.createNew('Ali');
   _personId = identity!.id;
 }
@@ -79,9 +83,9 @@ void main() {
 
   group('model / storage contract', () {
     test('typeIds 12–14 are the approved mapping', () {
-      expect(const FinancialEventAdapter().typeId, 12);
-      expect(const FinancialEventTypeAdapter().typeId, 13);
-      expect(const PaymentMethodAdapter().typeId, 14);
+      expect(FinancialEventAdapter().typeId, 12);
+      expect(FinancialEventTypeAdapter().typeId, 13);
+      expect(PaymentMethodAdapter().typeId, 14);
     });
 
     test('USD exponent is 2 and Toman exponent is 0', () {

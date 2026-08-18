@@ -181,6 +181,8 @@ class FinancialLedgerService {
       reason: reason,
       baseLossMinor: baseLossMinor,
       grantedAsChips: grantedAsChips,
+      grantPercent: grantPercent,
+      cycleIndex: cycleIndex,
     );
     await HiveService.financialEvents.put(event.id, event);
     return event;

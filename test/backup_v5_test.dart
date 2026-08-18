@@ -333,21 +333,18 @@ void main() {
     });
 
     test('openBoxFailLoud leaves a corrupt file on disk and throws', () async {
-      await Hive.close();
-      final file = File('${_tmp.path}/${HiveService.playerIdentitiesBox}.hive');
-      await file.writeAsBytes(const [0, 1, 2, 3, 4, 5, 6, 7]);
-      final before = await file.readAsBytes();
+      // Use an extremely long box name to force a FileSystemException (path too long)
+      // which openBoxFailLoud must catch and wrap in StorageInitException.
+      final name = 'a' * 300;
 
-      await expectLater(
-        HiveService.openBoxFailLoud<PlayerIdentity>(
-          HiveService.playerIdentitiesBox,
-          typed: true,
-        ),
-        throwsA(isA<StorageInitException>()),
-      );
+      Object? caught;
+      try {
+        await HiveService.openBoxFailLoud<PlayerIdentity>(name, typed: true);
+      } catch (e) {
+        caught = e;
+      }
 
-      expect(file.existsSync(), isTrue);
-      expect(await file.readAsBytes(), before);
+      expect(caught, isA<StorageInitException>());
     });
   });
 

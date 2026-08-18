@@ -1117,9 +1117,13 @@ class RebateService {
         .where((e) => !e.isReversal && !reversed.contains(e.id))
         .toList()
       ..sort((a, b) {
-        final byTime = a.occurredAt.compareTo(b.occurredAt);
-        if (byTime != 0) return byTime;
-        return a.createdAt.compareTo(b.createdAt);
+        final byOccurred = a.occurredAt.compareTo(b.occurredAt);
+        if (byOccurred != 0) return byOccurred;
+        final byCreated = a.createdAt.compareTo(b.createdAt);
+        if (byCreated != 0) return byCreated;
+        // Same millisecond: ensure cash flow is processed BEFORE the
+        // grant that consumes it, and grant BEFORE the recovery.
+        return a.type.index.compareTo(b.type.index);
       });
   }
 

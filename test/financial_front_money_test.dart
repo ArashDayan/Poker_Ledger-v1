@@ -74,7 +74,7 @@ void main() {
   tearDown(_close);
 
   group('deposit writes', () {
-    test('deposit $1000 is held and is not cashInForChips', () async {
+    test('deposit \$1000 is held and is not cashInForChips', () async {
       final e = await FinancialCapture.recordFrontMoneyIn(
         personId: _personId,
         currency: AppCurrency.usd,
