@@ -8,27 +8,19 @@ import 'signature_pad.dart';
 
 /// Asks how chips just issued were funded. Never infers from Buy-in.
 ///
-/// Dismissing the sheet returns [ChipFunding.notRecorded] so a cancelled
-/// prompt cannot invent a payment. Marker collects a signature here.
-Future<ChipFundingChoice> askChipFunding(
+/// Returns null when the banker presses Back, Cancel, or dismisses the
+/// sheet. That is abort — never a silent [ChipFunding.notRecorded].
+/// "Skip — not recorded" is only written when they tap that option.
+Future<ChipFundingChoice?> askChipFunding(
   BuildContext context, {
   required CurrencyFormatter formatter,
   required double amount,
 }) async {
-  final result = await showModalBottomSheet<ChipFundingChoice>(
+  return showModalBottomSheet<ChipFundingChoice>(
     context: context,
     isScrollControlled: true,
     builder: (ctx) => _FundingSheet(formatter: formatter, amount: amount),
   );
-  return result ??
-      const ChipFundingChoice(ChipFunding.notRecorded);
-}
-
-class ChipFundingChoice {
-  final ChipFunding funding;
-  final String? markerSignature;
-
-  const ChipFundingChoice(this.funding, {this.markerSignature});
 }
 
 class _FundingSheet extends StatefulWidget {
@@ -107,6 +99,10 @@ class _FundingSheetState extends State<_FundingSheet> {
                 const ChipFundingChoice(ChipFunding.notRecorded),
               ),
             ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(tr('cancel')),
+            ),
             if (_signingMarker) ...[
               const SizedBox(height: 12),
               Text(tr('marker_sign_hint'),
@@ -183,14 +179,19 @@ class _FundingSheetState extends State<_FundingSheet> {
 }
 
 /// Asks how a chip cash-out was settled. Symmetric with [askChipFunding].
-Future<ChipCashOutFunding> askChipCashOutFunding(
+///
+/// A positive amount requires an explicit choice. Back / Cancel /
+/// dismiss returns null so the caller can abort the cash-out instead of
+/// committing it. A $0 bust has nothing to fund and returns
+/// [ChipCashOutFunding.notRecorded] without opening a sheet.
+Future<ChipCashOutFunding?> askChipCashOutFunding(
   BuildContext context, {
   required CurrencyFormatter formatter,
   required double amount,
 }) async {
   if (amount <= 0) return ChipCashOutFunding.notRecorded;
 
-  final result = await showModalBottomSheet<ChipCashOutFunding>(
+  return showModalBottomSheet<ChipCashOutFunding>(
     context: context,
     builder: (ctx) => Padding(
       padding: EdgeInsets.only(
@@ -242,10 +243,13 @@ Future<ChipCashOutFunding> askChipCashOutFunding(
             onTap: () =>
                 Navigator.pop(ctx, ChipCashOutFunding.notRecorded),
           ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(tr('cancel')),
+          ),
           const SizedBox(height: 8),
         ],
       ),
     ),
   );
-  return result ?? ChipCashOutFunding.notRecorded;
 }

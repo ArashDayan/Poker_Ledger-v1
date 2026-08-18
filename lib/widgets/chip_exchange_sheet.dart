@@ -8,6 +8,8 @@ import '../models/chip_movement.dart';
 import '../models/enums.dart';
 import '../models/player.dart';
 import '../providers/chip_bank_provider.dart';
+import '../services/chip_bank_service.dart';
+import '../services/chip_exchange_rules.dart';
 import '../services/chip_tracking_service.dart';
 import 'chip_holding_adjustment_sheet.dart';
 import 'chip_picker_list.dart';
@@ -84,6 +86,13 @@ class _ChipExchangeSheetState extends State<_ChipExchangeSheet> {
     super.initState();
     _player = widget.initialPlayer ??
         (widget.players.length == 1 ? widget.players.first : null);
+    // Live types from Hive — do not trust a stale empty provider cache.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        context.read<ChipBankProvider>().refresh();
+      } catch (_) {}
+    });
   }
 
   /// Plain lookup rather than `firstOrNull`, which lives in
@@ -96,41 +105,25 @@ class _ChipExchangeSheetState extends State<_ChipExchangeSheet> {
     return null;
   }
 
-  double get _givenValue => ChipTrackingService.valueOf(_given);
-  double get _receivedValue => ChipTrackingService.valueOf(_received);
+  double get _givenValue => ChipExchangeRules.givenValue(_given);
+  double get _receivedValue => ChipExchangeRules.receivedValue(_received);
 
-  bool get _balanced =>
-      _givenValue > 0 && (_givenValue - _receivedValue).abs() < 0.005;
+  bool get _balanced => ChipExchangeRules.isBalanced(_given, _received);
 
-  /// The bank must actually hold what it is being asked to hand back.
-  /// Unlike a buy-in this is a hard gate: an exchange the bank cannot
-  /// physically perform is not a warning, it simply did not happen.
-  bool get _bankCanCover {
-    for (final e in _received.entries) {
-      if (e.value > ChipTrackingService.quantityAt(ChipLocation.bank, e.key)) {
-        return false;
-      }
-    }
-    return true;
-  }
+  bool get _bankCanCover => ChipExchangeRules.bankCanCover(_received);
 
-  /// Likewise the player must hold the chips they are handing over.
   bool get _playerCanCover {
     final p = _player;
     if (p == null) return false;
-    for (final e in _given.entries) {
-      final held = ChipTrackingService.quantityAt(
-          ChipLocation.player(p.id), e.key);
-      if (e.value > held) return false;
-    }
-    return true;
+    return ChipExchangeRules.playerCanCover(p.id, _given);
   }
 
   bool get _canConfirm =>
-      _player != null &&
-      _balanced &&
-      _bankCanCover &&
-      _playerCanCover &&
+      ChipExchangeRules.canConfirm(
+        playerId: _player?.id,
+        given: _given,
+        received: _received,
+      ) &&
       !_saving;
 
   /// The player's full recorded holding value, shown so the banker can
@@ -186,8 +179,10 @@ class _ChipExchangeSheetState extends State<_ChipExchangeSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<ChipBankProvider>();
-    final chips = provider.chips;
+    context.watch<ChipBankProvider>();
+    // Always the live Chip Bank types. A stale empty cache is why this
+    // sheet used to look like a zeroed summary with no inputs.
+    final chips = ChipBankService.allChips();
     final fmt = CurrencyFormatter(widget.currency);
     final p = _player;
 
@@ -315,8 +310,32 @@ class _ChipExchangeSheetState extends State<_ChipExchangeSheet> {
                       ],
                     ),
                   ),
+                  if (p != null) ...[
+                    const SizedBox(height: 6),
+                    ...ChipTrackingService.playerHolding(p.id).nonEmpty.map(
+                      (s) => Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: Text(
+                          '${fmt.formatRaw(s.chipValue)} × ${s.quantity}'
+                          '  =  ${fmt.formatRaw(s.totalValue)}',
+                          style: const TextStyle(
+                              fontSize: 11.5,
+                              color: AppColors.textSecondary),
+                        ),
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: _saving ? null : _openAdjustment,
+                        icon: const Icon(Icons.fact_check_outlined, size: 16),
+                        label: Text(tr('open_count_adjustment'),
+                            style: const TextStyle(fontSize: 12)),
+                      ),
+                    ),
+                  ],
 
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 10),
 
                   // --- Given to bank -----------------------------
                   _SideHeader(
@@ -329,14 +348,21 @@ class _ChipExchangeSheetState extends State<_ChipExchangeSheet> {
                     total: fmt.formatRaw(_givenValue),
                   ),
                   const SizedBox(height: 8),
-                  if (p != null)
+                  if (p != null && chips.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Text(tr('no_chips_yet'),
+                          style: const TextStyle(
+                              fontSize: 12, color: AppColors.warning)),
+                    )
+                  else if (p != null)
                     ChipPickerList(
                       chips: chips,
                       fmt: fmt,
                       selection: _given,
                       available: playerAvailable,
                       availableLabel: tr('player_holds'),
-                      hideUnavailable: true,
+                      hideUnavailable: false,
                       onChanged: (id, q) => setState(() {
                         if (q <= 0) {
                           _given.remove(id);

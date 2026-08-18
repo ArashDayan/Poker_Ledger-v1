@@ -222,8 +222,8 @@ class _ChipTransferSheetState extends State<_ChipTransferSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<ChipBankProvider>();
-    final chips = provider.chips;
+    context.watch<ChipBankProvider>();
+    final chips = ChipBankService.allChips();
     final fmt = CurrencyFormatter(widget.currency);
     final f = _from;
 

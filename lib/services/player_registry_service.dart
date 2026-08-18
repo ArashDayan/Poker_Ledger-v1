@@ -59,6 +59,8 @@ class PlayerRegistryService {
 
   static String keyFor(String name) => PlayerHistoryService.normaliseName(name);
 
+  static String personKey(String personId) => 'person:$personId';
+
   static Map<String, dynamic> _map(String bucket) {
     try {
       final raw = HiveService.settings.get(bucket);
@@ -85,21 +87,34 @@ class PlayerRegistryService {
           ? PlayerAccessStatus.blacklisted
           : PlayerAccessStatus.active;
 
+  static PlayerAccessStatus statusForPersonId(String? personId, String name) {
+    if (personId != null && personId.isNotEmpty) {
+      if (_map(_blacklistKey)[personKey(personId)] == true) {
+        return PlayerAccessStatus.blacklisted;
+      }
+    }
+    return statusForName(name);
+  }
+
   static PlayerAccessStatus statusFor(Player player) =>
-      statusForName(player.name);
+      statusForPersonId(player.personId, player.name);
 
   static bool isBlacklistedName(String name) =>
       statusForName(name).isBlacklisted;
 
-  static bool isBlacklisted(Player player) => isBlacklistedName(player.name);
+  static bool isBlacklisted(Player player) =>
+      statusForPersonId(player.personId, player.name).isBlacklisted;
 
   /// Bars a person from future seating.
   ///
   /// Writes ONE boolean against their name. No `Player` row, session,
   /// transaction or total is read or modified, which is what guarantees
   /// requirement 8: history is preserved exactly.
-  static Future<void> blacklist(String name, {String? note}) async {
-    final k = keyFor(name);
+  static Future<void> blacklist(String name,
+      {String? note, String? personId}) async {
+    final k = (personId != null && personId.isNotEmpty)
+        ? personKey(personId)
+        : keyFor(name);
     if (k.isEmpty) return;
     final m = _map(_blacklistKey)..[k] = true;
     await _write(_blacklistKey, m);
@@ -113,12 +128,19 @@ class PlayerRegistryService {
   ///
   /// Removes the flag rather than storing `false`, so an un-blacklisted
   /// person leaves no residue in storage. History is untouched.
-  static Future<void> unblacklist(String name) async {
-    final k = keyFor(name);
-    if (k.isEmpty) return;
-    final m = _map(_blacklistKey)..remove(k);
+  static Future<void> unblacklist(String name, {String? personId}) async {
+    final keys = <String>{keyFor(name)};
+    if (personId != null && personId.isNotEmpty) {
+      keys.add(personKey(personId));
+    }
+    final m = _map(_blacklistKey);
+    final n = _map(_noteKey);
+    for (final k in keys) {
+      if (k.isEmpty) continue;
+      m.remove(k);
+      n.remove(k);
+    }
     await _write(_blacklistKey, m);
-    final n = _map(_noteKey)..remove(k);
     await _write(_noteKey, n);
   }
 
@@ -150,6 +172,18 @@ class PlayerRegistryService {
   ///      the banker having to re-enter it;
   ///   3. null — unclassified, which is a valid state and is NOT
   ///      silently coerced to Regular.
+  static PlayerTag? tagForPersonId(String? personId, String name) {
+    if (personId != null && personId.isNotEmpty) {
+      final override = _map(_tagKey)[personKey(personId)];
+      if (override is int &&
+          override >= 0 &&
+          override < PlayerTag.values.length) {
+        return PlayerTag.values[override];
+      }
+    }
+    return tagForName(name);
+  }
+
   static PlayerTag? tagForName(String name) {
     final k = keyFor(name);
     if (k.isEmpty) return null;

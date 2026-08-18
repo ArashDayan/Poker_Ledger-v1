@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/localization/app_localizations.dart';
+import '../core/player_result_visual.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/currency_formatter.dart';
 import '../screens/player_account/player_account_screen.dart';
@@ -258,6 +259,11 @@ class SessionSettlementSummary extends StatelessWidget {
   ) {
     final pl = row.chipProfitLoss;
     final player = row.player;
+    final visual = PlayerResultVisuals.of(
+      occupied: true,
+      hasCashedOut: row.hasCashedOut,
+      profitLoss: pl,
+    );
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
@@ -297,9 +303,7 @@ class SessionSettlementSummary extends StatelessWidget {
                       '${pl >= 0 ? '+' : ''}${fmt.format(pl)}',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        color: pl >= 0
-                            ? AppColors.accentGreen
-                            : AppColors.danger,
+                        color: PlayerResultVisuals.amountColor(visual),
                       ),
                     ),
                   ],

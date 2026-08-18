@@ -6,7 +6,6 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
 import '../../services/player_history_service.dart';
-import '../../services/player_identity_service.dart';
 import '../../services/player_registry_service.dart';
 import '../../widgets/player_type_badge.dart';
 import '../player_account/player_account_screen.dart';
@@ -41,11 +40,13 @@ class _PlayersDirectoryScreenState extends State<PlayersDirectoryScreen> {
   List<PlayerCareer> _filtered(List<PlayerCareer> careers) {
     return careers.where((c) {
       if (_blacklistedOnly &&
-          !PlayerRegistryService.isBlacklistedName(c.name)) {
+          !PlayerRegistryService.statusForPersonId(c.personId, c.name)
+              .isBlacklisted) {
         return false;
       }
       if (_typeFilter == null) return true;
-      return PlayerRegistryService.tagForName(c.name) == _typeFilter;
+      return PlayerRegistryService.tagForPersonId(c.personId, c.name) ==
+          _typeFilter;
     }).toList();
   }
 
@@ -61,7 +62,7 @@ class _PlayersDirectoryScreenState extends State<PlayersDirectoryScreen> {
   /// Re-tapping the current type clears it, so "unclassified" stays a
   /// reachable state rather than a one-way door into a category.
   Future<void> _changeType(PlayerCareer c) async {
-    final current = PlayerRegistryService.tagForName(c.name);
+    final current = PlayerRegistryService.tagForPersonId(c.personId, c.name);
 
     await showModalBottomSheet<void>(
       context: context,
@@ -94,8 +95,8 @@ class _PlayersDirectoryScreenState extends State<PlayersDirectoryScreen> {
                     : null,
                 onTap: () async {
                   Navigator.pop(ctx);
-                  await PlayerRegistryService.setTagForName(
-                      c.name, current == t ? null : t);
+                  await PlayerRegistryService.setTagForPerson(
+                      c.personId, c.name, current == t ? null : t);
                   if (mounted) setState(() {});
                 },
               ),
@@ -131,23 +132,42 @@ class _PlayersDirectoryScreenState extends State<PlayersDirectoryScreen> {
       ),
     );
     if (confirmed != true) return;
-    await PlayerRegistryService.blacklist(c.name);
+    await PlayerRegistryService.blacklist(c.name, personId: c.personId);
     if (mounted) setState(() {});
   }
 
   /// Returns a player to Active. Historical data is untouched.
   Future<void> _unblacklist(PlayerCareer c) async {
-    await PlayerRegistryService.unblacklist(c.name);
+    await PlayerRegistryService.unblacklist(c.name, personId: c.personId);
     if (mounted) setState(() {});
   }
 
   List<PlayerCareer> _sorted(List<PlayerCareer> list) {
-    return list..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    list.sort((a, b) {
+      switch (_sort) {
+        case _Sort.name:
+          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        case _Sort.sessions:
+          return b.sessionsPlayed.compareTo(a.sessionsPlayed);
+        case _Sort.profit:
+          return b.netResult.compareTo(a.netResult);
+        case _Sort.recent:
+          final aLast = a.lastPlayed;
+          final bLast = b.lastPlayed;
+          if (aLast == null && bLast == null) {
+            return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+          }
+          if (aLast == null) return 1;
+          if (bLast == null) return -1;
+          return bLast.compareTo(aLast);
+      }
+    });
+    return list;
   }
 
   @override
   Widget build(BuildContext context) {
-    final careers = _sorted(_filtered(PlayerHistoryService.search(_query)));
+    final careers = _sorted(_filtered(PlayerHistoryService.searchBank(_query)));
 
     return Scaffold(
       appBar: AppBar(title: Text(tr('players'))),
@@ -307,8 +327,10 @@ class _PlayersDirectoryScreenState extends State<PlayersDirectoryScreen> {
     final mixed = !c.hasConsistentCurrency;
     final net = c.netResult;
     final up = net >= 0;
-    final tag = PlayerRegistryService.tagForName(c.name);
-    final blacklisted = PlayerRegistryService.isBlacklistedName(c.name);
+    final tag = PlayerRegistryService.tagForPersonId(c.personId, c.name);
+    final blacklisted =
+        PlayerRegistryService.statusForPersonId(c.personId, c.name)
+            .isBlacklisted;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 9),
@@ -319,7 +341,10 @@ class _PlayersDirectoryScreenState extends State<PlayersDirectoryScreen> {
           borderRadius: BorderRadius.circular(14),
           onTap: () => Navigator.of(context).push(
             MaterialPageRoute(
-              builder: (_) => PlayerHistoryScreen(playerName: c.name),
+              builder: (_) => PlayerHistoryScreen(
+              playerName: c.name,
+              personId: c.personId,
+            ),
             ),
           ),
           child: Container(
@@ -369,8 +394,12 @@ class _PlayersDirectoryScreenState extends State<PlayersDirectoryScreen> {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        '${c.sessionsPlayed} session${c.sessionsPlayed == 1 ? '' : 's'}'
-                        '${c.lastPlayed != null ? ' · last ${c.lastPlayed.toString().substring(0, 10)}' : ''}',
+                        c.hasPersistentIdentity
+                            ? '${c.sessionsPlayed} session${c.sessionsPlayed == 1 ? '' : 's'}'
+                                '${c.lastPlayed != null ? ' · last ${c.lastPlayed.toString().substring(0, 10)}' : ''}'
+                                ' · …${_idTail(c.personId!)}'
+                            : '${tr('identity_legacy_group')}'
+                                '${c.lastPlayed != null ? ' · last ${c.lastPlayed.toString().substring(0, 10)}' : ''}',
                         style: const TextStyle(
                             fontSize: 11, color: AppColors.textSecondary),
                       ),
@@ -421,12 +450,11 @@ class _PlayersDirectoryScreenState extends State<PlayersDirectoryScreen> {
                         _changeType(c);
                         break;
                       case 'account':
-                        final hits = PlayerIdentityService.suggest(c.name);
-                        if (hits.length == 1 && mounted) {
+                        if (c.hasPersistentIdentity && mounted) {
                           Navigator.of(context).push(MaterialPageRoute(
                             builder: (_) => PlayerAccountScreen(
-                              personId: hits.single.id,
-                              displayName: hits.single.displayName,
+                              personId: c.personId!,
+                              displayName: c.name,
                             ),
                           ));
                         }
@@ -440,7 +468,7 @@ class _PlayersDirectoryScreenState extends State<PlayersDirectoryScreen> {
                     }
                   },
                   itemBuilder: (_) => [
-                    if (PlayerIdentityService.suggest(c.name).length == 1)
+                    if (c.hasPersistentIdentity)
                       PopupMenuItem(
                         value: 'account',
                         child: Row(
@@ -496,4 +524,7 @@ class _PlayersDirectoryScreenState extends State<PlayersDirectoryScreen> {
       ),
     );
   }
+
+  String _idTail(String id) =>
+      id.length >= 4 ? id.substring(id.length - 4) : id;
 }

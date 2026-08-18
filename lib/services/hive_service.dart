@@ -153,6 +153,8 @@ class HiveService {
     }
   }
 
+  static bool isOpen(String name) => Hive.isBoxOpen(name);
+
   static Box<PokerSession> get sessions => Hive.box<PokerSession>(sessionsBox);
   static Box<Player> get players => Hive.box<Player>(playersBox);
   static Box<LedgerTransaction> get transactions =>

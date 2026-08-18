@@ -20,6 +20,15 @@ enum ChipCashOutFunding {
   notRecorded,
 }
 
+/// Explicit buy-in/rebuy funding choice, including an optional marker
+/// signature. A missing instance (null) means the banker aborted.
+class ChipFundingChoice {
+  final ChipFunding funding;
+  final String? markerSignature;
+
+  const ChipFundingChoice(this.funding, {this.markerSignature});
+}
+
 /// Maps an explicit banker choice onto a Financial Ledger write.
 ///
 /// Does not read Buy-in/Rebuy/cash-out totals. Does not call

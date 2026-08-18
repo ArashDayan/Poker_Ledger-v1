@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../core/player_result_visual.dart';
 import '../core/theme/app_theme.dart';
 import '../models/enums.dart';
 import '../models/player.dart';
@@ -100,11 +101,14 @@ class SeatData {
   final int seatNumber;
   final Player? player;
 
-  /// Net result, used only to tint the seat ring.
+  /// Running P/L. Result colour uses this only when [hasCashedOut].
   final double profitLoss;
 
-  /// True once the player has cashed out / left.
+  /// Host-marked left the table. Not the same as a cash-out.
   final bool settled;
+
+  /// SessionService.hasCashedOut — only then is P/L a final result.
+  final bool hasCashedOut;
 
   /// Formatted money line (already privacy-masked by the caller).
   final String? moneyLabel;
@@ -121,6 +125,7 @@ class SeatData {
     this.player,
     this.profitLoss = 0,
     this.settled = false,
+    this.hasCashedOut = false,
     this.moneyLabel,
     this.enabled = true,
   });
@@ -435,11 +440,11 @@ class SeatWidget extends StatelessWidget {
   Color get _ring {
     if (!data.enabled) return AppColors.divider;
     if (tableClosed) return AppColors.divider;
-    if (data.isEmpty) return AppColors.divider;
-    if (data.settled) return AppColors.accentGreen;
-    if (data.profitLoss > 0) return AppColors.accentGreen;
-    if (data.profitLoss < 0) return AppColors.danger;
-    return AppColors.textSecondary;
+    return PlayerResultVisuals.ringColor(PlayerResultVisuals.of(
+      occupied: !data.isEmpty,
+      hasCashedOut: data.hasCashedOut,
+      profitLoss: data.profitLoss,
+    ));
   }
 
   @override

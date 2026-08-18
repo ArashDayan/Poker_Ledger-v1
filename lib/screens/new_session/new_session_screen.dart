@@ -135,6 +135,16 @@ class _NewSessionScreenState extends State<NewSessionScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_mode == SessionMode.cashGame && _rebateEnabled) {
+      final min = double.tryParse(_rebateMin.text.replaceAll(',', '')) ?? 0;
+      final pct = double.tryParse(_rebatePercent.text.replaceAll(',', '')) ?? 0;
+      if (min <= 0 || pct <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr('discount_config_incomplete'))),
+        );
+        return;
+      }
+    }
     final provider = context.read<SessionProvider>();
     final session = await provider.createSession(
       name: _name.text.trim(),
@@ -200,6 +210,101 @@ class _NewSessionScreenState extends State<NewSessionScreen> {
   /// symbol for whichever currency is currently selected in this form
   /// (USD as a prefix, Toman as a suffix — matches the convention used
   /// everywhere else amounts are entered in the app).
+  Widget _discountSetupCard() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceElevated,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: _rebateEnabled
+              ? AppColors.gold.withValues(alpha: 0.55)
+              : AppColors.divider,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.percent, size: 18, color: AppColors.gold),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(tr('rebate_title'),
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 15)),
+              ),
+              Text(
+                _rebateEnabled ? tr('discount_on') : tr('discount_off'),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: _rebateEnabled
+                      ? AppColors.gold
+                      : AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(tr('discount_setup_hint'),
+              style: const TextStyle(
+                  fontSize: 11.5, color: AppColors.textSecondary, height: 1.35)),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(tr('rebate_enabled')),
+            subtitle: Text(
+              _rebateEnabled
+                  ? tr('discount_on_hint')
+                  : tr('discount_off_hint'),
+              style: const TextStyle(fontSize: 11),
+            ),
+            value: _rebateEnabled,
+            onChanged: (v) => setState(() => _rebateEnabled = v),
+          ),
+          if (_rebateEnabled) ...[
+            TextFormField(
+              controller: _rebateMin,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: _moneyDecoration(tr('rebate_min_loss')),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _rebatePercent,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(labelText: tr('rebate_percent')),
+            ),
+            const SizedBox(height: 12),
+            InkWell(
+              onTap: _pickPlannedEnd,
+              child: InputDecorator(
+                decoration: InputDecoration(
+                  labelText: tr('session_period_end'),
+                  helperText: tr('session_period_hint'),
+                  suffixIcon: _plannedEndAt == null
+                      ? null
+                      : IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () =>
+                              setState(() => _plannedEndAt = null),
+                        ),
+                ),
+                child: Text(
+                  _plannedEndAt == null
+                      ? tr('session_period_not_set')
+                      : '${_plannedEndAt!.toLocal()}'.substring(0, 16),
+                  style: const TextStyle(color: AppColors.textPrimary),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   InputDecoration _moneyDecoration(String label, {String? hint}) {
     final fmt = CurrencyFormatter(_currency);
     return InputDecoration(
@@ -473,54 +578,8 @@ class _NewSessionScreenState extends State<NewSessionScreen> {
               ),
             ],
             if (_mode == SessionMode.cashGame) ...[
-              const SizedBox(height: 22),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(tr('rebate_enabled')),
-                subtitle: Text(tr('rebate_hint'),
-                    style: const TextStyle(fontSize: 11)),
-                value: _rebateEnabled,
-                onChanged: (v) => setState(() => _rebateEnabled = v),
-              ),
-              if (_rebateEnabled) ...[
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: _rebateMin,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: _moneyDecoration(tr('rebate_min_loss')),
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _rebatePercent,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(labelText: tr('rebate_percent')),
-                ),
-                const SizedBox(height: 12),
-                InkWell(
-                  onTap: _pickPlannedEnd,
-                  child: InputDecorator(
-                    decoration: InputDecoration(
-                      labelText: tr('session_period_end'),
-                      helperText: tr('session_period_hint'),
-                      suffixIcon: _plannedEndAt == null
-                          ? null
-                          : IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: () =>
-                                  setState(() => _plannedEndAt = null),
-                            ),
-                    ),
-                    child: Text(
-                      _plannedEndAt == null
-                          ? tr('session_period_not_set')
-                          : '${_plannedEndAt!.toLocal()}'.substring(0, 16),
-                      style: const TextStyle(color: AppColors.textPrimary),
-                    ),
-                  ),
-                ),
-              ],
+              const SizedBox(height: 24),
+              _discountSetupCard(),
             ],
             const SizedBox(height: 24),
             ElevatedButton(onPressed: _submit, child: Text(tr('create_session'))),

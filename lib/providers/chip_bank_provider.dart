@@ -3,6 +3,7 @@ import 'package:hive/hive.dart';
 
 import '../models/chip_movement.dart';
 import '../models/chip_type.dart';
+import '../services/box_watch_hub.dart';
 import '../services/chip_bank_service.dart';
 import '../services/chip_tracking_service.dart';
 import '../services/hive_service.dart';
@@ -25,9 +26,35 @@ enum ChipBankAlert {
 class ChipBankProvider extends ChangeNotifier {
   List<ChipType> _chips = const [];
   ChipBankSummary _summary = ChipBankSummary.empty;
+  late final BoxWatchHub _watchHub;
+  bool _disposed = false;
 
   ChipBankProvider({bool autoLoad = true}) {
+    _watchHub = BoxWatchHub(onEvent: () {
+      if (!_disposed) refresh();
+    });
+    attachWatchers();
     if (autoLoad) refresh();
+  }
+
+  bool get watchersHealthy =>
+      _watchHub.isAttached('chips') && _watchHub.isAttached('chipMovements');
+
+  Set<String> get failedWatcherNames => _watchHub.failedNames;
+
+  bool attachWatchers() {
+    if (_disposed) return false;
+    _watchHub.attach('chips', () => HiveService.chips.watch());
+    _watchHub.attach(
+        'chipMovements', () => HiveService.chipMovements.watch());
+    return watchersHealthy;
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _watchHub.dispose();
+    super.dispose();
   }
 
   List<ChipType> get chips => _chips;

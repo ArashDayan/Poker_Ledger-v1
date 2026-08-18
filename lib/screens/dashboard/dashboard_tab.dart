@@ -230,6 +230,7 @@ class DashboardTab extends StatelessWidget {
       rawDiscrepancy: balance.discrepancy,
       moneyStillInPlay: provider.moneyStillInPlay,
     );
+    final settlement = SessionSettlementView.load(session.id, session.currency);
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -398,10 +399,20 @@ class DashboardTab extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  _miniStat('Money In', fmt.format(balance.moneyIn)),
-                  _miniStat('Money Out', fmt.format(balance.moneyOut)),
-                  _miniStat('Current Pot', fmt.format(provider.moneyStillInPlay)),
+                  _miniStat(tr('money_in'), fmt.format(balance.moneyIn)),
+                  _miniStat(tr('money_out'), fmt.format(balance.moneyOut)),
+                  _miniStat(tr('current_pot'), fmt.format(provider.moneyStillInPlay)),
                 ],
+              ),
+              const SizedBox(height: 2),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '${tr('money_in_buyin_rebuy')} · ${tr('money_out_cashout_rake_tips')}',
+                  style: TextStyle(
+                      fontSize: 9.5,
+                      color: AppColors.textSecondary.withValues(alpha: 0.85)),
+                ),
               ),
               if (overlay != null) ...[
                 const SizedBox(height: 6),
@@ -428,22 +439,50 @@ class DashboardTab extends StatelessWidget {
               const SizedBox(height: 12),
               Row(
                 children: [
-                  _miniStat('Rake', fmt.format(provider.totalRake), color: AppColors.gold),
-                  // Stated on its own line, next to Rake but never added
-                  // to it. Host Profit below is rake alone.
+                  _miniStat(tr('rake'), fmt.format(provider.totalRake), color: AppColors.gold),
                   _miniStat(tr('dealer_tips'), fmt.format(provider.totalDealerTips),
                       color: AppColors.warning),
-                  _miniStat('Host Profit', fmt.format(provider.hostProfit),
+                  _miniStat(tr('host_profit'), fmt.format(provider.hostProfit),
                       color: AppColors.accentGreen),
                 ],
+              ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  tr('host_profit_is_rake_note'),
+                  style: TextStyle(
+                      fontSize: 9.5,
+                      color: AppColors.textSecondary.withValues(alpha: 0.85)),
+                ),
               ),
               const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerRight,
-                child: BalanceIndicator(result: balance, formatter: fmt),
+                child: BalanceIndicator(
+                  result: balance,
+                  formatter: fmt,
+                  discountChips: overlay,
+                ),
               ),
             ],
           ),
+        ),
+        const SizedBox(height: 14),
+        Text(tr('live_accounting_title'),
+            style: const TextStyle(
+                fontSize: 11,
+                letterSpacing: 1.1,
+                fontWeight: FontWeight.bold,
+                color: AppColors.textSecondary)),
+        const SizedBox(height: 4),
+        Text(tr('live_accounting_hint'),
+            style: const TextStyle(
+                fontSize: 11, color: AppColors.textSecondary, height: 1.35)),
+        const SizedBox(height: 8),
+        SessionSettlementSummary(
+          view: settlement,
+          formatter: fmt,
+          showPlayers: false,
         ),
         // Per-table financial breakdown — one card per table, in the same
         // visual language as the session summary above.
@@ -603,8 +642,8 @@ class _TableFinancialCard extends StatelessWidget {
           const SizedBox(height: 10),
           Row(
             children: [
-              _cell('Money In', fmt.format(summary.moneyIn)),
-              _cell('Money Out', fmt.format(summary.moneyOut)),
+              _cell(tr('money_in'), fmt.format(summary.moneyIn)),
+              _cell(tr('money_out'), fmt.format(summary.moneyOut)),
               // A CLOSED table no longer holds a pool of money, so it has
               // no Current Pot to state. Showing the arithmetic here
               // would be actively misleading: a settled table that took
@@ -615,7 +654,7 @@ class _TableFinancialCard extends StatelessWidget {
               // Rake transactions are untouched and still reconcile as
               // Money In = Money Out + Rake.
               _cell(
-                'Current Pot',
+                tr('current_pot'),
                 t.status.isClosed ? '—' : fmt.format(summary.currentPot),
                 color: t.status.isClosed ? AppColors.textSecondary : null,
               ),
@@ -624,11 +663,10 @@ class _TableFinancialCard extends StatelessWidget {
           const SizedBox(height: 10),
           Row(
             children: [
-              _cell('Rake', fmt.format(summary.rake), color: AppColors.gold),
-              // Beside Rake, never inside it. Host Profit is rake alone.
+              _cell(tr('rake'), fmt.format(summary.rake), color: AppColors.gold),
               _cell(tr('dealer_tips'), fmt.format(summary.dealerTips),
                   color: AppColors.warning),
-              _cell('Host Profit', fmt.format(summary.hostProfit),
+              _cell(tr('host_profit'), fmt.format(summary.hostProfit),
                   color: AppColors.accentGreen),
             ],
           ),
