@@ -23,6 +23,7 @@ android/.gradle/
 !PokerLedger-Licensed-Secure-v3.zip
 !PokerLedger-ChipBank-v4.zip
 !PokerLedger-ChipTracking-v5.zip
+!Poker_Ledger-v1-final-origin-master.zip
 
 # pubspec.lock is intentionally not committed here: audioplayers was added
 # after the original lock was generated, so the committed lock was stale
