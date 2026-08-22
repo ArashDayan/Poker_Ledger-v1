@@ -14,10 +14,13 @@ import '../../services/sound_service.dart';
 import '../../services/table_service.dart';
 import '../../widgets/quick_transaction_sheet.dart';
 import '../../widgets/chip_flow.dart';
+import '../../widgets/last_hand_summary.dart';
 import '../../widgets/poker_table_view.dart';
 import '../../widgets/quick_rake_sheet.dart';
 import '../../widgets/discount_review_entry.dart';
+import '../../widgets/record_hand_sheet.dart';
 import '../../widgets/table_selector_bar.dart';
+import '../history/hand_history_screen.dart';
 import '../players/players_tab.dart';
 import '../player_action/player_ledger_screen.dart';
 
@@ -315,6 +318,18 @@ class TableViewTab extends StatelessWidget {
             ),
           ),
           Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+            child: LastHandSummary(
+              hand: provider.lastHandAtActiveTable,
+              formatter: fmt,
+              tableName: table.name,
+              onRecord: table.status.isClosed
+                  ? null
+                  : () => _recordHand(context, provider),
+              onOpenHistory: () => _openHistory(context, session.id, table.id),
+            ),
+          ),
+          Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
             child: Text(
               tr('tap_seat_hint'),
@@ -326,5 +341,23 @@ class TableViewTab extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _recordHand(BuildContext context, SessionProvider provider) async {
+    final tableId = provider.activeTableId;
+    final hand = await showRecordHandSheet(context, tableId: tableId);
+    if (hand != null && context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(tr('hand_recorded'))));
+    }
+  }
+
+  void _openHistory(BuildContext context, String sessionId, String tableId) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => HandHistoryScreen(
+        sessionId: sessionId,
+        initialTableId: tableId,
+      ),
+    ));
   }
 }

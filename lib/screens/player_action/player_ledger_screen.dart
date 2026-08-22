@@ -5,10 +5,12 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/localization/enum_labels.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
+import '../../models/hand.dart';
 import '../../models/session.dart';
 import '../../models/player.dart';
 import '../../models/transaction.dart';
 import '../../providers/session_provider.dart';
+import '../../services/hand_service.dart';
 import '../../services/player_history_service.dart';
 import '../../services/table_service.dart';
 import '../../services/session_service.dart';
@@ -62,6 +64,8 @@ class PlayerLedgerScreen extends StatelessWidget {
           _summary(fmt, buyIn, rebuy, out, net, rake),
           const SizedBox(height: 12),
           _careerCard(career, fmt),
+          const SizedBox(height: 12),
+          ..._handsSection(session.id, live.id, fmt),
           const SizedBox(height: 18),
           Row(
             children: [

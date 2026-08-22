@@ -187,7 +187,7 @@ void main() {
 
     final payload = BackupService.exportPayload();
     expect(payload['formatVersion'], BackupService.formatVersion);
-    expect(BackupService.formatVersion, 7);
+    expect(BackupService.formatVersion, 8);
     final exported = (payload['bankCounts'] as List? ?? []).length;
     expect(exported, 1);
 

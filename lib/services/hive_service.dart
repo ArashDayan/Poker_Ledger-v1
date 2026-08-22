@@ -5,6 +5,7 @@ import '../models/bank_count.dart';
 import '../models/chip_movement.dart';
 import '../models/chip_type.dart';
 import '../models/financial_event.dart';
+import '../models/hand.dart';
 import '../models/player.dart';
 import '../models/player_identity.dart';
 import '../models/session.dart';
@@ -61,15 +62,20 @@ class HiveService {
   /// legs. typeId 15 (plus 18/19 enums) lives here.
   static const participationsBox = 'participations_box';
 
+  /// Completed hands (Phase 8). Fail-loud on corruption — a silent
+  /// wipe would erase pot history. typeIds 20–22 live here.
+  static const handsBox = 'hands_box';
+
   /// Boxes that must never be deleted to "recover". A corrupted identity,
-  /// financial, count-sheet or participation file is surfaced to the
-  /// banker; the bytes stay on disk so a backup can still be taken
-  /// off the device.
+  /// financial, count-sheet, participation or hand-history file is
+  /// surfaced to the banker; the bytes stay on disk so a backup can
+  /// still be taken off the device.
   static const Set<String> failLoudBoxes = {
     playerIdentitiesBox,
     financialEventsBox,
     bankCountsBox,
     participationsBox,
+    handsBox,
   };
 
   static Future<void> init() async {
@@ -102,6 +108,9 @@ class HiveService {
     Hive.registerAdapter(ParticipationStatusAdapter());
     Hive.registerAdapter(ParticipationCloseReasonAdapter());
     Hive.registerAdapter(BankCountAdapter());
+    Hive.registerAdapter(HandKindAdapter());
+    Hive.registerAdapter(HandStatusAdapter());
+    Hive.registerAdapter(HandAdapter());
 
     // Each box is opened independently and, if corrupted, individually
     // reset — a bad write killed mid-save in one box (e.g. a phone dying
@@ -123,6 +132,7 @@ class HiveService {
     await openBoxFailLoud<FinancialEvent>(financialEventsBox, typed: true);
     await openBoxFailLoud<BankCount>(bankCountsBox, typed: true);
     await openBoxFailLoud<TableParticipation>(participationsBox, typed: true);
+    await openBoxFailLoud<Hand>(handsBox, typed: true);
 
     // The Chip Bank screen must show what is LEFT in the case, not the
     // starting count. This teaches ChipBankService to fold the movement
@@ -212,4 +222,5 @@ class HiveService {
   static Box<BankCount> get bankCounts => Hive.box<BankCount>(bankCountsBox);
   static Box<TableParticipation> get participations =>
       Hive.box<TableParticipation>(participationsBox);
+  static Box<Hand> get hands => Hive.box<Hand>(handsBox);
 }

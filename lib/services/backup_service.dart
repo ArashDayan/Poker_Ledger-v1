@@ -5,6 +5,7 @@ import '../models/bank_count.dart';
 import '../models/chip_movement.dart';
 import '../models/chip_type.dart';
 import '../models/financial_event.dart';
+import '../models/hand.dart';
 import '../models/player.dart';
 import '../models/player_identity.dart';
 import '../models/session.dart';
@@ -75,13 +76,13 @@ class IdentityResolution {
 /// as stored" backup, meant to move data between devices or recover from
 /// an accidental data-clear.
 class BackupService {
-  /// Bumped to 7 (Phase 7) when table participations (`participations`)
-  /// were added to the portable payload. As with every earlier bump:
-  /// older backups restore correctly — a missing block is simply
-  /// skipped and the current data for it is left alone; a newer
-  /// backup restored into an older app is likewise safe because the
-  /// unknown block is ignored.
-  static const formatVersion = 7;
+  /// Bumped to 8 (Phase 8) when completed hands (`hands`) were added
+  /// to the portable payload. As with every earlier bump: older
+  /// backups restore correctly — a missing block is simply skipped
+  /// and the current data for it is left alone; a newer backup
+  /// restored into an older app is likewise safe because the unknown
+  /// block is ignored.
+  static const formatVersion = 8;
 
   /// Kept so existing call sites that read the private-looking name
   /// still compile if any were copied; the public name is [formatVersion].
@@ -135,6 +136,8 @@ class BackupService {
       // Table participations (v7+): lifecycle + identity only (P-1);
       // money stays on the transactions block. Merges by id.
       'participations': _exportParticipations(),
+      // Completed hands (v8+): pot facts only. Merges by id.
+      'hands': _exportHands(),
       // Session JSON already carries tables, house rules, quick-rake
       // slots and timer state; player JSON carries seat, table id and
       // the sample signature; transaction JSON carries the captured
@@ -287,6 +290,23 @@ class BackupService {
       // the restore still applies.
     }
 
+    // Completed hands (v8+). Merges by id; a missing block (older
+    // backups) is skipped and the current hands are left alone.
+    var handsImported = 0;
+    try {
+      final hands = (data['hands'] as List? ?? [])
+          .cast<Map<String, dynamic>>()
+          .map(Hand.fromJson)
+          .toList();
+      for (final h in hands) {
+        await HiveService.hands.put(h.id, h);
+        handsImported++;
+      }
+    } catch (_) {
+      // Hands box unavailable (degraded mode): the rest of the
+      // restore still applies.
+    }
+
     // Preferences (v2+ backups only). Restoring an older backup leaves
     // the current settings untouched rather than resetting them.
     var settingsImported = 0;
@@ -323,7 +343,16 @@ class BackupService {
       financialEventsReserved: financialOutcome.skipped,
       bankCountsImported: bankCountsImported,
       participationsImported: participationsImported,
+      handsImported: handsImported,
     );
+  }
+
+  static List<Map<String, dynamic>> _exportHands() {
+    try {
+      return HiveService.hands.values.map((h) => h.toJson()).toList();
+    } catch (_) {
+      return const [];
+    }
   }
 
   static List<Map<String, dynamic>> _exportParticipations() {
@@ -538,6 +567,8 @@ class BackupImportResult {
   final int bankCountsImported;
   /// Table participations merged (v7+ payloads; 0 on older backups).
   final int participationsImported;
+  /// Completed hands merged (v8+ payloads; 0 on older backups).
+  final int handsImported;
 
   const BackupImportResult({
     this.formatVersion = 0,
@@ -555,6 +586,7 @@ class BackupImportResult {
     this.financialEventsReserved = 0,
     this.bankCountsImported = 0,
     this.participationsImported = 0,
+    this.handsImported = 0,
   });
 
   bool get requiresIdentityResolution => identityConflicts.isNotEmpty;

@@ -1,5 +1,6 @@
 import '../../models/enums.dart';
 import '../../models/financial_event.dart';
+import '../../models/hand.dart';
 import 'app_localizations.dart';
 
 /// Localized display names for the enums that appear in the UI.

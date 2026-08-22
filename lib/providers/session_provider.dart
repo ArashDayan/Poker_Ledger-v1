@@ -5,7 +5,9 @@ import 'package:uuid/uuid.dart';
 import '../models/player.dart';
 import '../models/session.dart';
 import '../models/transaction.dart';
+import '../models/hand.dart';
 import '../services/box_watch_hub.dart';
+import '../services/hand_service.dart';
 import '../services/hive_service.dart';
 import '../services/participation_service.dart';
 import '../services/player_identity_service.dart';
@@ -103,6 +105,7 @@ class SessionProvider extends ChangeNotifier {
     });
     _watchHub.attach(
         'financialEvents', () => HiveService.financialEvents.watch());
+    _watchHub.attach('hands', () => HiveService.hands.watch());
     return watchersHealthy;
   }
 
@@ -728,6 +731,51 @@ class SessionProvider extends ChangeNotifier {
   /// never counted again), NO chip movement (the held chips travel with
   /// the person), NO Financial Ledger event (no cash changes hands),
   /// and a NEW TableParticipation at the destination.
+
+  /// Latest non-voided hand at the table being viewed.
+  Hand? get lastHandAtActiveTable {
+    if (_current == null) return null;
+    return HandService.lastForTable(_current!.id, activeTableId);
+  }
+
+  Future<Hand> recordHand({
+    required String tableId,
+    required HandKind kind,
+    required List<HandResultDraft> drafts,
+    double? potAmount,
+    double rakeAmount = 0,
+    double houseWinAmount = 0,
+    String? note,
+    String? hostSignatureBase64,
+    Map<String, Map<String, int>>? postHandCounts,
+    Map<String, int>? rakeChips,
+    Map<String, Map<String, int>>? houseWinChipsByPlayer,
+  }) async {
+    if (_current == null) throw StateError('No active session.');
+    final hand = await HandService.record(
+      sessionId: _current!.id,
+      tableId: tableId,
+      kind: kind,
+      drafts: drafts,
+      potAmount: potAmount,
+      rakeAmount: rakeAmount,
+      houseWinAmount: houseWinAmount,
+      note: note,
+      hostSignatureBase64: hostSignatureBase64,
+      postHandCounts: postHandCounts,
+      rakeChips: rakeChips,
+      houseWinChipsByPlayer: houseWinChipsByPlayer,
+    );
+    notifyListeners();
+    return hand;
+  }
+
+  Future<Hand> voidHand(String handId) async {
+    final hand = await HandService.voidHand(handId);
+    notifyListeners();
+    return hand;
+  }
+
   Future<LedgerTransaction> reenterWithHeldChips(
     Player player,
     String tableId, {

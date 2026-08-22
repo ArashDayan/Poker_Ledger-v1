@@ -7,8 +7,10 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 import '../models/enums.dart';
 import '../models/financial_event.dart';
+import '../models/hand.dart';
 import '../models/session.dart';
 import 'financial_ledger_service.dart';
+import 'hand_service.dart';
 import 'rebate_service.dart';
 import 'table_service.dart';
 import 'report_service.dart';
@@ -275,6 +277,7 @@ class ExportService {
             }).toList(),
           ),
           ),
+          ..._handHistoryPdfSection(session, fmt),
           pw.Padding(
             padding: const pw.EdgeInsets.symmetric(horizontal: 18),
             child: _footerNote(),
@@ -327,6 +330,7 @@ class ExportService {
         ],
       ],
       ..._rebateCsvFooter(session),
+      ..._handHistoryCsvSection(session),
     ];
     final csv = const ListToCsvConverter().convert(rows);
     final dir = await getApplicationDocumentsDirectory();

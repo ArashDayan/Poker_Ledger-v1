@@ -48,14 +48,16 @@ void main() {
   tearDown(_close);
 
   group('format and whitelist', () {
-    test('export is format version 7 (Phase 7: participations)', () {
+    test('export is format version 8 (Phase 8: hands)', () {
       final payload = BackupService.exportPayload();
-      expect(payload['formatVersion'], 7);
-      expect(BackupService.formatVersion, 7);
+      expect(payload['formatVersion'], 8);
+      expect(BackupService.formatVersion, 8);
       // Count sheets ride along for restore on a new device.
       expect(payload.containsKey('bankCounts'), isTrue);
       // Table participations ride along too (v7+).
       expect(payload.containsKey('participations'), isTrue);
+      // Completed hands ride along (v8+).
+      expect(payload.containsKey('hands'), isTrue);
     });
 
     test('export always includes identity and financial keys', () {
@@ -329,13 +331,14 @@ void main() {
   });
 
   group('C-3 fail-loud boxes are never reset', () {
-    test('failLoudBoxes lists identity, financial, counts, participations',
+    test('failLoudBoxes lists identity, financial, counts, participations, hands',
         () {
       expect(HiveService.failLoudBoxes, {
         HiveService.playerIdentitiesBox,
         HiveService.financialEventsBox,
         HiveService.bankCountsBox,
         HiveService.participationsBox,
+        HiveService.handsBox,
       });
       expect(HiveService.failLoudBoxes.contains(HiveService.sessionsBox),
           isFalse);
@@ -363,7 +366,7 @@ void main() {
       await PlayerIdentityService.createNew('Sara');
       final encoded = jsonEncode(BackupService.exportPayload());
       final decoded = jsonDecode(encoded) as Map<String, dynamic>;
-      expect(decoded['formatVersion'], 7);
+      expect(decoded['formatVersion'], 8);
       expect((decoded['playerIdentities'] as List), hasLength(1));
     });
   });

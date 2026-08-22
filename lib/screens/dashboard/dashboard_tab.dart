@@ -16,6 +16,7 @@ import '../../widgets/balance_indicator.dart';
 import '../../widgets/confirm_action_dialog.dart';
 import '../../widgets/session_settlement_summary.dart';
 import '../chip_bank/session_reconciliation_screen.dart';
+import '../history/hand_history_screen.dart';
 import '../house_rules/house_rules_screen.dart';
 import '../reports/reports_screen.dart';
 
@@ -538,6 +539,29 @@ class DashboardTab extends StatelessWidget {
               style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
         ],
         const SizedBox(height: 10),
+        if (provider.lastHandAtActiveTable != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => HandHistoryScreen(
+                    sessionId: session.id,
+                    initialTableId: provider.activeTableId,
+                    highlightHandId: provider.lastHandAtActiveTable!.id,
+                  ),
+                )),
+                child: Text(
+                  '${tr('last_hand')} · ${provider.activeTable.name} · '
+                  '#${provider.lastHandAtActiveTable!.handNumber} · '
+                  '${provider.lastHandAtActiveTable!.kind.localizedLabel}'
+                  '${provider.lastHandAtActiveTable!.rakeAmount > 0 ? ' · ${tr('rake')} ${fmt.format(provider.lastHandAtActiveTable!.rakeAmount)}' : ''}'
+                  '${provider.lastHandAtActiveTable!.houseWinAmount > 0 ? ' · ${tr('house_win')} ${fmt.format(provider.lastHandAtActiveTable!.houseWinAmount)}' : ''}',
+                ),
+              ),
+            ),
+          ),
         TextButton(onPressed: onViewHistory, child: Text(tr('view_full_timeline'))),
         const SizedBox(height: 6),
         if (isEnded)

@@ -15,6 +15,7 @@ import '../../services/table_service.dart';
 import '../../widgets/chip_flow.dart';
 import '../../widgets/quick_rake_sheet.dart';
 import '../../widgets/quick_transaction_sheet.dart';
+import '../../widgets/record_hand_sheet.dart';
 
 /// Fast action center: the big buttons a banker reaches for constantly —
 /// buy-in/rebuy/cash-out (pick a player, then the quick sheet), plus the
@@ -167,6 +168,18 @@ class TransactionsTab extends StatelessWidget {
     }
   }
 
+  Future<void> _recordHand(BuildContext context) async {
+    final provider = context.read<SessionProvider>();
+    final hand = await showRecordHandSheet(
+      context,
+      tableId: provider.activeTableId,
+    );
+    if (hand != null && context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(tr('hand_recorded'))));
+    }
+  }
+
   /// Mode 2 — general session rake, no player ownership.
   Future<void> _collectRake(BuildContext context) =>
       showQuickRakeSheet(context);
@@ -305,6 +318,8 @@ class TransactionsTab extends StatelessWidget {
                 actionPlayers.isEmpty
                     ? null
                     : () => _playerTransaction(context, TransactionType.cashOut)),
+            _actionButton(context, tr('record_hand'), Icons.style_outlined, AppColors.gold,
+                () => _recordHand(context)),
             _actionButton(context, tr('collect_rake'), Icons.percent, AppColors.gold,
                 () => _collectRake(context)),
             _actionButton(context, tr('dealer_tips'), Icons.volunteer_activism,

@@ -1955,6 +1955,34 @@ class AppLocalizations {
       'host_profit_is_rake_note': 'سود میزبان برابر راک + برد کارتن است. تخفیف و انعام دیلر داخل آن نیست.',
       'session_chip_books': 'این نشست · دفتر ژتون',
       'chip_cashout_not_on_financial': 'تسویه ژتون در دفتر نشست هست، اما رویداد مالی نقد پرداخت‌شده ثبت نشده. این با تسویه‌شده بودن یکی نیست.',
+      // --- Phase 8: Hand History / Last Hand ---
+      'last_hand': 'دست آخر',
+      'hand_history': 'تاریخچه دست‌ها',
+      'record_hand': 'ثبت دست',
+      'hand_number': 'دست',
+      'hand_kind_poker': 'پوکر',
+      'hand_kind_house': 'بازی کارتن',
+      'hand_pot': 'پات',
+      'hand_rake': 'راک',
+      'hand_house_win': 'برد کارتن',
+      'hand_winner': 'برنده',
+      'hand_loser': 'بازنده',
+      'hand_chip_change': 'تغییر ژتون',
+      'no_hands_yet': 'در این میز دستی ثبت نشده است.',
+      'void_hand': 'ابطال دست',
+      'void_hand_confirm': 'این دست باطل شود؟ راک یا برد کارتن مرتبط باطل می‌شود. شماره دست‌های بعدی عوض نمی‌شود.',
+      'hand_conservation_error': 'تغییر ژتون بازیکنان + راک + برد کارتن باید صفر شود.',
+      'hand_rake_not_on_house': 'دست بازی کارتن نمی‌تواند راک پوکر ثبت کند.',
+      'hand_house_win_not_on_poker': 'دست پوکر نمی‌تواند برد کارتن ثبت کند.',
+      'last_hand_empty': 'در این میز دستی ثبت نشده است.',
+      'view_hand_history': 'تاریخچه دست‌ها',
+      'hand_voided': 'باطل شد',
+      'hand_include_player': 'در این دست',
+      'hand_recorded': 'دست ثبت شد.',
+      'hand_voided_snack': 'دست باطل شد.',
+      'hand_signature_hint': 'برد کارتن به امضای میزبان نیاز دارد.',
+      'hand_conservation_ok': 'تراز است',
+      'hand_split_pot': 'پات تقسیم‌شده',
     },
   };
 
@@ -1997,19 +2025,6 @@ bool get isRtlActive => _activeLanguageCode == 'fa';
 String tr(String key) => AppLocalizations.lookup(_activeLanguageCode, key);
 
 class AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {
-  const AppLocalizationsDelegate();
-
-  @override
-  bool isSupported(Locale locale) =>
-      AppLocalizations.supportedLocales.any((l) => l.languageCode == locale.languageCode);
-
-  @override
-  Future<AppLocalizations> load(Locale locale) async => AppLocalizations(locale);
-
-  @override
-  bool shouldReload(AppLocalizationsDelegate old) => false;
-}
-legate<AppLocalizations> {
   const AppLocalizationsDelegate();
 
   @override
