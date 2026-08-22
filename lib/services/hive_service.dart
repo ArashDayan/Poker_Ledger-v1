@@ -1,11 +1,16 @@
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
+
+import '../models/bank_count.dart';
 import '../models/chip_movement.dart';
 import '../models/chip_type.dart';
 import '../models/financial_event.dart';
 import '../models/player.dart';
 import '../models/player_identity.dart';
 import '../models/session.dart';
+import '../models/table_participation.dart';
 import '../models/transaction.dart';
+import 'chip_migration.dart';
 import 'chip_tracking_service.dart';
 
 /// Thrown when local storage genuinely cannot be initialized even after
@@ -46,12 +51,25 @@ class HiveService {
   /// wipe would erase who owes whom. typeIds 12–14 live here.
   static const financialEventsBox = 'financial_events_box';
 
-  /// Boxes that must never be deleted to "recover". A corrupted identity
-  /// or financial file is surfaced to the banker; the bytes stay on disk
-  /// so a backup can still be taken off the device.
+  /// Physical case count sheets (Phase 2b). Fail-loud on corruption —
+  /// a silent wipe would destroy the baseline history of the case
+  /// ledger. typeId 17 lives here.
+  static const bankCountsBox = 'bank_counts_box';
+
+  /// Table participations (Phase 6). Fail-loud on corruption — a
+  /// silent wipe would orphan the participation links on the money
+  /// legs. typeId 15 (plus 18/19 enums) lives here.
+  static const participationsBox = 'participations_box';
+
+  /// Boxes that must never be deleted to "recover". A corrupted identity,
+  /// financial, count-sheet or participation file is surfaced to the
+  /// banker; the bytes stay on disk so a backup can still be taken
+  /// off the device.
   static const Set<String> failLoudBoxes = {
     playerIdentitiesBox,
     financialEventsBox,
+    bankCountsBox,
+    participationsBox,
   };
 
   static Future<void> init() async {
@@ -80,6 +98,10 @@ class HiveService {
     Hive.registerAdapter(FinancialEventTypeAdapter());
     Hive.registerAdapter(PaymentMethodAdapter());
     Hive.registerAdapter(FinancialEventAdapter());
+    Hive.registerAdapter(TableParticipationAdapter());
+    Hive.registerAdapter(ParticipationStatusAdapter());
+    Hive.registerAdapter(ParticipationCloseReasonAdapter());
+    Hive.registerAdapter(BankCountAdapter());
 
     // Each box is opened independently and, if corrupted, individually
     // reset — a bad write killed mid-save in one box (e.g. a phone dying
@@ -99,11 +121,31 @@ class HiveService {
     // leaving the file untouched.
     await openBoxFailLoud<PlayerIdentity>(playerIdentitiesBox, typed: true);
     await openBoxFailLoud<FinancialEvent>(financialEventsBox, typed: true);
+    await openBoxFailLoud<BankCount>(bankCountsBox, typed: true);
+    await openBoxFailLoud<TableParticipation>(participationsBox, typed: true);
 
     // The Chip Bank screen must show what is LEFT in the case, not the
     // starting count. This teaches ChipBankService to fold the movement
     // log; done here (rather than by an import) to avoid a cycle.
     ChipTrackingService.installBankResolver();
+
+    // Phase 2a — converging seat→person chip-reference migration.
+    //
+    // ROLLOUT SEAM (D2): per the approved Phase 0 design the pass runs
+    // automatically at startup, idempotently, with an automatic
+    // pre-migration backup on the first run. If the rollout control is
+    // changed to a one-time user-confirmed gate, move this single call
+    // behind that confirmation (optionally keeping a pending-state
+    // banner) — the engine is rollout-neutral.
+    //
+    // A failure must never block launch: the data stays fully
+    // consistent and the pass re-runs on the next start.
+    try {
+      await ChipMigration.run();
+    } catch (e) {
+      // Surfaced through the stored report (chip audit screen).
+      debugPrint('ChipMigration.run() failed: $e');
+    }
   }
 
   static Future<void> _openBoxSafely<T>(String name, {required bool typed}) async {
@@ -167,4 +209,7 @@ class HiveService {
       Hive.box<PlayerIdentity>(playerIdentitiesBox);
   static Box<FinancialEvent> get financialEvents =>
       Hive.box<FinancialEvent>(financialEventsBox);
+  static Box<BankCount> get bankCounts => Hive.box<BankCount>(bankCountsBox);
+  static Box<TableParticipation> get participations =>
+      Hive.box<TableParticipation>(participationsBox);
 }

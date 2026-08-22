@@ -685,10 +685,16 @@ class RebateService {
       );
     }
     if (!hasChipCounts(distribution)) return Future.value(const []);
+    // Phase 2a: grant chips enter the PERSON's holding (personId), or
+    // the seat row's holding for a legacy unlinked seat. The grant
+    // event itself is already person-scoped; the chips must match.
+    final seat = HiveService.players.get(playerId);
+    final holder = ChipTrackingService.holderRef(
+        playerId: playerId, personId: seat?.personId);
     return ChipTrackingService.recordDistribution(
       distribution: distribution,
       from: ChipLocation.bank,
-      to: ChipLocation.player(playerId),
+      to: ChipLocation.player(holder),
       reason: ChipMovementReason.lossRebate,
       sessionId: grantEvent.sessionId,
       transactionId: grantEvent.id,

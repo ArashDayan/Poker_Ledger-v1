@@ -1,12 +1,14 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
+import '../models/bank_count.dart';
 import '../models/chip_movement.dart';
 import '../models/chip_type.dart';
 import '../models/financial_event.dart';
 import '../models/player.dart';
 import '../models/player_identity.dart';
 import '../models/session.dart';
+import '../models/table_participation.dart';
 import '../models/transaction.dart';
 import 'hive_service.dart';
 import 'player_history_service.dart';
@@ -73,11 +75,13 @@ class IdentityResolution {
 /// as stored" backup, meant to move data between devices or recover from
 /// an accidental data-clear.
 class BackupService {
-  /// Bumped to 5 when player identities and the player-registry
-  /// (blacklist / classification) were added to the portable payload.
-  /// Older backups still restore correctly — a missing block is simply
-  /// skipped and the current data for it is left alone.
-  static const formatVersion = 5;
+  /// Bumped to 7 (Phase 7) when table participations (`participations`)
+  /// were added to the portable payload. As with every earlier bump:
+  /// older backups restore correctly — a missing block is simply
+  /// skipped and the current data for it is left alone; a newer
+  /// backup restored into an older app is likewise safe because the
+  /// unknown block is ignored.
+  static const formatVersion = 7;
 
   /// Kept so existing call sites that read the private-looking name
   /// still compile if any were copied; the public name is [formatVersion].
@@ -125,6 +129,12 @@ class BackupService {
       'playerIdentities': _exportIdentities(),
       // Financial Ledger. Append-only events merge safely by id.
       'financialEvents': _exportFinancialEvents(),
+      // Case count sheets (v6+): the physical baseline history of the
+      // chip ledger. Merges by id on import, like every other block.
+      'bankCounts': _exportBankCounts(),
+      // Table participations (v7+): lifecycle + identity only (P-1);
+      // money stays on the transactions block. Merges by id.
+      'participations': _exportParticipations(),
       // Session JSON already carries tables, house rules, quick-rake
       // slots and timer state; player JSON carries seat, table id and
       // the sample signature; transaction JSON carries the captured
@@ -242,6 +252,41 @@ class BackupService {
       await HiveService.chipMovements.put(m.id, m);
     }
 
+    // Case count sheets (v6+). Merges by id; a missing block (older
+    // backups) is skipped and the current sheets are left alone.
+    var bankCountsImported = 0;
+    try {
+      final counts = (data['bankCounts'] as List? ?? [])
+          .cast<Map<String, dynamic>>()
+          .map(BankCount.fromJson)
+          .toList();
+      for (final c in counts) {
+        await HiveService.bankCounts.put(c.id, c);
+        bankCountsImported++;
+      }
+    } catch (_) {
+      // Count-sheet box unavailable (degraded mode): the rest of the
+      // restore still applies; the sheets stay as they were.
+    }
+
+    // Table participations (v7+). Merges by id; a missing block
+    // (older backups) is skipped and the current participations are
+    // left alone.
+    var participationsImported = 0;
+    try {
+      final parts = (data['participations'] as List? ?? [])
+          .cast<Map<String, dynamic>>()
+          .map(TableParticipation.fromJson)
+          .toList();
+      for (final p in parts) {
+        await HiveService.participations.put(p.id, p);
+        participationsImported++;
+      }
+    } catch (_) {
+      // Participations box unavailable (degraded mode): the rest of
+      // the restore still applies.
+    }
+
     // Preferences (v2+ backups only). Restoring an older backup leaves
     // the current settings untouched rather than resetting them.
     var settingsImported = 0;
@@ -276,7 +321,31 @@ class BackupService {
       financialEventsImported: financialOutcome.imported,
       financialEventsSkipped: financialOutcome.skipped,
       financialEventsReserved: financialOutcome.skipped,
+      bankCountsImported: bankCountsImported,
+      participationsImported: participationsImported,
     );
+  }
+
+  static List<Map<String, dynamic>> _exportParticipations() {
+    try {
+      return HiveService.participations
+          .values
+          .map((p) => p.toJson())
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  static List<Map<String, dynamic>> _exportBankCounts() {
+    try {
+      return HiveService.bankCounts
+          .values
+          .map((c) => c.toJson())
+          .toList();
+    } catch (_) {
+      return const [];
+    }
   }
 
   static Future<_FinancialImport> _importFinancialEvents(
@@ -465,6 +534,10 @@ class BackupImportResult {
   /// Alias of [financialEventsSkipped], kept so Step 0 tests that used
   /// this name still compile.
   final int financialEventsReserved;
+  /// Case count sheets merged (v6+ payloads; 0 on older backups).
+  final int bankCountsImported;
+  /// Table participations merged (v7+ payloads; 0 on older backups).
+  final int participationsImported;
 
   const BackupImportResult({
     this.formatVersion = 0,
@@ -480,6 +553,8 @@ class BackupImportResult {
     this.financialEventsImported = 0,
     this.financialEventsSkipped = 0,
     this.financialEventsReserved = 0,
+    this.bankCountsImported = 0,
+    this.participationsImported = 0,
   });
 
   bool get requiresIdentityResolution => identityConflicts.isNotEmpty;

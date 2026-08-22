@@ -164,6 +164,11 @@ class FinancialCapture {
     PaymentMethod? paymentMethod,
     String? note,
     String? linkedTransactionId,
+    // Phase 4: the banker's audit signature for the draw (seat-free
+    // wallet issuance carries it here, where the seated path carries
+    // it on its LedgerTransaction). Optional — existing callers are
+    // unchanged.
+    String? signatureBase64,
   }) {
     return _recordFrontMoney(
       personId: personId,
@@ -174,6 +179,7 @@ class FinancialCapture {
       paymentMethod: paymentMethod,
       note: note,
       linkedTransactionId: linkedTransactionId,
+      signatureBase64: signatureBase64,
     );
   }
 
@@ -182,12 +188,18 @@ class FinancialCapture {
   /// The banker must choose this explicitly. A deposit is never inferred
   /// as payment for chips. Does not write the Chip Ledger — the caller
   /// records the buy-in/rebuy and passes [linkedTransactionId].
+  ///
+  /// [signatureBase64] (Phase 4, optional): the banker's audit
+  /// signature, recorded on BOTH events of the pair. The seat-free
+  /// wallet issuance has no LedgerTransaction to carry it, so it rides
+  /// here. Existing callers pass nothing and are unchanged.
   static Future<DepositToChipsPair?> useDepositForChips({
     required String? personId,
     required AppCurrency currency,
     required double amount,
     String? sessionId,
     String? linkedTransactionId,
+    String? signatureBase64,
   }) async {
     if (personId == null || personId.isEmpty) return null;
     if (amount <= 0) return null;
@@ -199,6 +211,7 @@ class FinancialCapture {
       sessionId: sessionId,
       linkedTransactionId: linkedTransactionId,
       note: 'Used for chips',
+      signatureBase64: signatureBase64,
     );
     if (out == null) return null;
 
@@ -211,6 +224,7 @@ class FinancialCapture {
         sessionId: sessionId,
         linkedTransactionId: linkedTransactionId,
         note: 'From deposit',
+        signatureBase64: signatureBase64,
       );
       return DepositToChipsPair(
         frontMoneyOut: out,
@@ -234,6 +248,7 @@ class FinancialCapture {
     PaymentMethod? paymentMethod,
     String? note,
     String? linkedTransactionId,
+    String? signatureBase64,
   }) async {
     if (type != FinancialEventType.frontMoneyIn &&
         type != FinancialEventType.frontMoneyOut) {
@@ -263,6 +278,7 @@ class FinancialCapture {
       paymentMethod: paymentMethod,
       note: note,
       linkedTransactionId: linkedTransactionId,
+      signatureBase64: signatureBase64,
     );
   }
 }

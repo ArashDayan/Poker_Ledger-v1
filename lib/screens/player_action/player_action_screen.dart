@@ -15,6 +15,7 @@ import '../../services/sound_service.dart';
 import '../../models/chip_movement.dart';
 import '../../providers/chip_bank_provider.dart';
 import '../../services/chip_tracking_service.dart';
+import '../../widgets/cashout_flow.dart';
 import '../../widgets/chip_distribution_sheet.dart';
 import '../../widgets/discount_review_entry.dart';
 import '../../widgets/player_chip_holdings.dart';
@@ -137,6 +138,31 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
       if (!proceed) return;
     }
 
+    // Phase 7: a seated cash-out is the TABLE CASH-OUT — the table
+    // level. The counted chips STAY the person's physical holding
+    // (no cash comes back, no chip movement), so there is no funding
+    // question and no chip composition step. A $0 count is a bust and
+    // closes any open Discount cycle (parity). The cage redemption is
+    // the separate person-level operation (player account).
+    if (_type == TransactionType.cashOut) {
+      setState(() => _submitting = true);
+      try {
+        final ok = await performTableCashOut(
+          context,
+          player: provider.livePlayer(widget.player),
+          sessionId: session.id,
+          amount: amount,
+          hostSignatureBase64: _signature,
+        );
+        if (!ok) return;
+        AppSounds.play(AppSounds.forTransaction(TransactionType.cashOut));
+        if (mounted) Navigator.of(context).pop();
+      } finally {
+        if (mounted) setState(() => _submitting = false);
+      }
+      return;
+    }
+
     final funding = await collectRequiredFunding(
       context,
       chipType: _type,
@@ -168,13 +194,17 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
       // back or corrupt the financial record.
       if (distribution != null && distribution.isNotEmpty) {
         try {
+          // Phase 2a: chips belong to the PERSON (personId), or to the
+          // seat row for a legacy unlinked seat — resolved once here.
+          final holder = ChipTrackingService.holderRef(
+              playerId: widget.player.id, personId: widget.player.personId);
           await context.read<ChipBankProvider>().recordDistribution(
                 distribution: distribution,
                 from: _chipsLeaveBank
                     ? ChipLocation.bank
-                    : ChipLocation.player(widget.player.id),
+                    : ChipLocation.player(holder),
                 to: _chipsLeaveBank
-                    ? ChipLocation.player(widget.player.id)
+                    ? ChipLocation.player(holder)
                     : ChipLocation.bank,
                 reason: _chipReason,
                 sessionId: session.id,
@@ -213,11 +243,12 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
   }
 
   /// Chip tracking only makes sense for movements that physically hand
-  /// chips across the table.
+  /// chips across the table. A Phase 7 table cash-out records NO chip
+  /// movement — the counted chips stay the person's physical holding
+  /// (the person redeems at the cage as a separate operation).
   bool get _chipTrackingApplies =>
       _type == TransactionType.buyIn ||
-      _type == TransactionType.rebuy ||
-      _type == TransactionType.cashOut;
+      _type == TransactionType.rebuy;
 
   /// Buy-ins and rebuys take chips OUT of the bank; a cash-out brings
   /// them back in.
@@ -239,6 +270,14 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
   /// skip, or null if dismissed.
   Future<Map<String, int>?> _askChipDistribution(
       AppCurrency currency, double amount) async {
+    // Direction-correct composition (Phase 2b): a CASH-OUT takes chips
+    // FROM the person's (person-scoped) holding — suggested from and
+    // validated against that holding, never against bank inventory.
+    // Buy-in / rebuy take chips FROM the bank (source stays null).
+    final source = _type == TransactionType.cashOut
+        ? ChipLocation.player(ChipTrackingService.holderRef(
+            playerId: widget.player.id, personId: widget.player.personId))
+        : null;
     final result = await showModalBottomSheet<Map<String, int>>(
       context: context,
       isScrollControlled: true,
@@ -246,6 +285,7 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
       builder: (_) => ChipDistributionSheet(
         targetAmount: amount,
         currency: currency,
+        source: source,
       ),
     );
     if (result == null || result.isEmpty) return result;
@@ -386,7 +426,10 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
             // instead of) the money figures above. The two legitimately
             // differ once players start winning chips from each other.
             PlayerChipHoldings(
-              playerId: player.id,
+              // Phase 2a: person-scoped holding (seat ref only for a
+              // legacy unlinked seat).
+              playerId: ChipTrackingService.holderRef(
+                  playerId: player.id, personId: player.personId),
               sessionId: session.id,
               currency: session.currency,
             ),

@@ -176,6 +176,12 @@ class AppSounds {
         return SoundEffect.addPlayer;
       case TransactionType.dealerTips:
         return SoundEffect.rake;
+      case TransactionType.tableCashOut:
+        return SoundEffect.cashOut;
+      case TransactionType.reentry:
+        return SoundEffect.buyIn;
+      case TransactionType.houseWin:
+        return SoundEffect.rake;
     }
   }
 

@@ -318,16 +318,17 @@ void main() {
       );
     });
 
-    test('8. chip transfer creates no cash-in', () async {
+    test('8. a physical count creates no cash-in', () async {
       final s = await _session('s8');
       await HiveService.chips.put(
         'c100',
         ChipType(id: 'c100', value: 100, quantity: 50),
       );
-      await ChipTrackingService.recordPlayerTransfer(
-        fromPlayerId: 'seat-other',
-        toPlayerId: 'seat-1',
-        distribution: {'c100': 10},
+      // The player's stack grew at the table — captured by a physical
+      // count, not a recorded player transfer (E7).
+      await ChipTrackingService.adjustPlayerHoldingToCount(
+        playerId: 'seat-1',
+        counted: {'c100': 10},
         sessionId: s.id,
       );
       expect(_snap(s.id).playerCashIn, 0);
@@ -867,7 +868,7 @@ void main() {
       expect(_snap(s.id).hasOwnCashOutEvent, isFalse);
     });
 
-    test('P2P transfer does not move Discount eligibility', () async {
+    test('a physical count does not move Discount eligibility', () async {
       final s = await _session('p2p');
       await _cashIn(s.id, 1500);
       await RebateService.grant(
@@ -881,10 +882,16 @@ void main() {
         'c25',
         ChipType(id: 'c25', value: 25, quantity: 20),
       );
-      await ChipTrackingService.recordPlayerTransfer(
-        fromPlayerId: 'seat-1',
-        toPlayerId: 'seat-2',
-        distribution: {'c25': 4},
+      // Four $25 grant chips moved from seat-1's stack to seat-2's
+      // during play — captured by counts (P2P transfer removed, E7).
+      await ChipTrackingService.adjustPlayerHoldingToCount(
+        playerId: 'seat-1',
+        counted: {'c25': 0},
+        sessionId: s.id,
+      );
+      await ChipTrackingService.adjustPlayerHoldingToCount(
+        playerId: 'seat-2',
+        counted: {'c25': 4},
         sessionId: s.id,
       );
       expect(_snap(s.id).granted, 150);

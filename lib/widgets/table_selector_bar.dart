@@ -8,6 +8,7 @@ import '../models/player.dart';
 import '../models/session.dart';
 import '../providers/session_provider.dart';
 import '../services/table_service.dart';
+import 'table_float_sheet.dart';
 import 'table_timer_display.dart';
 
 /// Horizontal table switcher shown above the seating screens.
@@ -656,6 +657,18 @@ class TableStatusBar extends StatelessWidget {
                   ),
                 ),
               ),
+            // Phase 2b — table float management: seed/replenish
+            // (bank → table) and the table-close count-back return
+            // (table → bank). Available while closed too, because the
+            // count-back happens at close.
+            IconButton(
+              tooltip: tr('table_float'),
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.account_balance_wallet_outlined,
+                  size: 19, color: AppColors.gold),
+              onPressed: () => showTableFloatSheet(
+                  context, table, provider.current!.currency),
+            ),
           ],
           const Spacer(),
           if (status.isClosed)

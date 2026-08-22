@@ -261,8 +261,8 @@ void main() {
     expect(rec.impliedStillInPlay.abs() < 0.005, isTrue);
   });
 
-  test('P2P then another player cashes: session residual, no grant on them',
-      () async {
+  test('count moves chips, then another player cashes: session residual, '
+      'no grant on them', () async {
     final s = await _session('p2p');
     final a = await _seat(s.id);
     await _seat(s.id,
@@ -286,10 +286,16 @@ void main() {
       'c25',
       ChipType(id: 'c25', value: 25, quantity: 20),
     );
-    await ChipTrackingService.recordPlayerTransfer(
-      fromPlayerId: 'seat-1',
-      toPlayerId: 'seat-2',
-      distribution: {'c25': 6},
+    // The $150 grant chips moved from Ali's stack to Baba's during
+    // play — captured by physical counts (P2P transfer removed, E7).
+    await ChipTrackingService.adjustPlayerHoldingToCount(
+      playerId: 'seat-1',
+      counted: {'c25': 0},
+      sessionId: s.id,
+    );
+    await ChipTrackingService.adjustPlayerHoldingToCount(
+      playerId: 'seat-2',
+      counted: {'c25': 6},
       sessionId: s.id,
     );
     await SessionService.recordTransaction(

@@ -18,8 +18,19 @@ class SessionSettlementView {
   final double buyIn;
   final double rebuy;
   final double cashOut;
+  /// Phase 7: table cash-outs (money that left table play because a
+  /// player left a table carrying counted chips — session money OUT,
+  /// but not a cage redemption).
+  final double tableCashOut;
+  /// Phase 7: carried chips committed to tables by re-entry — session
+  /// money IN, never a new purchase (totalBuyIn is untouched).
+  final double reentry;
   final double rake;
   final double dealerTips;
+  /// Phase 7: house-banked game revenue (e.g. roulette). NEVER merged
+  /// with [rake] — the report shows both lines, and [hostProfit] is
+  /// their sum.
+  final double houseWin;
   final double hostProfit;
   final double moneyStillInPlay;
   final double cashDrop;
@@ -33,8 +44,11 @@ class SessionSettlementView {
     required this.buyIn,
     required this.rebuy,
     required this.cashOut,
+    required this.tableCashOut,
+    required this.reentry,
     required this.rake,
     required this.dealerTips,
+    required this.houseWin,
     required this.hostProfit,
     required this.moneyStillInPlay,
     required this.cashDrop,
@@ -54,8 +68,11 @@ class SessionSettlementView {
       buyIn: SessionService.totalBuyIn(sessionId),
       rebuy: SessionService.totalRebuy(sessionId),
       cashOut: SessionService.totalCashOut(sessionId),
+      tableCashOut: SessionService.totalTableCashOut(sessionId),
+      reentry: SessionService.totalReentry(sessionId),
       rake: SessionService.totalRake(sessionId),
       dealerTips: SessionService.totalDealerTips(sessionId),
+      houseWin: SessionService.totalHouseWin(sessionId),
       hostProfit: SessionService.hostProfit(sessionId),
       moneyStillInPlay: SessionService.moneyStillInPlay(sessionId),
       cashDrop: SessionService.totalCashDrop(sessionId),

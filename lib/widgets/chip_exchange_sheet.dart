@@ -112,15 +112,21 @@ class _ChipExchangeSheetState extends State<_ChipExchangeSheet> {
 
   bool get _bankCanCover => ChipExchangeRules.bankCanCover(_received);
 
+  /// Phase 2a: the chip holder is the PERSON (or, for an unlinked
+  /// legacy seat, that seat's row id — the reference the ledger
+  /// actually uses). Never the seat alone.
+  static String _holderRef(Player p) => ChipTrackingService.holderRef(
+      playerId: p.id, personId: p.personId);
+
   bool get _playerCanCover {
     final p = _player;
     if (p == null) return false;
-    return ChipExchangeRules.playerCanCover(p.id, _given);
+    return ChipExchangeRules.playerCanCover(_holderRef(p), _given);
   }
 
   bool get _canConfirm =>
       ChipExchangeRules.canConfirm(
-        playerId: _player?.id,
+        playerId: _player == null ? null : _holderRef(_player!),
         given: _given,
         received: _received,
       ) &&
@@ -132,7 +138,7 @@ class _ChipExchangeSheetState extends State<_ChipExchangeSheet> {
   double get _recordedHoldingValue {
     final p = _player;
     if (p == null) return 0;
-    return ChipTrackingService.playerHolding(p.id).totalValue;
+    return ChipTrackingService.playerHolding(_holderRef(p)).totalValue;
   }
 
   /// Opens the physical-count adjustment, then re-reads the ledger so
@@ -159,7 +165,7 @@ class _ChipExchangeSheetState extends State<_ChipExchangeSheet> {
     final messenger = ScaffoldMessenger.of(context);
     try {
       await ChipTrackingService.recordExchange(
-        counterparty: ChipLocation.player(p.id),
+        counterparty: ChipLocation.player(_holderRef(p)),
         chipsIn: _given,
         chipsOut: _received,
         sessionId: widget.sessionId,
@@ -195,7 +201,7 @@ class _ChipExchangeSheetState extends State<_ChipExchangeSheet> {
           ChipTrackingService.quantityAt(ChipLocation.bank, c.id);
       playerAvailable[c.id] = p == null
           ? 0
-          : ChipTrackingService.quantityAt(ChipLocation.player(p.id), c.id);
+          : ChipTrackingService.quantityAt(ChipLocation.player(_holderRef(p)), c.id);
     }
 
     return DraggableScrollableSheet(

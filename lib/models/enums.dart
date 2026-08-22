@@ -60,11 +60,65 @@ enum TransactionType {
   /// the Bank, so the table's pot must fall by the amount. Unlike rake,
   /// the money is owed to the dealer rather than kept by the host — so
   /// it is deliberately its own type, never folded into
-  /// `rakeCollection`. That separation is what keeps
-  /// `hostProfit == totalRake` true: `hostProfit` sums one explicit
-  /// type, and this is not it.
+  /// `rakeCollection` (nor into house wins). `hostProfit` (rake +
+  /// house wins, Phase 7) therefore never includes tips.
   @HiveField(7)
   dealerTips,
+
+  /// TABLE CASH-OUT (Phase 7): the player leaves the table carrying
+  /// the counted chips — the participation closes and the seat is
+  /// freed, but the chips stay the PERSON's physical holding (no chip
+  /// movement, no bank leg, no cashier cash, no financial event).
+  ///
+  /// This is a session-money OUT (the chips leave table play), stamped
+  /// to the open participation and closing it (reason tableCashOut).
+  /// It is NOT the final cage redemption: the person can carry the
+  /// chips to another table (see [reentry]) or redeem them at the cage
+  /// later — the cage redemption is the person-level financial
+  /// operation (`cashOutForChips` / `cashOutUnbacked`), and only IT
+  /// moves the person's chips back to the bank.
+  @HiveField(8)
+  tableCashOut,
+
+  /// RE-ENTRY (Phase 7): the player is committed to a table using chips
+  /// they ALREADY hold in their person-scoped chip holding — the same
+  /// physical chips they bought earlier (this session or a previous
+  /// one) and left the last table carrying.
+  ///
+  /// THIS IS NOT A PURCHASE.
+  ///   * It is NOT a [buyIn]: no new money enters the session, the
+  ///     original purchase is never counted again, and [totalBuyIn]
+  ///     stays untouched.
+  ///   * It is NOT a cash-in: no Financial Ledger event is written
+  ///     (no cashInForChips, no frontMoneyOut, no wallet draw).
+  ///   * It is NOT a chip issuance: no chip movement is recorded. The
+  ///     chips already sit in the person's holding and travel with
+  ///     them; re-entry only moves the COMMITMENT into the new table
+  ///     context (it opens the new [TableParticipation]).
+  ///
+  /// It IS session money IN: the chips re-enter table play, exactly
+  /// balancing the [tableCashOut] that took them off the previous
+  /// table. A first-time sit-down with cashier-issued (wallet) chips
+  /// is recorded the same way — the commitment of existing chips.
+  @HiveField(9)
+  reentry,
+
+  /// HOUSE WIN (Phase 7): the house banked a win from a player at a
+  /// house-banked game (e.g. roulette). The player's chips become
+  /// CASINO-OWNED (chip movement holder -> bank, reason houseWin).
+  ///
+  /// HOUSE-GAME REVENUE — NEVER MERGED WITH RAKE.
+  /// Poker rake is the house's fee on player-vs-player pots; a house
+  /// win is the house playing against the player and winning the
+  /// player's chips. The two are different economic sources and every
+  /// report keeps them on separate lines ([totalRake] vs
+  /// [totalHouseWin]). [hostProfit] is their sum — the house's total
+  /// earned — with both components always visible.
+  ///
+  /// Session money OUT, player-attributed (the player's commitment
+  /// at that game is settled).
+  @HiveField(10)
+  houseWin,
 }
 
 @HiveType(typeId: 2)
@@ -145,6 +199,12 @@ extension TransactionTypeX on TransactionType {
         return 'Transfer In';
       case TransactionType.dealerTips:
         return 'Dealer Tips';
+      case TransactionType.tableCashOut:
+        return 'Table Cash-out';
+      case TransactionType.reentry:
+        return 'Re-entry (carried chips)';
+      case TransactionType.houseWin:
+        return 'House Win';
     }
   }
 
@@ -158,14 +218,21 @@ extension TransactionTypeX on TransactionType {
       this == TransactionType.buyIn ||
       this == TransactionType.rebuy ||
       this == TransactionType.rakeCollection ||
-      this == TransactionType.transferIn;
+      this == TransactionType.transferIn ||
+      // Re-entry is a real inflow to the session's table play (the
+      // carried chips re-enter the books) — unlike a table move's
+      // transfer legs, which stay session-neutral.
+      this == TransactionType.reentry;
 
   /// Money moving OUT of the host's box/table float.
   bool get isOutflow =>
       this == TransactionType.cashOut ||
+      this == TransactionType.tableCashOut ||
       this == TransactionType.cashDrop ||
       this == TransactionType.transferOut ||
-      this == TransactionType.dealerTips;
+      this == TransactionType.dealerTips ||
+      // House wins leave the player's table play for the house.
+      this == TransactionType.houseWin;
 
   /// True for the two legs of a table-to-table move.
   ///

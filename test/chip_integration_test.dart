@@ -322,8 +322,11 @@ void main() {
     });
   });
 
-  group('player-to-player transfer', () {
-    test('moves holdings without touching the bank', () async {
+  // Player-to-player chip transfer is REMOVED (E7): the approved way to
+  // capture chips that changed hands at the table is a physical count
+  // per player (the re-anchor pair nets to zero for the bank).
+  group('physical count (P2P removed)', () {
+    test('a count moves holdings without touching the bank', () async {
       final c = await _stockBank();
       await ChipTrackingService.recordDistribution(
         distribution: {c['500']!.id: 4},
@@ -333,10 +336,14 @@ void main() {
       );
       final bankBefore = _bank();
 
-      await ChipTrackingService.recordPlayerTransfer(
-        fromPlayerId: 'A',
-        toPlayerId: 'B',
-        distribution: {c['500']!.id: 2},
+      // Play happens; the banker counts: A holds 2 x $500, B holds 2.
+      await ChipTrackingService.adjustPlayerHoldingToCount(
+        playerId: 'A',
+        counted: {c['500']!.id: 2},
+      );
+      await ChipTrackingService.adjustPlayerHoldingToCount(
+        playerId: 'B',
+        counted: {c['500']!.id: 2},
       );
 
       expect(_player('A'), 1000);
@@ -345,13 +352,19 @@ void main() {
       expect(HiveService.transactions.length, 0);
     });
 
-    test('transferring to yourself is refused', () async {
+    test('an empty or negative count is refused', () async {
       final c = await _stockBank();
       expect(
-        () => ChipTrackingService.recordPlayerTransfer(
-          fromPlayerId: 'A',
-          toPlayerId: 'A',
-          distribution: {c['500']!.id: 1},
+        () => ChipTrackingService.adjustPlayerHoldingToCount(
+          playerId: 'A',
+          counted: {},
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => ChipTrackingService.adjustPlayerHoldingToCount(
+          playerId: 'A',
+          counted: {c['500']!.id: -1},
         ),
         throwsArgumentError,
       );
@@ -474,18 +487,23 @@ void main() {
 
       expect(_bank(), 10000);
 
-      // Denomination exchange and a player-to-player pot — neither may
-      // change any total.
+      // Denomination exchange and a physical count (a pot moved A→B)
+      // — neither may change any total.
       final playersBefore = ChipTrackingService.reconcile().withPlayers;
       await ChipTrackingService.recordExchange(
         counterparty: ChipLocation.player('A'),
         chipsIn: {k100: 5},
         chipsOut: {k500: 1},
       );
-      await ChipTrackingService.recordPlayerTransfer(
-        fromPlayerId: 'A',
-        toPlayerId: 'B',
-        distribution: {k1000: 1},
+      // A: 3x1000+2x500+10x100 - 5x100 + 1x500, then count 1x1000 less.
+      // B: 2x1000+4x500, then count 1x1000 more.
+      await ChipTrackingService.adjustPlayerHoldingToCount(
+        playerId: 'A',
+        counted: {k1000: 2, k500: 3, k100: 5},
+      );
+      await ChipTrackingService.adjustPlayerHoldingToCount(
+        playerId: 'B',
+        counted: {k1000: 3, k500: 4},
       );
       expect(ChipTrackingService.reconcile().withPlayers, playersBefore);
 
@@ -579,10 +597,14 @@ void main() {
         chipsIn: {c['1000']!.id: 1},
         chipsOut: {c['500']!.id: 2},
       );
-      await ChipTrackingService.recordPlayerTransfer(
-        fromPlayerId: 'A',
-        toPlayerId: 'B',
-        distribution: {c['500']!.id: 1},
+      // Play: count A down 1 x $500 and B up 1 x $500 (P2P removed).
+      await ChipTrackingService.adjustPlayerHoldingToCount(
+        playerId: 'A',
+        counted: {c['500']!.id: 1},
+      );
+      await ChipTrackingService.adjustPlayerHoldingToCount(
+        playerId: 'B',
+        counted: {c['500']!.id: 1},
       );
 
       final after = SessionService.checkBalance('s1');

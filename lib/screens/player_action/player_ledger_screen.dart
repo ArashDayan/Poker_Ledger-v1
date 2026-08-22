@@ -450,6 +450,18 @@ class PlayerLedgerScreen extends StatelessWidget {
         return AppColors.textSecondary;
       case TransactionType.dealerTips:
         return AppColors.warning;
+      // A table cash-out is money out of the table (the player carries
+      // the chips — no cash changes hands).
+      case TransactionType.tableCashOut:
+        return AppColors.danger;
+      // A re-entry is money INTO the table: the player's carried chips
+      // are committed here (green, like a buy-in — without being one).
+      case TransactionType.reentry:
+        return AppColors.accentGreen;
+      // A house win is money the player lost to the house at a
+      // house-banked game — an outflow, like a cash-out.
+      case TransactionType.houseWin:
+        return AppColors.danger;
     }
   }
 }

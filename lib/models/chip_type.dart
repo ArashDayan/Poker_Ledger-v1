@@ -40,6 +40,12 @@ class ChipType extends HiveObject {
   double value;
 
   /// How many of this chip the banker physically owns. Required.
+  ///
+  /// Phase 2b: this is the OWNED-INVENTORY record. It is the case
+  /// ledger's baseline ONLY until the first physical count sheet
+  /// ([BankCount]) exists; after that, count sheets are the baseline
+  /// and edits here never move the ledger. See [ChipBankService
+  /// .setQuantity] for the correction-semantics rule.
   @HiveField(4)
   int quantity;
 

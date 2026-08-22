@@ -7,6 +7,7 @@ import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
 import '../../models/player.dart';
 import '../../providers/session_provider.dart';
+import '../../services/chip_tracking_service.dart';
 import '../../services/financial_capture_flow.dart';
 import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
@@ -74,11 +75,13 @@ class TransactionsTab extends StatelessWidget {
     // Evaluated at TAP time, so the list is always current — a player
     // seated a moment ago is already here without leaving the screen.
     // Scoped to the active table when multi-table, mirroring build().
+    // Seated players only: a registered-but-unseated person has no
+    // seat to take money at.
     final player = await _pickPlayer(
       context,
       provider.isMultiTable
           ? provider.playersAtActiveTable
-          : provider.players,
+          : provider.seatedPlayers,
     );
     if (player == null || !context.mounted) return;
 
@@ -135,12 +138,14 @@ class TransactionsTab extends StatelessWidget {
         hostSignatureBase64: result.signature ?? '',
       );
       if (context.mounted) {
+        // Phase 2a: person-scoped chip holding.
         await ChipFlow.apply(context,
             distribution: dist,
             type: type,
             sessionId: session.id,
             transactionId: tx.id,
-            playerId: player.id);
+            holderRefId: ChipTrackingService.holderRef(
+                playerId: player.id, personId: player.personId));
         if (context.mounted) {
           await applyCollectedFunding(
             context,
@@ -268,8 +273,12 @@ class TransactionsTab extends StatelessWidget {
     // picker let "Seat 3" mean two different people and a buy-in could
     // land on the wrong player. A single-table session gets the exact
     // same list as before.
+    // Seated players only in the single-table branch (the multi-table
+    // branch is already seat-scoped via playersAtActiveTable): the
+    // quick-action buttons act on a seat, which an unseated
+    // registration does not have.
     final actionPlayers =
-        provider.isMultiTable ? provider.playersAtActiveTable : players;
+        provider.isMultiTable ? provider.playersAtActiveTable : provider.seatedPlayers;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),

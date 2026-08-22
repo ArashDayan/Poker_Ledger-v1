@@ -7,6 +7,7 @@ import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
 import '../../models/player.dart';
 import '../../providers/session_provider.dart';
+import '../../services/chip_tracking_service.dart';
 import '../../services/financial_capture_flow.dart';
 import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
@@ -88,12 +89,15 @@ class TableViewTab extends StatelessWidget {
         hostSignatureBase64: result.signature ?? '',
       );
       if (context.mounted) {
+        // Phase 2a: person-scoped chip holding.
+        final holderRef = ChipTrackingService.holderRef(
+            playerId: player.id, personId: player.personId);
         await ChipFlow.apply(context,
             distribution: dist,
             type: type,
             sessionId: session.id,
             transactionId: tx.id,
-            playerId: player.id);
+            holderRefId: holderRef);
         if (context.mounted) {
           await applyCollectedFunding(
             context,

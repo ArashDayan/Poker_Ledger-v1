@@ -8,8 +8,11 @@ import '../../models/enums.dart';
 import '../../models/player.dart';
 import '../../providers/session_provider.dart';
 import '../../services/financial_capture_flow.dart';
+import '../../widgets/cashout_flow.dart';
 import '../../services/player_identity_service.dart';
 import '../../services/player_registry_service.dart';
+import '../../models/chip_movement.dart';
+import '../../services/chip_tracking_service.dart';
 import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/table_service.dart';
@@ -24,6 +27,7 @@ import '../../widgets/discount_review_entry.dart';
 import '../../widgets/quick_transaction_sheet.dart';
 import '../player_action/player_action_screen.dart';
 import '../player_action/player_ledger_screen.dart';
+import '../player_account/player_account_screen.dart';
 import '../player_history/player_history_screen.dart';
 
 /// Players tab: seat management + the fast per-player money actions.
@@ -439,7 +443,10 @@ class PlayersTab extends StatelessWidget {
                             type: TransactionType.buyIn,
                             sessionId: provider.current!.id,
                             transactionId: tx.last.id,
-                            playerId: created.id,
+                            // Phase 2a: chips enter the person's holding.
+                            holderRefId: ChipTrackingService.holderRef(
+                                playerId: created.id,
+                                personId: created.personId),
                           );
                           if (context.mounted) {
                             await applyCollectedFunding(
@@ -464,6 +471,30 @@ class PlayersTab extends StatelessWidget {
                   },
                   child: Text(isEdit ? 'Save Changes' : 'Continue'),
                 ),
+                // Remove from seat: frees the seat, keeps the
+                // registration, the records and the person. Confirm
+                // first — it changes who the seat points at, and the
+                // confirmation says exactly what survives.
+                if (isEdit && existing != null && existing.seated) ...[
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: () async {
+                      final ok = await confirmUnseat(ctx);
+                      if (!ok) return;
+                      try {
+                        await provider.unseatPlayer(existing);
+                        if (ctx.mounted) Navigator.pop(ctx);
+                      } catch (e) {
+                        if (ctx.mounted) {
+                          ScaffoldMessenger.of(ctx)
+                              .showSnackBar(SnackBar(content: Text('$e')));
+                        }
+                      }
+                    },
+                    child: Text(tr('unseat_player'),
+                        style: const TextStyle(color: AppColors.danger)),
+                  ),
+                ],
               ],
             ),
           ),
@@ -512,6 +543,24 @@ class PlayersTab extends StatelessWidget {
     );
     if (result == null) return;
 
+    // Phase 7: a seated cash-out is the TABLE CASH-OUT — the table
+    // level. No funding question (no cash comes back — the counted
+    // chips stay the person's physical holding), no chip composition
+    // step, no cage redemption (that is the person-level redemption,
+    // from the player account).
+    if (type == TransactionType.cashOut) {
+      final ok = await performTableCashOut(
+        context,
+        player: player,
+        sessionId: session.id,
+        amount: result.amount,
+        hostSignatureBase64: result.signature ?? '',
+      );
+      if (!ok) return;
+      AppSounds.play(AppSounds.forTransaction(type));
+      return;
+    }
+
     final funding = await collectRequiredFunding(
       context,
       chipType: type,
@@ -521,8 +570,11 @@ class PlayersTab extends StatelessWidget {
     if (!funding.shouldCommit || !context.mounted) return;
 
     final dist = ChipFlow.appliesTo(type)
-        ? await ChipFlow.ask(context,
-            amount: result.amount, currency: session.currency)
+        ? await ChipFlow.ask(
+            context,
+            amount: result.amount,
+            currency: session.currency,
+          )
         : null;
     if (!context.mounted) return;
     try {
@@ -538,7 +590,9 @@ class PlayersTab extends StatelessWidget {
             type: type,
             sessionId: session.id,
             transactionId: tx.id,
-            playerId: player.id);
+            // Phase 2a: person-scoped chip holding.
+            holderRefId: ChipTrackingService.holderRef(
+                playerId: player.id, personId: player.personId));
         if (context.mounted) {
           await applyCollectedFunding(
             context,
@@ -560,18 +614,531 @@ class PlayersTab extends StatelessWidget {
     }
   }
 
+  /// Registers a player for the ACTIVE SESSION without a seat.
+  ///
+  /// The identity is resolved with the same confirm-on-suggest rule as
+  /// seating (a name match is only a suggestion; cancel aborts), then
+  /// the provider writes an unseated registration row. No money, chips
+  /// or seat are touched.
+  static Future<void> showRegisterForSessionSheet(BuildContext context) async {
+    final provider = context.read<SessionProvider>();
+    final session = provider.current;
+    if (session == null) return;
+    final nameCtrl = TextEditingController();
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollable: true,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 16,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(tr('register_player_title'),
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text(tr('register_player_hint'),
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.textSecondary)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: nameCtrl,
+              autofocus: true,
+              decoration: InputDecoration(labelText: tr('name')),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () async {
+                final name = nameCtrl.text.trim();
+                if (name.isEmpty) return;
+
+                // BLACKLIST GATE — same rule as the add-player flow.
+                if (PlayerRegistryService.isBlacklistedName(name)) {
+                  final proceed = await confirmBlacklistedPlayer(
+                    ctx,
+                    playerName: name,
+                  );
+                  if (!proceed) return;
+                }
+
+                // IDENTITY GATE — confirm-on-suggest, never auto-link.
+                String? personId;
+                try {
+                  personId = await PlayerIdentityService.resolveForSeating(
+                    name: name,
+                    confirm: (suggestions) => confirmIdentityLink(
+                      ctx,
+                      typedName: name,
+                      suggestions: suggestions,
+                    ),
+                  );
+                } catch (e) {
+                  if (ctx.mounted) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                        SnackBar(content: Text('$e')));
+                  }
+                  return;
+                }
+                if (personId == null &&
+                    PlayerIdentityService.suggest(name).isNotEmpty) {
+                  // Suggestions existed and the banker cancelled.
+                  return;
+                }
+                if (personId == null) return;
+                final alreadyRegistered =
+                    SessionService.registeredForSession(session.id, personId) !=
+                        null;
+                if (ctx.mounted) Navigator.pop(ctx);
+
+                try {
+                  await provider.registerPlayer(
+                    personId: personId,
+                    name: name,
+                  );
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(alreadyRegistered
+                            ? '${name} ${tr('already_registered')}'
+                            : '${name} — ${tr('not_seated')}'),
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('$e')));
+                  }
+                }
+              },
+              child: Text(tr('register_player')),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Seats a registered (unseated) player. Table list + first free
+  /// seat per table, mirroring the move-player sheet's shape.
+  static Future<void> showSeatRegisteredSheet(
+      BuildContext context, Player player) async {
+    final provider = context.read<SessionProvider>();
+    final session = provider.current;
+    if (session == null) return;
+    final tables = TableService.tablesFor(session);
+
+    await showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        final live = context.read<SessionProvider>().livePlayer(player);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('${tr('seat_registered_title')}: ${live.name}',
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                Text(tr('not_seated'),
+                    style: const TextStyle(
+                        fontSize: 11, color: AppColors.textSecondary)),
+                const SizedBox(height: 14),
+                ...tables.map((t) {
+                  final free = TableService.firstFreeSeat(session, t.id);
+                  final count = TableService.playerCountAt(session, t.id);
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.table_bar_outlined,
+                        color: AppColors.accentGreen),
+                    title: Text(t.name),
+                    subtitle: Text(free == null
+                        ? '${tr('full')} ($count/${t.seatCount})'
+                        : '${tr('seat')} $free ${tr('free')} · $count/${t.seatCount} ${tr('seated')}'),
+                    enabled: free != null,
+                    onTap: free == null
+                        ? null
+                        : () async {
+                            try {
+                              await provider.seatRegisteredPlayer(live, t.id);
+                              if (ctx.mounted) Navigator.pop(ctx);
+                            } catch (e) {
+                              if (ctx.mounted) {
+                                ScaffoldMessenger.of(ctx).showSnackBar(
+                                    SnackBar(content: Text('$e')));
+                              }
+                            }
+                          },
+                  );
+                }),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// RE-ENTRY (Phase 7): the unseated player commits the chips they
+  /// ALREADY hold (person-scoped holding) to a table.
+  ///
+  /// Step 1 — choose the table (same shape as the seat sheet).
+  /// Step 2 — the counted carried amount (pre-filled with the person's
+  /// held chips) + host signature, through the standard quick sheet.
+  ///
+  /// THE GUARANTEES (enforced in the service, surfaced here):
+  ///   * NO second buy-in — totalBuyIn and every wallet figure are
+  ///     untouched; the original purchase is never counted again.
+  ///   * NO chip movement — the held chips travel with the person.
+  ///   * NO cash changes hands — no Financial Ledger event.
+  ///   * A NEW TableParticipation opens at the destination.
+  static Future<void> showReentrySheet(BuildContext context, Player player) async {
+    final provider = context.read<SessionProvider>();
+    final session = provider.current;
+    if (session == null) return;
+    final personId = player.personId;
+    if (personId == null || personId.isEmpty) return;
+
+    // The person's held chips — the pre-fill for the counted amount.
+    // A holding the chip ledger has under-recorded simply pre-fills a
+    // lower number; the banker's count remains the authority (E9).
+    double held = 0;
+    try {
+      held = ChipTrackingService
+              .holdingAt(ChipLocation.player(personId))
+              .totalValue;
+    } catch (_) {
+      // Chip boxes not open — pre-fill stays empty.
+    }
+
+    final fmt = CurrencyFormatter(session.currency);
+    await showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        final live = context.read<SessionProvider>().livePlayer(player);
+        final tables = TableService.tablesFor(session);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('${tr('reentry_title')}: ${live.name}',
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                Text(tr('reentry_body'),
+                    style: const TextStyle(
+                        fontSize: 11.5, color: AppColors.textSecondary)),
+                const SizedBox(height: 10),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(tr('reentry_held_label'),
+                        style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold)),
+                    Text(fmt.format(held),
+                        style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.gold)),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                ...tables.map((t) {
+                  final free = TableService.firstFreeSeat(session, t.id);
+                  final count = TableService.playerCountAt(session, t.id);
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.login,
+                        color: AppColors.accentGreen),
+                    title: Text(t.name),
+                    subtitle: Text(free == null
+                        ? '${tr('full')} ($count/${t.seatCount})'
+                        : '${tr('seat')} $free ${tr('free')} · $count/${t.seatCount} ${tr('seated')}'),
+                    enabled: free != null,
+                    onTap: free == null
+                        ? null
+                        : () async {
+                            Navigator.pop(ctx);
+                            if (!context.mounted) return;
+                            final result = await showQuickTransactionSheet(
+                              context,
+                              title:
+                                  '${tr('reentry')} · ${live.name}',
+                              type: TransactionType.reentry,
+                              initialAmount: held > 0 ? held : null,
+                              formatter: fmt,
+                              allowZero: false,
+                              sessionId: session.id,
+                            );
+                            if (result == null) return;
+                            if (result.signature == null ||
+                                result.signature!.isEmpty) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                      content:
+                                          Text(tr('host_signature_required_tx'))),
+                                );
+                              }
+                              return;
+                            }
+                            try {
+                              await context
+                                  .read<SessionProvider>()
+                                  .reenterWithHeldChips(
+                                    context
+                                        .read<SessionProvider>()
+                                        .livePlayer(player),
+                                    t.id,
+                                    amount: result.amount,
+                                    hostSignatureBase64: result.signature!,
+                                  );
+                              if (context.mounted) {
+                                AppSounds.play(AppSounds
+                                    .forTransaction(
+                                        TransactionType.reentry));
+                              }
+                            } catch (e) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context)
+                                    .showSnackBar(
+                                        SnackBar(content: Text('$e')));
+                              }
+                            }
+                          },
+                  );
+                }),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Removes a seated player from their seat. Confirm-first, and the
+  /// confirmation states explicitly what is (and is not) preserved —
+  /// the row, its records and the person all survive; only the seat
+  /// is freed.
+  static Future<bool> confirmUnseat(BuildContext context) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('unseat_confirm_title')),
+        content: Text(tr('unseat_confirm_body'), style: const TextStyle(fontSize: 13)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr('cancel'))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(tr('unseat_player')),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  /// Deletes a clean unseated registration. Blocked (with explanation)
+  /// whenever the row carries this session's records — the provider
+  /// enforces the same rule, so the UI can never be the only guard.
+  static Future<void> removeRegistrationFlow(
+      BuildContext context, Player player) async {
+    final provider = context.read<SessionProvider>();
+    final hasRecords = SessionService
+            .transactionsFor(provider.current!.id, includeVoided: true)
+            .any((t) => t.playerId == player.id);
+    if (hasRecords) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr('remove_registration_blocked'))));
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('remove_registration_confirm_title')),
+        content:
+            Text(tr('remove_registration_confirm_body'), style: const TextStyle(fontSize: 13)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr('cancel'))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.danger),
+            child: Text(tr('remove_registration')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await provider.removeRegistration(player);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
+  /// One row in the "Registered — not seated" section. Deliberately
+  /// smaller than [PlayerCard]: an unseated registration has no buy-in,
+  /// no stack and no money actions to offer — only seating, the
+  /// person's account, history, and (when clean) removal.
+  Widget _unseatedRow(
+      BuildContext context, SessionProvider provider, Player p) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: AppColors.surfaceElevated,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.divider),
+          ),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 16,
+                backgroundColor: AppColors.feltGreen,
+                child: Text(
+                  p.name.isNotEmpty ? p.name[0].toUpperCase() : '?',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(p.name,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 14)),
+                    Text(tr('not_seated'),
+                        style: const TextStyle(
+                            fontSize: 11, color: AppColors.textSecondary)),
+                  ],
+                ),
+              ),
+              // RE-ENTRY (Phase 7): commit the person's held chips to a
+              // table — no buy-in, no chip movement, no cash. Only for
+              // person-linked rows (an unlinked legacy seat has no
+              // person-scoped holding to carry).
+              if (p.personId != null && p.personId!.isNotEmpty)
+                OutlinedButton.icon(
+                  onPressed: () => showReentrySheet(context, p),
+                  icon: const Icon(Icons.login, size: 15),
+                  label: Text(tr('reentry_player'),
+                      style: const TextStyle(fontSize: 12)),
+                  style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(36)),
+                ),
+              const SizedBox(width: 6),
+              OutlinedButton.icon(
+                onPressed: () => showSeatRegisteredSheet(context, p),
+                icon: const Icon(Icons.format_list_numbered, size: 15),
+                label: Text(tr('seat_player'),
+                    style: const TextStyle(fontSize: 12)),
+                style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(36)),
+              ),
+              const SizedBox(width: 6),
+              if (p.personId != null && p.personId!.isNotEmpty)
+                IconButton(
+                  tooltip: tr('view_financial_account'),
+                  icon: const Icon(Icons.account_balance_wallet_outlined,
+                      size: 18, color: AppColors.gold),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => PlayerAccountScreen(
+                        personId: p.personId!,
+                        displayName: p.name,
+                      ),
+                    ),
+                  ),
+                ),
+              PopupMenuButton<String>(
+                tooltip: tr('manage_player'),
+                icon: const Icon(Icons.more_vert,
+                    size: 18, color: AppColors.textSecondary),
+                padding: EdgeInsets.zero,
+                onSelected: (v) {
+                  if (v == 'history' &&
+                      p.personId != null &&
+                      p.personId!.isNotEmpty &&
+                      mounted) {
+                    Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => PlayerHistoryScreen(
+                          playerName: p.name, personId: p.personId),
+                    ));
+                  } else if (v == 'remove') {
+                    removeRegistrationFlow(context, p);
+                  }
+                },
+                itemBuilder: (_) => [
+                  if (p.personId != null && p.personId!.isNotEmpty)
+                    PopupMenuItem(
+                      value: 'history',
+                      child: Row(
+                        children: [
+                          const Icon(Icons.history, size: 18),
+                          const SizedBox(width: 10),
+                          Text(tr('history')),
+                        ],
+                      ),
+                    ),
+                  const PopupMenuDivider(),
+                  PopupMenuItem(
+                    value: 'remove',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.delete_outline,
+                            size: 18, color: AppColors.danger),
+                        const SizedBox(width: 10),
+                        Text(tr('remove_registration'),
+                            style: const TextStyle(color: AppColors.danger)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<SessionProvider>();
     final session = provider.current!;
     final fmt = CurrencyFormatter(session.currency);
-    // Scoped to the selected table so a busy floor stays readable; a
-    // single-table session sees exactly the same list as before.
+    // Seated players only, scoped to the selected table so a busy
+    // floor stays readable. Unseated registrations are listed below in
+    // their own section — they hold no seat and take no money actions.
     final players = provider.isMultiTable
         ? provider.playersAtActiveTable
-        : provider.players;
+        : provider.seatedPlayers;
+    final unseated = provider.unseatedPlayers;
 
-    if (players.isEmpty) {
+    if (players.isEmpty && unseated.isEmpty) {
       return Column(
         children: [
           const TableSelectorBar(),
@@ -591,6 +1158,12 @@ class PlayersTab extends StatelessWidget {
                       icon: const Icon(Icons.person_add),
                       label: Text(tr('add_player')),
                     ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () => showRegisterForSessionSheet(context),
+                      icon: const Icon(Icons.badge_outlined),
+                      label: Text(tr('register_player')),
+                    ),
                   ],
                 ),
               ),
@@ -605,7 +1178,36 @@ class PlayersTab extends StatelessWidget {
       Expanded(
         child: ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      children: players.map((p) {
+      children: [
+        Align(
+          alignment: AlignmentDirectional.centerEnd,
+          child: TextButton.icon(
+            onPressed: () => showRegisterForSessionSheet(context),
+            icon: const Icon(Icons.person_add, size: 16),
+            label: Text(tr('register_player'),
+                style: const TextStyle(fontSize: 12)),
+          ),
+        ),
+        if (unseated.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.only(left: 2, bottom: 6),
+            child: Text(tr('unseated_players'),
+                style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textSecondary)),
+          ),
+          for (final p in unseated) _unseatedRow(context, provider, p),
+          const SizedBox(height: 10),
+        ],
+        if (players.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Text(tr('no_players_yet'),
+                style:
+                    const TextStyle(color: AppColors.textSecondary)),
+          ),
+        ...players.map((p) {
         return Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: Column(
@@ -671,6 +1273,7 @@ class PlayersTab extends StatelessWidget {
           ),
         );
       }).toList(),
+      ],
         ),
       ),
     ]);

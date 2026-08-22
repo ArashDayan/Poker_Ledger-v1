@@ -5,6 +5,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
+import 'package:poker_ledger/models/bank_count.dart';
 import 'package:poker_ledger/models/chip_movement.dart';
 import 'package:poker_ledger/models/chip_type.dart';
 import 'package:poker_ledger/models/enums.dart';
@@ -34,6 +35,7 @@ Future<void> _open() async {
   await Hive.openBox<ChipMovement>(HiveService.chipMovementsBox);
   await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
   await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
+  await Hive.openBox<BankCount>(HiveService.bankCountsBox);
 }
 
 Future<void> _close() async {
@@ -46,10 +48,14 @@ void main() {
   tearDown(_close);
 
   group('format and whitelist', () {
-    test('export is format version 5', () {
+    test('export is format version 7 (Phase 7: participations)', () {
       final payload = BackupService.exportPayload();
-      expect(payload['formatVersion'], 5);
-      expect(BackupService.formatVersion, 5);
+      expect(payload['formatVersion'], 7);
+      expect(BackupService.formatVersion, 7);
+      // Count sheets ride along for restore on a new device.
+      expect(payload.containsKey('bankCounts'), isTrue);
+      // Table participations ride along too (v7+).
+      expect(payload.containsKey('participations'), isTrue);
     });
 
     test('export always includes identity and financial keys', () {
@@ -323,10 +329,13 @@ void main() {
   });
 
   group('C-3 fail-loud boxes are never reset', () {
-    test('failLoudBoxes lists identity and financial only', () {
+    test('failLoudBoxes lists identity, financial, counts, participations',
+        () {
       expect(HiveService.failLoudBoxes, {
         HiveService.playerIdentitiesBox,
         HiveService.financialEventsBox,
+        HiveService.bankCountsBox,
+        HiveService.participationsBox,
       });
       expect(HiveService.failLoudBoxes.contains(HiveService.sessionsBox),
           isFalse);
@@ -354,7 +363,7 @@ void main() {
       await PlayerIdentityService.createNew('Sara');
       final encoded = jsonEncode(BackupService.exportPayload());
       final decoded = jsonDecode(encoded) as Map<String, dynamic>;
-      expect(decoded['formatVersion'], 5);
+      expect(decoded['formatVersion'], 7);
       expect((decoded['playerIdentities'] as List), hasLength(1));
     });
   });

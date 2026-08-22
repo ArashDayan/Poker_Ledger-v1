@@ -6,7 +6,9 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
 import '../../services/player_history_service.dart';
+import '../../services/player_identity_service.dart';
 import '../../services/player_registry_service.dart';
+import '../../widgets/identity_link_sheet.dart';
 import '../../widgets/player_type_badge.dart';
 import '../player_account/player_account_screen.dart';
 import 'player_history_screen.dart';
@@ -107,6 +109,94 @@ class _PlayersDirectoryScreenState extends State<PlayersDirectoryScreen> {
     );
   }
 
+  /// Registers a NEW person with no session and no seat.
+  ///
+  /// Pre-seat registration: the identity is created (or linked through
+  /// confirm-on-suggest when the name already exists) and immediately
+  /// appears in the directory, where its account — deposits, credit,
+  /// markers — can be used before the person ever takes a seat.
+  Future<void> _registerPerson() async {
+    final nameCtrl = TextEditingController();
+    final noteCtrl = TextEditingController();
+
+    final created = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollable: true,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 16,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(tr('register_person_title'),
+                style: const TextStyle(
+                    fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text(tr('register_person_hint'),
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.textSecondary)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: nameCtrl,
+              autofocus: true,
+              decoration: InputDecoration(labelText: tr('name')),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: noteCtrl,
+              decoration:
+                  InputDecoration(labelText: tr('player_note_optional')),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () async {
+                final name = nameCtrl.text.trim();
+                if (name.isEmpty) return;
+
+                final suggestions = PlayerIdentityService.suggest(name);
+                String? personId;
+                if (suggestions.isEmpty) {
+                  personId = (await PlayerIdentityService.createNew(name))
+                      ?.id;
+                } else {
+                  // A name match is only a suggestion — confirm before
+                  /// linking, never auto-merge. Cancel aborts.
+                  final result = await confirmIdentityLink(
+                    ctx,
+                    typedName: name,
+                    suggestions: suggestions,
+                  );
+                  if (result.isCancel) return;
+                  if (result.isLink) personId = result.personId;
+                  if (personId == null) {
+                    personId = (await PlayerIdentityService.createNew(name))
+                        ?.id;
+                  }
+                }
+                if (personId == null) return;
+                if (noteCtrl.text.trim().isNotEmpty) {
+                  final identity = PlayerIdentityService.byId(personId);
+                  if (identity != null) {
+                    identity.note = noteCtrl.text.trim();
+                    await identity.save();
+                  }
+                }
+                Navigator.pop(ctx, true);
+              },
+              child: Text(tr('register_player')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (created == true && mounted) setState(() {});
+  }
+
   /// Bars a player from future seating. Confirmed first, because it
   /// changes how every later Add Player behaves for this person.
   Future<void> _blacklist(PlayerCareer c) async {
@@ -170,7 +260,16 @@ class _PlayersDirectoryScreenState extends State<PlayersDirectoryScreen> {
     final careers = _sorted(_filtered(PlayerHistoryService.searchBank(_query)));
 
     return Scaffold(
-      appBar: AppBar(title: Text(tr('players'))),
+      appBar: AppBar(
+        title: Text(tr('players')),
+        actions: [
+          IconButton(
+            tooltip: tr('register_person_title'),
+            icon: const Icon(Icons.person_add_alt_outlined),
+            onPressed: _registerPerson,
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(

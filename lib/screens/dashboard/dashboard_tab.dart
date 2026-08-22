@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/localization/app_localizations.dart';
+import '../../core/localization/enum_labels.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../widgets/polish.dart';
@@ -440,6 +441,11 @@ class DashboardTab extends StatelessWidget {
               Row(
                 children: [
                   _miniStat(tr('rake'), fmt.format(provider.totalRake), color: AppColors.gold),
+                  // Phase 7: house-banked game revenue — its own figure,
+                  // never merged into rake. Shown only when present.
+                  if (provider.totalHouseWin > 0)
+                    _miniStat(tr('house_win'), fmt.format(provider.totalHouseWin),
+                        color: AppColors.gold),
                   _miniStat(tr('dealer_tips'), fmt.format(provider.totalDealerTips),
                       color: AppColors.warning),
                   _miniStat(tr('host_profit'), fmt.format(provider.hostProfit),

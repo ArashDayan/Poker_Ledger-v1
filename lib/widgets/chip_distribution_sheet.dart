@@ -29,11 +29,23 @@ class ChipDistributionSheet extends StatefulWidget {
   /// Pre-filled selection, when editing.
   final ChipDistribution? initial;
 
+  /// Where the chips physically COME FROM in this movement
+  /// (Phase 2b, direction-correct composition).
+  ///
+  /// null (default) = the Bank — bank-originating flows (buy-in,
+  /// rebuy, float seeding) suggest from and validate against bank
+  /// inventory. A person's location for return / redemption-shaped
+  /// flows: the sheet then suggests from and validates against the
+  /// holder's (person-scoped) holding — NEVER against bank inventory.
+  /// A table's location for table-originated flows (table-level rake).
+  final ChipLocation? source;
+
   const ChipDistributionSheet({
     super.key,
     required this.targetAmount,
     required this.currency,
     this.initial,
+    this.source,
   });
 
   @override
@@ -49,8 +61,10 @@ class _ChipDistributionSheetState extends State<ChipDistributionSheet> {
     _selection = {...?widget.initial};
     if (_selection.isEmpty) {
       // Offer a sensible starting point rather than an empty grid — the
-      // banker can adjust from there.
-      _selection = ChipTrackingService.suggestDistribution(widget.targetAmount);
+      // banker can adjust from there. DIRECTION-CORRECT (Phase 2b):
+      // suggested from the location the chips physically come from.
+      _selection =
+          ChipTrackingService.suggestFrom(widget.source, widget.targetAmount);
     }
   }
 
@@ -59,7 +73,10 @@ class _ChipDistributionSheetState extends State<ChipDistributionSheet> {
   /// Tolerance guards against float noise, not real differences.
   bool get _matches => (_selectedValue - widget.targetAmount).abs() < 0.005;
 
-  bool get _bankCanCover => ChipTrackingService.bankCanCover(_selection);
+  /// The source location must hold what is being taken from it. For a
+  /// player return this is the person's holding — never the bank.
+  bool get _sourceCanCover =>
+      ChipTrackingService.locationCanCover(widget.source, _selection);
 
   void _set(String chipId, int qty) {
     setState(() {
@@ -120,8 +137,8 @@ class _ChipDistributionSheetState extends State<ChipDistributionSheet> {
                     ),
                     TextButton(
                       onPressed: () => setState(() {
-                        _selection = ChipTrackingService
-                            .suggestDistribution(widget.targetAmount);
+                        _selection = ChipTrackingService.suggestFrom(
+                            widget.source, widget.targetAmount);
                       }),
                       child: Text(tr('suggest_chips')),
                     ),
@@ -166,8 +183,13 @@ class _ChipDistributionSheetState extends State<ChipDistributionSheet> {
                               label: chip.hasName
                                   ? '${fmt.format(chip.value)} · ${chip.name}'
                                   : fmt.format(chip.value),
+                              // Direction-correct (Phase 2b): availability
+                              // is what the SOURCE location holds — the
+                              // bank for buy-ins, the holder's person
+                              // holding for returns, the table for
+                              // table-level rake.
                               available: ChipTrackingService.quantityAt(
-                                  ChipLocation.bank, chip.id),
+                                  widget.source ?? ChipLocation.bank, chip.id),
                               colorValue: chip.colorValue,
                               quantity: _selection[chip.id] ?? 0,
                               onChanged: (q) => _set(chip.id, q),
@@ -183,7 +205,11 @@ class _ChipDistributionSheetState extends State<ChipDistributionSheet> {
                 target: widget.targetAmount,
                 selected: _selectedValue,
                 matches: _matches,
-                bankCanCover: _bankCanCover,
+                sourceCanCover: _sourceCanCover,
+                coverWarningKey:
+                    widget.source == null || widget.source!.isBank
+                        ? 'bank_cannot_cover'
+                        : 'holder_cannot_cover',
                 onSkip: () => Navigator.pop(context, <String, int>{}),
                 onConfirm: () => Navigator.pop(context, _selection),
               ),
@@ -355,7 +381,10 @@ class _Footer extends StatelessWidget {
   final double target;
   final double selected;
   final bool matches;
-  final bool bankCanCover;
+  final bool sourceCanCover;
+  /// Localization key for the "cannot cover" warning — picked by the
+  /// caller because the source (bank vs holder vs table) is known there.
+  final String coverWarningKey;
   final VoidCallback onSkip;
   final VoidCallback onConfirm;
 
@@ -364,7 +393,8 @@ class _Footer extends StatelessWidget {
     required this.target,
     required this.selected,
     required this.matches,
-    required this.bankCanCover,
+    required this.sourceCanCover,
+    required this.coverWarningKey,
     required this.onSkip,
     required this.onConfirm,
   });
@@ -434,10 +464,10 @@ class _Footer extends StatelessWidget {
               style: const TextStyle(fontSize: 11, color: AppColors.warning),
             ),
           ],
-          if (!bankCanCover) ...[
+          if (!sourceCanCover) ...[
             const SizedBox(height: 6),
             Text(
-              tr('bank_cannot_cover'),
+              tr(coverWarningKey),
               textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 11, color: AppColors.danger),
             ),

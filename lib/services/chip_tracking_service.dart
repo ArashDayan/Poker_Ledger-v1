@@ -1,5 +1,6 @@
 import 'package:uuid/uuid.dart';
 
+import '../models/bank_count.dart';
 import '../models/chip_movement.dart';
 import 'chip_bank_service.dart';
 import 'hive_service.dart';
@@ -72,6 +73,13 @@ class ChipReconciliation {
   final double removed;
   final double rakeReturnedToBank;
 
+  /// Phase 7: house-banked game value that became casino-owned (chips
+  /// lost at a house game such as roulette, reason
+  /// [ChipMovementReason.houseWin]). Reported on its OWN figure — never
+  /// folded into [rakeReturnedToBank] — so casino revenue stays
+  /// classifiable by source (poker rake vs house-game wins).
+  final double houseWinToBank;
+
   const ChipReconciliation({
     required this.startingBankValue,
     required this.currentBankValue,
@@ -79,6 +87,7 @@ class ChipReconciliation {
     required this.onTables,
     required this.removed,
     required this.rakeReturnedToBank,
+    this.houseWinToBank = 0,
     this.countedBankValue,
   });
 
@@ -268,6 +277,20 @@ class ChipTrackingService {
   static List<ChipMovement> movementsForPlayer(String playerId,
           {String? sessionId}) =>
       movementsFor(ChipLocation.player(playerId), sessionId: sessionId);
+
+  /// The chip-holder reference for a session seat.
+  ///
+  /// Phase 2a: chip holdings are PERSON-scoped. A linked seat resolves
+  /// to its `personId`, so the same human's chips stay in one holding
+  /// across seats, tables and sessions. An unlinked seat keeps its own
+  /// row id (the legacy reference) — identities are never invented, and
+  /// unlinked records remain readable until the banker links the seat.
+  ///
+  /// Callers pass the seat row's fields; this service deliberately does
+  /// not take a [Player] object so the chip layer stays free of
+  /// session-model imports.
+  static String holderRef({required String playerId, String? personId}) =>
+      (personId != null && personId.isNotEmpty) ? personId : playerId;
 
   static List<ChipMovement> movementsForTable(String tableId,
           {String? sessionId}) =>
@@ -566,41 +589,13 @@ class ChipTrackingService {
     return made;
   }
 
-  /// Physical chips moving straight from one player to another — a pot
-  /// being pushed, or settling up between themselves.
-  ///
-  /// The Bank is not involved, so bank inventory is unchanged; only the
-  /// two players' derived holdings move. No money transaction is created
-  /// HERE, because no money entered or left the session.
-  ///
-  /// TABLE ATTRIBUTION IS THE CALLER'S JOB.
-  /// When the two players sit at different tables the chips have
-  /// physically crossed the room, so the two tables' balances must move
-  /// even though the session's does not. That is a money-ledger concern,
-  /// not a chip-ledger one, so it is handled by the caller writing a
-  /// mirrored transferOut/transferIn pair — exactly the mechanism a
-  /// table-to-table player move already uses. Doing it here would drag a
-  /// LedgerTransaction dependency into the chip layer, which is
-  /// deliberately kept free of one.
-  static Future<List<ChipMovement>> recordPlayerTransfer({
-    required String fromPlayerId,
-    required String toPlayerId,
-    required Map<String, int> distribution,
-    String? sessionId,
-    String? note,
-  }) async {
-    if (fromPlayerId == toPlayerId) {
-      throw ArgumentError('Cannot transfer chips to the same player');
-    }
-    return recordDistribution(
-      distribution: distribution,
-      from: ChipLocation.player(fromPlayerId),
-      to: ChipLocation.player(toPlayerId),
-      reason: ChipMovementReason.transfer,
-      sessionId: sessionId,
-      note: note,
-    );
-  }
+  // Player-to-player chip transfer is REMOVED (E7): a pot being pushed
+  // or players settling up is physical play, not a financial
+  // operation. The ledger captures the net effect through physical
+  // counts ([adjustPlayerHoldingToCount]) and the approved
+  // person-scoped holding, never through recorded player↔player
+  // movements. The `transfer` reason survives for parsing legacy
+  // records only.
 
   /// Reconciles one player's RECORDED holding with the ACTUAL physical
   /// count of their stack.
@@ -691,22 +686,71 @@ class ChipTrackingService {
   // Derived balances
   // -----------------------------------------------------------------
 
+  /// The latest physical case count sheet, or null when none exists.
+  ///
+  /// Latest by [BankCount.countedAt], with the id as a deterministic
+  /// tie-break. Earlier counts remain in the box as audit history.
+  static BankCount? latestBankCount() {
+    try {
+      final box = HiveService.bankCounts;
+      BankCount? latest;
+      for (final c in box.values) {
+        if (latest == null) {
+          latest = c;
+          continue;
+        }
+        final cmp = c.countedAt.compareTo(latest.countedAt);
+        if (cmp > 0 || (cmp == 0 && c.id.compareTo(latest.id) > 0)) {
+          latest = c;
+        }
+      }
+      return latest;
+    } catch (_) {
+      // Box not open (unit tests that only open the chip ledger).
+      return null;
+    }
+  }
+
   /// Net quantity of one denomination at one location.
+  ///
+  /// BANK BASELINE (Phase 2b): the case's starting point is the LATEST
+  /// physical count sheet — `latest BankCount + movements strictly
+  /// AFTER its countedAt`. Only when NO count sheet exists yet does the
+  /// baseline fall back to the `ChipType.quantity` record, which
+  /// preserves the exact pre-2b derived values for count-less (legacy)
+  /// devices — covered by an invariance test.
+  ///
+  /// Every other location starts empty and is built purely from
+  /// movements (their timestamp is never a filter — full history).
   static int quantityAt(ChipLocation location, String chipTypeId,
       {String? sessionId}) {
     final key = location.encoded;
-    var net = 0;
+    int net;
+    DateTime? sinceCount;
 
-    // The bank's balance starts from the physical count the banker
-    // entered in Chip Bank; every other location starts empty and is
-    // built purely from movements.
     if (location.isBank) {
-      net = ChipBankService.byId(chipTypeId)?.quantity ?? 0;
+      final count = latestBankCount();
+      if (count != null) {
+        // Counted as the physical fact; denominations absent from the
+        // sheet were counted as zero (or not yet in the inventory).
+        net = count.counts[chipTypeId] ?? 0;
+        sinceCount = count.countedAt;
+      } else {
+        net = ChipBankService.byId(chipTypeId)?.quantity ?? 0;
+      }
+    } else {
+      net = 0;
     }
 
     for (final m in _all) {
       if (m.chipTypeId != chipTypeId) continue;
       if (sessionId != null && m.sessionId != sessionId) continue;
+      // Post-count only, and only for the bank baseline: a count
+      // sheet already includes everything that happened before it.
+      // Movements are included only when strictly AFTER the count —
+      // a movement at the exact same instant is ambiguous and the
+      // honest answer is "count again".
+      if (sinceCount != null && !m.timestamp.isAfter(sinceCount)) continue;
       if (m.toLocation == key) net += m.quantity;
       if (m.fromLocation == key) net -= m.quantity;
     }
@@ -882,15 +926,18 @@ class ChipTrackingService {
   // Bank inventory + session reconciliation
   // -----------------------------------------------------------------
 
-  /// The Bank's STARTING inventory value — the physical count the banker
-  /// entered on the Chip Bank screen, before any movement.
+  /// The Bank's BASELINE inventory value — the total of the LATEST
+  /// count sheet, or the `ChipType.quantity` record when no count
+  /// sheet exists yet (legacy fallback; identical to the pre-2b value).
   ///
   /// This is the baseline the low-inventory thresholds are measured
-  /// against. It deliberately ignores movements.
+  /// against ("the case is nearly empty RELATIVE TO ITS LAST KNOWN
+  /// COUNTED STATE"). It deliberately ignores movements.
   static double startingBankValue() {
+    final count = latestBankCount();
     var total = 0.0;
     for (final c in ChipBankService.allChips()) {
-      total += c.value * c.quantity;
+      total += c.value * (count != null ? (count.counts[c.id] ?? 0) : c.quantity);
     }
     return total;
   }
@@ -948,10 +995,19 @@ class ChipTrackingService {
     // chips physically sit in the Bank now. Counting them keeps the
     // reconciliation identity true — without this, a session that paid
     // tips would report the tip value as unexplained.
+    // House wins (Phase 7) also physically sit in the Bank now, but
+    // they are folded into their OWN figure: house-game revenue must
+    // stay distinguishable from poker rake in the report.
     var rakeToBank = 0.0;
+    var houseWinToBank = 0.0;
     for (final m in _all) {
       if (sessionId != null && m.sessionId != sessionId) continue;
       final r = m.reasonEnum;
+      if (r == ChipMovementReason.houseWin) {
+        if (m.to.isBank) houseWinToBank += m.totalValue;
+        if (m.from.isBank) houseWinToBank -= m.totalValue;
+        continue;
+      }
       if (r != ChipMovementReason.rake &&
           r != ChipMovementReason.dealerTips) {
         continue;
@@ -979,6 +1035,7 @@ class ChipTrackingService {
       onTables: onTables,
       removed: removed,
       rakeReturnedToBank: rakeToBank,
+      houseWinToBank: houseWinToBank,
     );
   }
 
@@ -996,14 +1053,26 @@ class ChipTrackingService {
     return total;
   }
 
-  /// Suggests a distribution for [amount], greedily from the largest
-  /// denomination down, never exceeding what the bank actually holds.
+  /// Suggests a distribution for [amount] from a location's holdings,
+  /// greedily from the largest denomination down, never exceeding what
+  /// that location actually holds.
   ///
-  /// Returns whatever it can cover; the caller compares [valueOf] against
-  /// the target and warns if they differ. Deliberately does not throw on
-  /// an impossible amount — the banker may still want a partial
-  /// suggestion to adjust by hand.
-  static Map<String, int> suggestDistribution(double amount) {
+  /// DIRECTION-CORRECT COMPOSITION (Phase 2b): the composition
+  /// available to the banker follows the direction of the movement —
+  /// bank-originating flows suggest from the bank; return /
+  /// redemption-shaped flows suggest from the holder's (person-scoped)
+  /// holding. A player's chip return is NEVER validated against bank
+  /// inventory: the bank may not even hold the denominations being
+  /// returned.
+  ///
+  /// [source] null = the Bank (the historical default).
+  ///
+  /// Returns whatever it can cover; the caller compares [valueOf]
+  /// against the target and warns if they differ. Deliberately does not
+  /// throw on an impossible amount — the banker may still want a
+  /// partial suggestion to adjust by hand.
+  static Map<String, int> suggestFrom(ChipLocation? source, double amount) {
+    final loc = source ?? ChipLocation.bank;
     final result = <String, int>{};
     var remaining = amount;
 
@@ -1013,7 +1082,7 @@ class ChipTrackingService {
       ..sort((a, b) => b.value.compareTo(a.value));
 
     for (final chip in chips) {
-      final available = quantityAt(ChipLocation.bank, chip.id);
+      final available = quantityAt(loc, chip.id);
       if (available <= 0) continue;
       // Epsilon guards against 0.1+0.2 style float drift leaving a
       // denomination one short.
@@ -1027,11 +1096,172 @@ class ChipTrackingService {
     return result;
   }
 
+  /// Bank-anchored suggestion — the historical API.
+  static Map<String, int> suggestDistribution(double amount) =>
+      suggestFrom(null, amount);
+
+  /// Whether [source] (null = Bank) physically holds [distribution].
+  static bool locationCanCover(ChipLocation? source, Map<String, int> distribution) {
+    final loc = source ?? ChipLocation.bank;
+    for (final e in distribution.entries) {
+      if (quantityAt(loc, e.key) < e.value) return false;
+    }
+    return true;
+  }
+
   /// Whether the bank physically holds a proposed distribution.
   static bool bankCanCover(Map<String, int> distribution) {
     for (final e in distribution.entries) {
       if (quantityAt(ChipLocation.bank, e.key) < e.value) return false;
     }
     return true;
+  }
+
+  // -----------------------------------------------------------------
+  // Table float (Phase 2b).
+  //
+  // The table's imprest fund: chips the bank deliberately places at a
+  // table so rake/tips and play have chips to work with. The float is
+  // the table's chip location — derived, never stored.
+  //
+  // NEGATIVE FLOAT IS A STATE, NOT AN ERROR (E4 / Phase 0): on a
+  // float-less (home) table, rake and tips debit the table location
+  // and drive it negative. That is "pot consumption" — the table took
+  // chips out of play beyond its float — and is reported as such by
+  // the reconciliation, never treated as a discrepancy by itself. The
+  // conservation identity still holds because those chips are in the
+  // Bank.
+  // -----------------------------------------------------------------
+
+  /// The table's current derived chip position (float + anything else
+  /// recorded at the table location). May be negative (pot
+  /// consumption) — see section note.
+  static double tableFloatValue(String tableId) =>
+      tableHolding(tableId).totalValue;
+
+  /// Seeds the table float: bank → table. Requires bank cover; a float
+  /// can only be funded with chips the case actually holds.
+  static Future<List<ChipMovement>> seedTableFloat(
+    String tableId,
+    Map<String, int> distribution, {
+    String? sessionId,
+    String? note,
+  }) =>
+      _floatMove(
+        tableId,
+        distribution,
+        outbound: true,
+        sessionId: sessionId,
+        note: note ?? 'float seed',
+      );
+
+  /// Replenishes the table float: bank → table (same mechanics as the
+  /// seed; the note keeps the audit trail saying which was which).
+  static Future<List<ChipMovement>> replenishTableFloat(
+    String tableId,
+    Map<String, int> distribution, {
+    String? sessionId,
+    String? note,
+  }) =>
+      _floatMove(
+        tableId,
+        distribution,
+        outbound: true,
+        sessionId: sessionId,
+        note: note ?? 'float replenish',
+      );
+
+  /// Returns the table float to the bank: table → bank.
+  ///
+  /// [counted] — the table-close count-back. When given, the movement
+  /// records the COUNTED quantities (the physical fact), and the note
+  /// records expected vs counted per denomination — the variance slip.
+  /// The tray's derived residual after the return is deliberately left
+  /// in place for the reconciliation report: a count-back NEVER
+  /// auto-corrects the ledger (counts are facts, not corrections).
+  /// When omitted, the entire derived tray is returned.
+  static Future<List<ChipMovement>> returnTableFloat(
+    String tableId, {
+    Map<String, int>? counted,
+    String? sessionId,
+    String? note,
+  }) async {
+    final tray = tableHolding(tableId);
+    Map<String, int> dist;
+    String varianceNote;
+
+    if (counted != null) {
+      dist = {
+        for (final e in counted.entries)
+          if (e.value > 0) e.key: e.value,
+      };
+      // Expected (derived tray) vs counted, per denomination that
+      // differs — the variance slip lives in the movement note.
+      final diffs = <String>[];
+      final ids = <String>{...dist.keys};
+      for (final s in tray.nonEmpty) {
+        ids.add(s.chipTypeId);
+      }
+      for (final id in ids) {
+        final expected = quantityAt(ChipLocation.table(tableId), id);
+        final actual = counted[id] ?? 0;
+        if (expected != actual) {
+          diffs.add('$id: expected $expected, counted $actual');
+        }
+      }
+      varianceNote = diffs.isEmpty
+          ? 'float count-back: clean'
+          : 'float count-back variance — ${diffs.join('; ')}';
+    } else {
+      dist = {
+        for (final s in tray.nonEmpty)
+          if (s.quantity > 0) s.chipTypeId: s.quantity,
+      };
+      varianceNote = 'float return';
+    }
+
+    if (dist.isEmpty) return const [];
+    return _floatMove(
+      tableId,
+      dist,
+      outbound: false,
+      sessionId: sessionId,
+      note: note == null ? varianceNote : '$note · $varianceNote',
+    );
+  }
+
+  /// Shared mechanics for float movements.
+  ///
+  /// [outbound] true = bank → table (seed/replenish): bank cover is
+  /// required. [outbound] false = table → bank (return): the
+  /// distribution must not exceed the derived tray UNLESS it is a
+  /// count-back (the physical fact wins; the residual is reported).
+  /// Count-backs pass through as-is because [returnTableFloat] builds
+  /// them from the counted map — the cover check there would compare
+  /// the count against the ledger, which is exactly the thing a
+  /// count-back may legitimately disagree with.
+  static Future<List<ChipMovement>> _floatMove(
+    String tableId,
+    Map<String, int> distribution, {
+    required bool outbound,
+    String? sessionId,
+    required String note,
+  }) async {
+    final cleaned = {
+      for (final e in distribution.entries)
+        if (e.value > 0) e.key: e.value,
+    };
+    if (cleaned.isEmpty) return const [];
+    if (outbound && !bankCanCover(cleaned)) {
+      throw ArgumentError('The bank does not hold the float distribution.');
+    }
+    return recordDistribution(
+      distribution: cleaned,
+      from: outbound ? ChipLocation.bank : ChipLocation.table(tableId),
+      to: outbound ? ChipLocation.table(tableId) : ChipLocation.bank,
+      reason: ChipMovementReason.tableFloat,
+      sessionId: sessionId,
+      note: note,
+    );
   }
 }

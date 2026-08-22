@@ -58,6 +58,12 @@ extension TransactionTypeL10n on TransactionType {
         return tr('transfer_in');
       case TransactionType.dealerTips:
         return tr('dealer_tips');
+      case TransactionType.tableCashOut:
+        return tr('table_cash_out');
+      case TransactionType.reentry:
+        return tr('reentry');
+      case TransactionType.houseWin:
+        return tr('house_win');
     }
   }
 }

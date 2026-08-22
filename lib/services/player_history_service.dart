@@ -163,9 +163,22 @@ class PlayerHistoryService {
       name.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 
   /// Builds one record for a specific player row.
+  ///
+  /// A pre-seat registration that never took a seat and never recorded
+  /// a transaction is not a session appearance — listing it would
+  /// inflate "sessions played" with nights the person never played.
+  /// A player who DID play (has transactions) keeps their appearance
+  /// record even after being unseated, so unseating a player can never
+  /// erase their history.
   static PlayerSessionRecord? recordFor(Player player) {
     final session = HiveService.sessions.get(player.sessionId);
     if (session == null) return null;
+    if (!player.seated &&
+        SessionService.transactionsFor(session.id, includeVoided: true)
+                .where((t) => t.playerId == player.id)
+                .isEmpty) {
+      return null;
+    }
     return PlayerSessionRecord(
       session: session,
       player: player,

@@ -4,6 +4,7 @@ import '../models/player.dart';
 import '../models/session.dart';
 import '../models/transaction.dart';
 import 'hive_service.dart';
+import 'participation_service.dart';
 
 const _uuid = Uuid();
 
@@ -16,8 +17,10 @@ enum BalanceSeverity { balanced, small, large }
 /// Result of the end-of-session accounting check.
 ///
 /// IMPORTANT — this is a SESSION-LEVEL check only:
-///   Money In  = Total Buy-ins + Total Rebuys
-///   Money Out = Total Cash-outs + Total Rake
+///   Money In  = Buy-ins + Rebuys + Re-entries (carried chips back
+///               into table play — Phase 7; never a new purchase)
+///   Money Out = Cash-outs + Table Cash-outs + Rake + Dealer Tips +
+///               House Wins (house-banked game revenue — Phase 7)
 /// A single player's cash-out is NEVER compared against their own
 /// buy-in/rebuy. A player can buy in for 2,000, win the session, and
 /// cash out for 5,000 — that is correct and must never be blocked.
@@ -71,12 +74,14 @@ class BalanceResult {
     if (diff > 0) {
       return [
         'A cash-out may be missing from the log.',
+        'A table cash-out or house win may be missing from the log.',
         'Rake may not have been fully logged for one or more pots.',
         'A buy-in or rebuy amount may have been entered too high.',
       ];
     }
     return [
       'A buy-in or rebuy may be missing from the log.',
+      'A re-entry (carried chips) may be missing from the log.',
       'A cash-out may have been recorded twice, or for too high an amount.',
       'Rake may have been recorded twice.',
     ];
@@ -152,6 +157,40 @@ class SessionService {
       ..sort((a, b) => a.seatNumber.compareTo(b.seatNumber));
   }
 
+  /// Players currently occupying a seat. Seating-scoped consumers
+  /// (table views, seat grids, money actions) must read this rather
+  /// than [playersFor], so unseated registrations never leak into seat
+  /// logic.
+  static List<Player> seatedPlayersFor(String sessionId) =>
+      playersFor(sessionId).where((p) => p.seated).toList();
+
+  /// Players registered for the session who do not currently occupy a
+  /// seat. Their registration, person link and any session records are
+  /// all preserved while they are unseated.
+  static List<Player> unseatedPlayersFor(String sessionId) =>
+      playersFor(sessionId).where((p) => !p.seated).toList();
+
+  /// This session's registration row for [personId] — seated or not —
+  /// or null when the person is not registered for the session. Used to
+  /// make pre-seat registration idempotent per (session, person).
+  static Player? registeredForSession(String sessionId, String personId) {
+    for (final p in playersFor(sessionId)) {
+      if (p.personId == personId) return p;
+    }
+    return null;
+  }
+
+  /// The SEATED row for [personId], or null. Deposit-to-chips and the
+  /// other flows that physically hand chips to a seat at a table require
+  /// an actual seat; a registered-but-unseated person has no seat to
+  /// hand chips to (wallet chip issuance is a later phase).
+  static Player? seatedForSession(String sessionId, String personId) {
+    for (final p in playersFor(sessionId)) {
+      if (p.personId == personId && p.seated) return p;
+    }
+    return null;
+  }
+
   static double _sum(String sessionId, TransactionType type, {String? playerId}) {
     return transactionsFor(sessionId)
         .where((t) => t.type == type && (playerId == null || t.playerId == playerId))
@@ -161,6 +200,32 @@ class SessionService {
   static double totalBuyIn(String sessionId) => _sum(sessionId, TransactionType.buyIn);
   static double totalRebuy(String sessionId) => _sum(sessionId, TransactionType.rebuy);
   static double totalCashOut(String sessionId) => _sum(sessionId, TransactionType.cashOut);
+
+  /// TABLE CASH-OUTS (Phase 7): money that left table play because a
+  /// player left the table carrying counted chips. The chips stay the
+  /// person's physical holding — this is session money OUT, but NOT
+  /// the cage's final redemption (that is [totalCashOut]).
+  ///
+  /// A table cash-out is the table-level out of a carried-chips cycle;
+  /// when the player re-enters another table with the same chips, the
+  /// re-entry ([totalReentry]) brings the value back into table play,
+  /// so the pair balances across the session.
+  static double totalTableCashOut(String sessionId) =>
+      _sum(sessionId, TransactionType.tableCashOut);
+
+  /// RE-ENTRIES (Phase 7): carried chips committed to a table — the
+  /// player's EXISTING person-scoped holding re-entering table play.
+  /// Session money IN (it balances the table cash-out that carried the
+  /// chips off the previous table), but never a new purchase:
+  /// [totalBuyIn] and every wallet figure are untouched by it.
+  static double totalReentry(String sessionId) =>
+      _sum(sessionId, TransactionType.reentry);
+
+  /// HOUSE WINS (Phase 7): house-banked game revenue (e.g. roulette).
+  /// Session money OUT and house income — classified separately from
+  /// [totalRake] everywhere it is reported; the two are never merged.
+  static double totalHouseWin(String sessionId) =>
+      _sum(sessionId, TransactionType.houseWin);
   static double totalRake(String sessionId) => _sum(sessionId, TransactionType.rakeCollection);
   static double totalCashDrop(String sessionId) => _sum(sessionId, TransactionType.cashDrop);
 
@@ -192,26 +257,66 @@ class SessionService {
   static double playerRebuyOnly(String sessionId, String playerId) =>
       _sum(sessionId, TransactionType.rebuy, playerId: playerId);
 
-  /// Total cash a player has taken off the table. A player who busted out
-  /// with a recorded $0 cash-out correctly contributes 0 here — that is
-  /// different from never having cashed out at all (see [hasCashedOut]).
+  /// Total money a player has taken off the table(s): cage redemptions
+  /// (cashOut) + table cash-outs (Phase 7 — the player left the table
+  /// carrying counted chips). A player who busted out with a recorded
+  /// $0 leg contributes 0 here — that is different from never having
+  /// cashed out at all (see [hasCashedOut]).
   static double playerTotalCashOut(String sessionId, String playerId) {
-    return _sum(sessionId, TransactionType.cashOut, playerId: playerId);
+    return _sum(sessionId, TransactionType.cashOut, playerId: playerId) +
+        _sum(sessionId, TransactionType.tableCashOut, playerId: playerId);
   }
 
-  /// Whether a cash-out has been RECORDED for this player at all,
-  /// regardless of amount. A $0 cash-out (busted out) counts as "settled"
-  /// — it is not the same as no record existing yet.
+  /// Phase 7: the carried chips this player re-committed to tables via
+  /// re-entry. These chips were already "put in" when they were first
+  /// purchased — a re-entry never counts as new money in for P/L
+  /// purposes; it only cancels the matching table cash-out(s) so the
+  /// same chips are not taken twice.
+  static double playerReentry(String sessionId, String playerId) =>
+      _sum(sessionId, TransactionType.reentry, playerId: playerId);
+
+  /// Phase 7: house wins this player paid at house-banked games
+  /// (e.g. roulette). Session money OUT — settled, no longer in play.
+  ///
+  /// Deliberately NOT part of [playerProfitLoss]: the value went to the
+  /// HOUSE, not back to the player. The loss surfaces in the P/L
+  /// through the smaller carried-out amount (the player's chips left
+  /// the books for the house, so less comes back via table cash-outs /
+  /// redemption) — counting the house win as a player "out" would
+  /// double-count the same chips.
+  static double playerHouseWin(String sessionId, String playerId) =>
+      _sum(sessionId, TransactionType.houseWin, playerId: playerId);
+
+  /// Whether the player has settled a table: a cage redemption (cashOut)
+  /// OR a table cash-out (Phase 7) has been RECORDED for them,
+  /// regardless of amount. A $0 leg (busted out) counts as "settled" —
+  /// it is not the same as no record existing yet.
   static bool hasCashedOut(String sessionId, String playerId) {
-    return transactionsFor(sessionId)
-        .any((t) => t.type == TransactionType.cashOut && t.playerId == playerId);
+    return transactionsFor(sessionId).any((t) =>
+        t.playerId == playerId &&
+        (t.type == TransactionType.cashOut ||
+            t.type == TransactionType.tableCashOut));
   }
 
-  /// Net result once a player is done: cash-out minus everything they put
-  /// in. This is purely informational/reporting — it is a *result*, never
-  /// a constraint on how much someone is allowed to cash out.
+  /// Net result: the money the player truly took OUT of the session
+  /// (final redemptions plus carried chips that did NOT come back) minus
+  /// everything they put in.
+  ///
+  /// PHASE 7 RE-ENTRY CORRECTION: a table cash-out is NOT a final
+  /// settlement — the player carries the chips and can re-enter with the
+  /// SAME chips. So a carried-out amount that the player re-committed
+  /// must be netted out, or the same chips would count as "taken" twice
+  /// (once at the table cash-out, once at the later redemption). The
+  /// re-entry subtracts exactly the amount that came back into play, so
+  /// only the chips the player ultimately kept (and later redeemed) are
+  /// counted as money taken out.
+  ///
+  /// This is purely informational/reporting — it is a *result*, never a
+  /// constraint on how much someone is allowed to cash out.
   static double playerProfitLoss(String sessionId, String playerId) {
-    return playerTotalCashOut(sessionId, playerId) - playerTotalIn(sessionId, playerId);
+    return (playerTotalCashOut(sessionId, playerId) -
+                playerReentry(sessionId, playerId)) -
+            playerTotalIn(sessionId, playerId);
   }
 
   /// Rake attributed to one player.
@@ -250,8 +355,18 @@ class SessionService {
     return matches.last.amount;
   }
 
-  /// Host profit = the house's own earnings = rake collected.
-  static double hostProfit(String sessionId) => totalRake(sessionId);
+  /// The house's total earnings from the session: poker rake PLUS
+  /// house-game wins (Phase 7).
+  ///
+  /// REVENUE BY SOURCE (Phase 7): the two components stay SEPARATE
+  /// everywhere they are reported — [totalRake] is the house's fee on
+  /// player-vs-player poker pots, [totalHouseWin] is the house playing
+  /// against the player and winning their chips (e.g. roulette). They
+  /// are never merged into a generic "rake" figure; this getter is only
+  /// their sum (the house's total take), and both components remain
+  /// individually queryable for the accounting/reporting layer.
+  static double hostProfit(String sessionId) =>
+      totalRake(sessionId) + totalHouseWin(sessionId);
 
   /// Cash still physically on the table (or with players): everything
   /// that came in, minus everything paid out or taken as rake. This is
@@ -260,12 +375,23 @@ class SessionService {
   /// settled; both are shown as the same value in the UI intentionally.
   static double moneyStillInPlay(String sessionId) {
     return totalBuyIn(sessionId) +
-        totalRebuy(sessionId) -
+        totalRebuy(sessionId) +
+        // Re-entries (Phase 7) bring carried chips back into table
+        // play — they are money IN, balancing the table cash-out that
+        // carried those same chips off the previous table.
+        totalReentry(sessionId) -
         totalCashOut(sessionId) -
+        // Table cash-outs leave table play the same way redemptions
+        // do (Phase 7): the chips are in the person's hand, not at
+        // the table.
+        totalTableCashOut(sessionId) -
         totalRake(sessionId) -
         // Subtracted ONCE, for the same reason checkBalance adds it to
         // money out: tipped chips are no longer on the table.
-        totalDealerTips(sessionId);
+        totalDealerTips(sessionId) -
+        // House wins (Phase 7) leave table play for the house — the
+        // chips became casino-owned at a house-banked game.
+        totalHouseWin(sessionId);
   }
 
   /// A soft, non-blocking check for whether [amount] looks unusually
@@ -286,15 +412,33 @@ class SessionService {
   // ---------- The balance check (SESSION LEVEL ONLY) ----------
 
   static BalanceResult checkBalance(String sessionId) {
-    final moneyIn = totalBuyIn(sessionId) + totalRebuy(sessionId);
+    // Re-entries (Phase 7) are money IN: the player's carried chips
+    // re-enter table play, exactly balancing the table cash-out that
+    // carried them off the previous table. They are NOT a new purchase
+    // (totalBuyIn is untouched) — but for the session identity they are
+    // an inflow, just like a buy-in.
+    final moneyIn = totalBuyIn(sessionId) +
+        totalRebuy(sessionId) +
+        totalReentry(sessionId);
     // Dealer tips are counted here ONCE, alongside cash-out and rake,
     // because those chips physically left the table for the Bank. A
     // settled session that paid tips would otherwise report a false
     // discrepancy equal to the tip total.
+    // Table cash-outs (Phase 7) are session money OUT — the chips
+    // left table play for the person's hand — counted exactly like
+    // redemptions in the identity.
+    // House wins (Phase 7) are session money OUT — the chips became
+    // casino-owned at a house-banked game. Counted here like rake, but
+    // kept on its own figure ([totalHouseWin]) so the report classifies
+    // revenue by source instead of merging it into "rake".
     final moneyOut = totalCashOut(sessionId) +
+        totalTableCashOut(sessionId) +
         totalRake(sessionId) +
-        totalDealerTips(sessionId);
-    final neverCashedOut = playersFor(sessionId)
+        totalDealerTips(sessionId) +
+        totalHouseWin(sessionId);
+    // Seated players only: an unseated registration never played, so
+    // flagging it as "never cashed out" would be a false lead.
+    final neverCashedOut = seatedPlayersFor(sessionId)
         .where((p) => !hasCashedOut(sessionId, p.id))
         .toList();
 
@@ -368,7 +512,13 @@ class SessionService {
     if (amount < 0) {
       throw ArgumentError('Amount cannot be negative.');
     }
-    if (amount == 0 && type != TransactionType.cashOut) {
+    // A zero is VALID for a cash-out and for a table cash-out: a busted
+    // player leaves with (and re-enters nothing) $0. Every other type
+    // requires a positive amount (a $0 buy-in/rebuy/rake/drop/re-entry is
+    // not a real transaction).
+    if (amount == 0 &&
+        type != TransactionType.cashOut &&
+        type != TransactionType.tableCashOut) {
       throw ArgumentError('Amount must be greater than zero for ${type.label}.');
     }
     final player = playerId == null ? null : HiveService.players.get(playerId);
@@ -396,6 +546,10 @@ class SessionService {
         'A host signature is required for ${type.label} transactions.',
       );
     }
+    // Phase 6: stamp player money legs onto their table participation
+    // (opens on the first leg). Tracking never breaks money — any
+    // failure here leaves the leg unstamped, which settles as before.
+    ParticipationService.stampTransaction(tx);
     await HiveService.transactions.put(tx.id, tx);
     return tx;
   }
@@ -421,7 +575,11 @@ class SessionService {
     if (amount < 0) {
       throw ArgumentError('Amount cannot be negative.');
     }
-    if (amount == 0 && tx.type != TransactionType.cashOut) {
+    // A zero is VALID for a cash-out and for a table cash-out (a busted
+    // player). Every other type requires a positive amount.
+    if (amount == 0 &&
+        tx.type != TransactionType.cashOut &&
+        tx.type != TransactionType.tableCashOut) {
       throw ArgumentError('Amount must be greater than zero for ${tx.type.label}.');
     }
     if (tx.requiresSignature &&

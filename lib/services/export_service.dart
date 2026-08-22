@@ -10,6 +10,7 @@ import '../models/financial_event.dart';
 import '../models/session.dart';
 import 'financial_ledger_service.dart';
 import 'rebate_service.dart';
+import 'table_service.dart';
 import 'report_service.dart';
 import 'session_service.dart';
 import 'session_settlement_view.dart';
@@ -126,15 +127,22 @@ class ExportService {
             data: [
               ['Total Buy-in', fmt.formatRaw(SessionService.totalBuyIn(session.id))],
               ['Total Rebuy', fmt.formatRaw(SessionService.totalRebuy(session.id))],
-              ['Money In (Buy-in + Rebuy)', fmt.formatRaw(balance.moneyIn)],
+              ['Total Re-entry (carried chips committed — not a purchase)',
+                  fmt.formatRaw(SessionService.totalReentry(session.id))],
+              ['Money In (Buy-in + Rebuy + Re-entry)', fmt.formatRaw(balance.moneyIn)],
               ['Total Cash-out', fmt.formatRaw(SessionService.totalCashOut(session.id))],
-              ['Rake Collected', fmt.formatRaw(SessionService.totalRake(session.id))],
+              ['Total Table Cash-out (chips carried out of tables)',
+                  fmt.formatRaw(SessionService.totalTableCashOut(session.id))],
+              ['Rake Collected (poker)', fmt.formatRaw(SessionService.totalRake(session.id))],
               ['Dealer Tips (in Money Out, not Host Profit)',
                   fmt.formatRaw(SessionService.totalDealerTips(session.id))],
-              ['Money Out (Cash-out + Rake + Dealer Tips)', fmt.formatRaw(balance.moneyOut)],
+              ['House Wins (house-banked games — separate from rake)',
+                  fmt.formatRaw(SessionService.totalHouseWin(session.id))],
+              ['Money Out (Cash-out + Table Cash-out + Rake + Tips + House Wins)',
+                  fmt.formatRaw(balance.moneyOut)],
               ['Cash Drops (tracked, not part of settlement)',
                   fmt.formatRaw(SessionService.totalCashDrop(session.id))],
-              ['Host Profit (rake only)', fmt.formatRaw(SessionService.hostProfit(session.id))],
+              ['Host Profit (rake + house wins)', fmt.formatRaw(SessionService.hostProfit(session.id))],
               [
                 'Balance Status',
                 overlay != null && overlay.explainsGap
@@ -204,7 +212,9 @@ class ExportService {
                 ['Deposit received', fmt.formatRaw(fin.depositIn)],
                 ['Deposit used for chips', fmt.formatRaw(fin.depositUsedForChips)],
                 ['Deposit returned', fmt.formatRaw(fin.depositReturned)],
-                ['Deposit remaining', fmt.formatRaw(fin.depositRemaining)],
+                // E8: session-scoped projection — the lifetime remaining
+                // deposit is the wallet's figure (source of truth).
+                ['Deposit remaining (this session)', fmt.formatRaw(fin.depositRemaining)],
               ],
             ),
           ),
@@ -224,7 +234,7 @@ class ExportService {
             },
             headers: [
               'Seat', 'Name', 'Buy-in+Rebuy', 'Cash-out', 'P/L',
-              'Cashed out', 'Deposit remaining',
+              'Cashed out', 'Deposit remaining (this session)',
             ],
             data: settlement.players.map((row) {
               return [

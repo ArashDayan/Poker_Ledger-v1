@@ -76,6 +76,16 @@ class LedgerTransaction extends HiveObject {
   @HiveField(13)
   String? tableId;
 
+  /// The table participation this player money leg belongs to (Phase 6).
+  ///
+  /// Additive field 14: every legacy transaction loads with null and
+  /// keeps working — legacy rows are simply participations that were
+  /// never tracked, and the settlement math (which sums transactions,
+  /// not participations) is untouched. Table-level rows (rake, cash
+  /// drop) are always null.
+  @HiveField(14)
+  String? participationId;
+
   LedgerTransaction({
     required this.id,
     required this.sessionId,
@@ -91,12 +101,20 @@ class LedgerTransaction extends HiveObject {
     this.editedAt,
     this.tableId,
     this.signedWhileAbsent = false,
+    this.participationId,
   }) : timestamp = timestamp ?? DateTime.now();
 
+  /// A table cash-out is a counted money-out of the participation —
+  /// it carries a signature like the other player money legs. So do
+  /// re-entries (a counted amount of carried chips is committed) and
+  /// house wins (a counted amount the house banked from the player).
   bool get requiresSignature =>
       type == TransactionType.buyIn ||
       type == TransactionType.rebuy ||
-      type == TransactionType.cashOut;
+      type == TransactionType.cashOut ||
+      type == TransactionType.tableCashOut ||
+      type == TransactionType.reentry ||
+      type == TransactionType.houseWin;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -113,6 +131,7 @@ class LedgerTransaction extends HiveObject {
         'editedAt': editedAt?.toIso8601String(),
         'signedWhileAbsent': signedWhileAbsent,
         'tableId': tableId,
+        'participationId': participationId,
       };
 
   static LedgerTransaction fromJson(Map<String, dynamic> json) => LedgerTransaction(
@@ -130,5 +149,6 @@ class LedgerTransaction extends HiveObject {
         editedAt: json['editedAt'] == null ? null : DateTime.parse(json['editedAt'] as String),
         signedWhileAbsent: json['signedWhileAbsent'] as bool? ?? false,
         tableId: json['tableId'] as String?,
+        participationId: json['participationId'] as String?,
       );
 }

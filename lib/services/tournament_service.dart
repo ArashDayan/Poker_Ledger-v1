@@ -360,14 +360,16 @@ class TournamentService {
   // Eliminations and rankings
   // ---------------------------------------------------------------
 
+  // Seated players only: a pre-seat registration is not a tournament
+  // entry, so it must never appear in the active/eliminated rosters.
   static List<Player> activePlayers(String sessionId) =>
       SessionService.playersFor(sessionId)
-          .where((p) => p.finishPosition == null)
+          .where((p) => p.seated && p.finishPosition == null)
           .toList();
 
   static List<Player> eliminatedPlayers(String sessionId) {
     final out = SessionService.playersFor(sessionId)
-        .where((p) => p.finishPosition != null)
+        .where((p) => p.seated && p.finishPosition != null)
         .toList()
       ..sort((a, b) => a.finishPosition!.compareTo(b.finishPosition!));
     return out;
