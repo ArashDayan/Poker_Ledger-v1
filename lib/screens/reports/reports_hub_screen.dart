@@ -99,6 +99,7 @@ class _ReportsHubScreenState extends State<ReportsHubScreen> {
                 _row(tr('money_in'), fmt.format(lifetime.moneyIn)),
                 _row(tr('total_cash_out'), fmt.format(lifetime.cashedOut)),
                 _row(tr('rake_collected'), fmt.format(lifetime.rake)),
+                _row(tr('house_win'), fmt.format(lifetime.houseWin)),
                 _row(tr('banker_profit'), fmt.format(lifetime.bankerProfit),
                     highlight: true),
               ],

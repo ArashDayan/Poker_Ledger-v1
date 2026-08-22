@@ -66,8 +66,11 @@ class PlayerCareer {
   double get totalIn => records.fold(0.0, (s, r) => s + r.totalIn);
   double get totalCashOut => records.fold(0.0, (s, r) => s + r.cashOut);
 
-  /// Lifetime profit/loss. Money out minus money in, across everything.
-  double get netResult => totalCashOut - totalIn;
+  /// Lifetime profit/loss. Sum of each session's authoritative
+  /// [SessionService.playerProfitLoss] (re-entry corrected). Never
+  /// `totalCashOut - totalIn`, which would ignore re-entry and
+  /// double-count carried chips.
+  double get netResult => records.fold(0.0, (s, r) => s + r.profitLoss);
 
   int get totalRebuys => records.fold(0, (s, r) => s + r.rebuyCount);
 

@@ -186,6 +186,14 @@ class TableViewTab extends StatelessWidget {
                 );
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.style_outlined, color: AppColors.gold),
+              title: Text(tr('record_hand')),
+              onTap: () {
+                Navigator.pop(ctx);
+                _recordHand(context, provider);
+              },
+            ),
             const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.edit_outlined, color: AppColors.textSecondary),

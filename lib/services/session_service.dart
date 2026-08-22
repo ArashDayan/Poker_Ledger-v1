@@ -298,6 +298,19 @@ class SessionService {
             t.type == TransactionType.tableCashOut));
   }
 
+  /// True when a $0 cash-out or $0 table cash-out exists for this
+  /// player. A later $0 bust still counts after earlier non-zero
+  /// table cash-outs. Query only — does not change P/L or money
+  /// formulas. Discount inspect uses this instead of
+  /// `hasCashedOut && playerTotalCashOut == 0`.
+  static bool hasZeroBustOut(String sessionId, String playerId) {
+    return transactionsFor(sessionId).any((t) =>
+        t.playerId == playerId &&
+        t.amount == 0 &&
+        (t.type == TransactionType.cashOut ||
+            t.type == TransactionType.tableCashOut));
+  }
+
   /// Net result: the money the player truly took OUT of the session
   /// (final redemptions plus carried chips that did NOT come back) minus
   /// everything they put in.

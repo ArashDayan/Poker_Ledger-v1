@@ -27,30 +27,13 @@ Future<void> openDiscountReview(
     return;
   }
 
-  final view = DiscountWorkflowView.inspect(
-    sessionId: sessionId,
-    currency: currency,
-    personId: personId,
-    playerId: player.id,
-  );
-
-  var bustRealized = false;
-  if (view.kind == DiscountWorkflowKind.eligible ||
-      view.kind == DiscountWorkflowKind.needsCashOut) {
-    // suggest already computed bust; grant needs the same flag.
-  }
-  // Recompute the same way Player Account already does so grant
-  // flags stay aligned with the engine.
-  // (Duplicated on purpose — SessionService is seating, not Discount.)
   await askRebateGrant(
     context,
     sessionId: sessionId,
     personId: personId,
     currency: currency,
     playerId: player.id,
-    bustRealized: view.suggestion.lossRealized &&
-        view.snapshot.playerCashOutMinor == 0 &&
-        view.kind != DiscountWorkflowKind.fundingMissing,
+    bustRealized: SessionService.hasZeroBustOut(sessionId, player.id),
   );
 }
 

@@ -36,4 +36,7 @@ void registerTestAdapters() {
   if (!Hive.isAdapterRegistered(15)) Hive.registerAdapter(TableParticipationAdapter());
   if (!Hive.isAdapterRegistered(18)) Hive.registerAdapter(ParticipationStatusAdapter());
   if (!Hive.isAdapterRegistered(19)) Hive.registerAdapter(ParticipationCloseReasonAdapter());
+  if (!Hive.isAdapterRegistered(21)) Hive.registerAdapter(HandKindAdapter());
+  if (!Hive.isAdapterRegistered(22)) Hive.registerAdapter(HandStatusAdapter());
+  if (!Hive.isAdapterRegistered(20)) Hive.registerAdapter(HandAdapter());
 }

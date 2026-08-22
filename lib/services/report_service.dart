@@ -29,7 +29,12 @@ class PeriodStats {
   final int players;
   final double moneyIn;
   final double cashedOut;
+  /// Poker rake only. Never includes house-banked game wins.
   final double rake;
+  /// House-banked game wins only. Never includes poker rake.
+  final double houseWin;
+  /// Host / banker profit: rake + house win for cash games (or the
+  /// tournament house-fee definition). Not a synonym for rake.
   final double bankerProfit;
 
   const PeriodStats({
@@ -43,6 +48,7 @@ class PeriodStats {
     required this.moneyIn,
     required this.cashedOut,
     required this.rake,
+    this.houseWin = 0,
     required this.bankerProfit,
   });
 
@@ -122,16 +128,16 @@ class ReportService {
     DateTime? from,
     DateTime? to,
   }) {
-    var moneyIn = 0.0, out = 0.0, rake = 0.0, profit = 0.0;
+    var moneyIn = 0.0, out = 0.0, rake = 0.0, houseWin = 0.0, profit = 0.0;
     var playerCount = 0;
 
     for (final s in sessions) {
       moneyIn += SessionService.totalBuyIn(s.id) + SessionService.totalRebuy(s.id);
       out += SessionService.totalCashOut(s.id);
       rake += SessionService.totalRake(s.id);
-      // A tournament's house income is its entry fee plus any rake; a
-      // cash game's is rake alone. Using each mode's own definition keeps
-      // the banker's profit line honest across a mixed history.
+      houseWin += SessionService.totalHouseWin(s.id);
+      // Cash game: hostProfit = rake + houseWin. Tournament: house fee
+      // (plus any rake already inside TournamentService.houseFee).
       profit += s.isTournament
           ? TournamentService.houseFee(s)
           : SessionService.hostProfit(s.id);
@@ -150,6 +156,7 @@ class ReportService {
       moneyIn: moneyIn,
       cashedOut: out,
       rake: rake,
+      houseWin: houseWin,
       bankerProfit: profit,
     );
   }
@@ -208,13 +215,15 @@ class ReportService {
       final totalOut = records.fold<double>(0, (a, r) => a + r.cashOut);
       final rebuys = records.fold<int>(0, (a, r) => a + r.rebuyCount);
       final last = records.map((r) => r.date).reduce((a, b) => a.isAfter(b) ? a : b);
+      // Authoritative session P/L (re-entry corrected), not cashOut − in.
+      final net = records.fold<double>(0, (a, r) => a + r.profitLoss);
 
       rows.add(PlayerPerformanceRow(
         name: career.name,
         sessions: records.length,
         totalIn: totalIn,
         totalOut: totalOut,
-        net: totalOut - totalIn,
+        net: net,
         rebuys: rebuys,
         lastPlayed: last,
       ));

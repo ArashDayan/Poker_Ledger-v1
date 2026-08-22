@@ -401,7 +401,7 @@ class SessionProvider extends ChangeNotifier {
   double get hostProfit => _current == null ? 0 : SessionService.hostProfit(_current!.id);
 
   /// Chips tipped to the dealer this session. Reported separately from
-  /// [hostProfit], which remains rake alone.
+  /// [hostProfit] (rake + house wins). Tips are never host profit.
   double get totalDealerTips =>
       _current == null ? 0 : SessionService.totalDealerTips(_current!.id);
   double get moneyStillInPlay =>

@@ -42,6 +42,8 @@ class ChipFlow {
 
   static ChipMovementReason reasonFor(TransactionType type) {
     switch (type) {
+      case TransactionType.buyIn:
+        return ChipMovementReason.buyIn;
       case TransactionType.rebuy:
         return ChipMovementReason.rebuy;
       case TransactionType.cashOut:
@@ -50,8 +52,15 @@ class ChipFlow {
         return ChipMovementReason.rake;
       case TransactionType.dealerTips:
         return ChipMovementReason.dealerTips;
-      default:
-        return ChipMovementReason.buyIn;
+      case TransactionType.houseWin:
+        return ChipMovementReason.houseWin;
+      case TransactionType.tableCashOut:
+      case TransactionType.reentry:
+      case TransactionType.cashDrop:
+      case TransactionType.transferOut:
+      case TransactionType.transferIn:
+        throw ArgumentError(
+            'ChipFlow does not apply to ${type.name}.');
     }
   }
 

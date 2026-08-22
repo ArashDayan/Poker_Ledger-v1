@@ -599,6 +599,113 @@ class ExportService {
     );
   }
 
+  static List<pw.Widget> _handHistoryPdfSection(
+    PokerSession session,
+    CurrencyFormatter fmt,
+  ) {
+    final hands = HandService.forSession(session.id, includeVoided: true);
+    if (hands.isEmpty) return const [];
+    final tables = TableService.tablesFor(session);
+    String tableName(String id) => tables
+        .firstWhere((t) => t.id == id, orElse: () => tables.first)
+        .name;
+    return [
+      pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+        child: _sectionTitle('Hand history (pot facts)'),
+      ),
+      pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+        child: _table(
+          headers: [
+            'Hand',
+            'Table',
+            'Kind',
+            'Time',
+            'Results',
+            'Pot',
+            'Rake',
+            'House Win',
+            'Status',
+          ],
+          data: [
+            for (final h in hands)
+              [
+                '#${h.handNumber}',
+                tableName(h.tableId),
+                h.kind.name,
+                h.completedAt.toString().substring(0, 16),
+                [
+                  for (final r in h.results)
+                    '${r.nameSnapshot} ${r.chipChange >= 0 ? '+' : ''}'
+                    '${fmt.formatRaw(r.chipChange)}',
+                ].join('; '),
+                fmt.formatRaw(h.potAmount),
+                fmt.formatRaw(h.rakeAmount),
+                fmt.formatRaw(h.houseWinAmount),
+                h.isVoided ? 'VOIDED' : 'Completed',
+              ],
+          ],
+        ),
+      ),
+    ];
+  }
+
+  static List<List<dynamic>> _handHistoryCsvSection(PokerSession session) {
+    final hands = HandService.forSession(session.id, includeVoided: true);
+    if (hands.isEmpty) return const [];
+    final tables = TableService.tablesFor(session);
+    String tableName(String id) => tables
+        .firstWhere((t) => t.id == id, orElse: () => tables.first)
+        .name;
+    return [
+      <dynamic>[],
+      [
+        'Hand #',
+        'Table',
+        'Kind',
+        'Completed at',
+        'Player',
+        'Seat',
+        'Chip change',
+        'Pot',
+        'Rake',
+        'House Win',
+        'Status',
+      ],
+      for (final h in hands)
+        if (h.results.isEmpty)
+          [
+            h.handNumber,
+            tableName(h.tableId),
+            h.kind.name,
+            h.completedAt.toIso8601String(),
+            '',
+            '',
+            '',
+            h.potAmount,
+            h.rakeAmount,
+            h.houseWinAmount,
+            h.isVoided ? 'VOIDED' : 'Completed',
+          ]
+        else
+          for (final r in h.results)
+            [
+              h.handNumber,
+              tableName(h.tableId),
+              h.kind.name,
+              h.completedAt.toIso8601String(),
+              r.nameSnapshot,
+              r.seatNumber,
+              r.chipChange,
+              h.potAmount,
+              h.rakeAmount,
+              h.houseWinAmount,
+              h.isVoided ? 'VOIDED' : 'Completed',
+            ],
+    ];
+  }
+
   static pw.Widget _footerNote() => pw.Container(
         margin: const pw.EdgeInsets.only(top: 20),
         child: pw.Text(
@@ -670,9 +777,9 @@ class ExportService {
                       style: const pw.TextStyle(fontSize: 10, color: _muted)),
                 _sectionTitle('Note'),
                 pw.Text(
-                  'Net is cash-out minus everything the player put in '
-                  '(buy-ins plus rebuys). A positive figure means the '
-                  'player finished ahead across the period.',
+                  'Net is each session\'s authoritative player P/L '
+                  '(cash-out + table cash-out − re-entry − buy-in − rebuy). '
+                  'A positive figure means the player finished ahead.',
                   style: const pw.TextStyle(fontSize: 9, color: _muted),
                 ),
                 _footerNote(),
@@ -742,7 +849,9 @@ class ExportService {
                         fmt.formatRaw(lifetime.moneyIn)],
                     ['Cashed out to players', fmt.formatRaw(lifetime.cashedOut)],
                     ['Rake collected', fmt.formatRaw(lifetime.rake)],
-                    ['Banker profit', fmt.formatRaw(lifetime.bankerProfit)],
+                    ['House wins', fmt.formatRaw(lifetime.houseWin)],
+                    ['Banker profit (rake + house wins)',
+                        fmt.formatRaw(lifetime.bankerProfit)],
                     ['Average profit per session',
                         fmt.formatRaw(lifetime.averagePerSession)],
                     ['Average buy-in per entry',

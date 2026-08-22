@@ -245,6 +245,90 @@ class PlayerLedgerScreen extends StatelessWidget {
     );
   }
 
+  List<Widget> _handsSection(
+      String sessionId, String seatPlayerId, CurrencyFormatter fmt) {
+    final hands = HandService.forPlayer(sessionId, seatPlayerId,
+        includeVoided: true);
+    if (hands.isEmpty) return const [];
+    return [
+      Row(
+        children: [
+          Container(width: 3, height: 13, color: AppColors.gold),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              tr('hand_history').toUpperCase(),
+              style: const TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.1,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+          Text('${hands.length}',
+              style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.gold)),
+        ],
+      ),
+      const SizedBox(height: 10),
+      for (final h in hands)
+        Opacity(
+          opacity: h.isVoided ? 0.55 : 1,
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceElevated,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.divider),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${tr('hand_number')} #${h.handNumber} · ${h.kind.localizedLabel}',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ),
+                    if (h.isVoided)
+                      Text(tr('hand_voided'),
+                          style: const TextStyle(
+                              fontSize: 10, color: AppColors.danger)),
+                  ],
+                ),
+                Text(
+                  h.completedAt.toString().substring(0, 16),
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.textSecondary),
+                ),
+                if (h.resultFor(seatPlayerId) != null)
+                  Text(
+                    '${tr('hand_chip_change')}: '
+                    '${h.resultFor(seatPlayerId)!.chipChange >= 0 ? '+' : ''}'
+                    '${fmt.format(h.resultFor(seatPlayerId)!.chipChange)}',
+                    style: const TextStyle(fontSize: 12.5),
+                  ),
+                Text(
+                  '${tr('hand_pot')} ${fmt.format(h.potAmount)}'
+                  ' · ${tr('hand_rake')} ${fmt.format(h.rakeAmount)}'
+                  ' · ${tr('hand_house_win')} ${fmt.format(h.houseWinAmount)}',
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.textSecondary),
+                ),
+              ],
+            ),
+          ),
+        ),
+    ];
+  }
+
   Widget _cell(String label, String value) => Expanded(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

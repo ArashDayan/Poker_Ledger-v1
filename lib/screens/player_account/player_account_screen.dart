@@ -263,8 +263,7 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
     } catch (_) {}
     var bustRealized = false;
     if (playerId != null) {
-      bustRealized = SessionService.hasCashedOut(sessionId, playerId) &&
-          SessionService.playerTotalCashOut(sessionId, playerId) == 0;
+      bustRealized = SessionService.hasZeroBustOut(sessionId, playerId);
     }
     await askRebateGrant(
       context,

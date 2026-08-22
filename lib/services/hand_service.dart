@@ -310,6 +310,7 @@ class HandService {
         await ChipTrackingService.reverseForTransaction(houseTx.id,
             note: 'hand record failed');
       }
+      await _reverseCountAdjustments(movementIds, note: 'hand record failed');
       if (e is HandException || e is SessionEndedException) rethrow;
       throw HandException('$e');
     }
@@ -343,10 +344,41 @@ class HandService {
       await ChipTrackingService.reverseForTransaction(houseId,
           note: 'void hand');
     }
+    await _reverseCountAdjustments(hand.movementIds, note: 'void hand');
 
     hand.status = HandStatus.voided;
     await hand.save();
     return hand;
+  }
+
+  /// Reverses optional post-hand physical count adjustments stored on
+  /// the hand. Rake/house-win movements are reversed via their
+  /// transaction ids; this only mirrors [ChipMovementReason.adjustment]
+  /// legs (append-only, never P2P, never a cashier transfer).
+  static Future<void> _reverseCountAdjustments(
+    List<String> movementIds, {
+    required String note,
+  }) async {
+    for (final id in movementIds) {
+      ChipMovement? m;
+      try {
+        m = HiveService.chipMovements.get(id);
+      } catch (_) {
+        continue;
+      }
+      if (m == null) continue;
+      if (m.reasonEnum != ChipMovementReason.adjustment) continue;
+      await ChipTrackingService.record(
+        chipTypeId: m.chipTypeId,
+        quantity: m.quantity,
+        from: m.to,
+        to: m.from,
+        reason: ChipMovementReason.reversal,
+        sessionId: m.sessionId,
+        note: note,
+        chipValueOverride: m.chipValue,
+      );
+    }
   }
 
   static HandResult? _primaryLoser(List<HandResult> results) {

@@ -104,7 +104,8 @@ class _SessionListScreenState extends State<SessionListScreen> {
   // ---------------------------------------------------------------- hero
 
   Widget _buildHero(List<PokerSession> all, int activeCount) {
-    final totalRake = all.fold<double>(0, (sum, s) => sum + SessionService.hostProfit(s.id));
+    final totalHostProfit =
+        all.fold<double>(0, (sum, s) => sum + SessionService.hostProfit(s.id));
     // Headline figures are only meaningful when every session shares a
     // currency; mixing Toman and USD into one total would be a lie. Fall
     // back to the most recent session's currency and only show the total
@@ -250,16 +251,14 @@ class _SessionListScreenState extends State<SessionListScreen> {
                 icon: Icons.history_toggle_off,
               ),
               const SizedBox(width: 10),
-              // Total Rake is the one figure a guest is most likely to
-              // read over the banker's shoulder, so it gets its own
-              // show/hide. Display only: `totalRake` above is still the
-              // existing SessionService.hostProfit fold, computed and
-              // unchanged either way — only the rendered string differs.
+              // Host Profit (rake + house wins) is the house take.
+              // Display only: the fold is SessionService.hostProfit,
+              // never labeled as rake.
               _heroStat(
-                label: tr('total_rake_label'),
+                label: tr('host_profit'),
                 value: !showRake
                     ? CurrencyFormatter.maskedText
-                    : (showTotals ? fmt.format(totalRake) : '—'),
+                    : (showTotals ? fmt.format(totalHostProfit) : '—'),
                 color: AppColors.gold,
                 icon: Icons.savings_outlined,
                 isHidden: !showRake,
@@ -279,7 +278,7 @@ class _SessionListScreenState extends State<SessionListScreen> {
     required Color color,
     required IconData icon,
     /// When supplied, the tile becomes tappable and shows an eye
-    /// affordance beside its label. Only the Total Rake tile uses this;
+    /// affordance beside its label. Only the Host Profit tile uses this;
     /// the others are unchanged.
     VoidCallback? onToggleVisibility,
     bool isHidden = false,
@@ -548,7 +547,7 @@ class _SessionTile extends StatelessWidget {
                                   fontSize: 14),
                             ),
                             const SizedBox(height: 2),
-                            Text(tr('rake').toUpperCase(),
+                            Text(tr('host_profit').toUpperCase(),
                                 style: TextStyle(
                                     fontSize: 8.5,
                                     letterSpacing: 0.8,

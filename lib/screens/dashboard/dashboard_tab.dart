@@ -694,12 +694,27 @@ class _TableFinancialCard extends StatelessWidget {
           Row(
             children: [
               _cell(tr('rake'), fmt.format(summary.rake), color: AppColors.gold),
-              _cell(tr('dealer_tips'), fmt.format(summary.dealerTips),
-                  color: AppColors.warning),
+              if (summary.houseWin > 0)
+                _cell(tr('house_win'), fmt.format(summary.houseWin),
+                    color: AppColors.gold)
+              else
+                _cell(tr('dealer_tips'), fmt.format(summary.dealerTips),
+                    color: AppColors.warning),
               _cell(tr('host_profit'), fmt.format(summary.hostProfit),
                   color: AppColors.accentGreen),
             ],
           ),
+          if (summary.houseWin > 0 && summary.dealerTips > 0) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _cell(tr('dealer_tips'), fmt.format(summary.dealerTips),
+                    color: AppColors.warning),
+                const Expanded(child: SizedBox.shrink()),
+                const Expanded(child: SizedBox.shrink()),
+              ],
+            ),
+          ],
           if (summary.cashDrop > 0) ...[
             const SizedBox(height: 10),
             Row(

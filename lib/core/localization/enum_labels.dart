@@ -120,3 +120,25 @@ extension PaymentMethodL10n on PaymentMethod {
     }
   }
 }
+
+extension HandKindL10n on HandKind {
+  String get localizedLabel {
+    switch (this) {
+      case HandKind.poker:
+        return tr('hand_kind_poker');
+      case HandKind.houseGame:
+        return tr('hand_kind_house');
+    }
+  }
+}
+
+extension HandStatusL10n on HandStatus {
+  String get localizedLabel {
+    switch (this) {
+      case HandStatus.completed:
+        return tr('hand_status_completed');
+      case HandStatus.voided:
+        return tr('hand_voided');
+    }
+  }
+}
