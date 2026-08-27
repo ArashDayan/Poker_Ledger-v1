@@ -18,8 +18,19 @@ class SessionSettlementView {
   final double buyIn;
   final double rebuy;
   final double cashOut;
+  /// Phase 7: table cash-outs (money that left table play because a
+  /// player left a table carrying counted chips — session money OUT,
+  /// but not a cage redemption).
+  final double tableCashOut;
+  /// Phase 7: carried chips committed to tables by re-entry — session
+  /// money IN, never a new purchase (totalBuyIn is untouched).
+  final double reentry;
   final double rake;
   final double dealerTips;
+  /// Phase 7: house-banked game revenue (e.g. roulette). NEVER merged
+  /// with [rake] — the report shows both lines, and [hostProfit] is
+  /// their sum.
+  final double houseWin;
   final double hostProfit;
   final double moneyStillInPlay;
   final double cashDrop;
@@ -33,8 +44,11 @@ class SessionSettlementView {
     required this.buyIn,
     required this.rebuy,
     required this.cashOut,
+    required this.tableCashOut,
+    required this.reentry,
     required this.rake,
     required this.dealerTips,
+    required this.houseWin,
     required this.hostProfit,
     required this.moneyStillInPlay,
     required this.cashDrop,
@@ -54,8 +68,11 @@ class SessionSettlementView {
       buyIn: SessionService.totalBuyIn(sessionId),
       rebuy: SessionService.totalRebuy(sessionId),
       cashOut: SessionService.totalCashOut(sessionId),
+      tableCashOut: SessionService.totalTableCashOut(sessionId),
+      reentry: SessionService.totalReentry(sessionId),
       rake: SessionService.totalRake(sessionId),
       dealerTips: SessionService.totalDealerTips(sessionId),
+      houseWin: SessionService.totalHouseWin(sessionId),
       hostProfit: SessionService.hostProfit(sessionId),
       moneyStillInPlay: SessionService.moneyStillInPlay(sessionId),
       cashDrop: SessionService.totalCashDrop(sessionId),
@@ -74,7 +91,15 @@ class PlayerSettlementRow {
   final Player player;
   final double buyIn;
   final double rebuy;
+  /// Session `cashOut` + table cash-out. Kept for existing callers;
+  /// UI must not label this as simple "Cash-out".
   final double cashOut;
+  /// Session ledger `cashOut` legs only.
+  final double sessionCashOut;
+  /// Table cash-outs only — chips left the table, still person-held.
+  final double tableCashOut;
+  /// Re-entry (carried chips). Not a purchase.
+  final double reentry;
   final double chipProfitLoss;
   final bool hasCashedOut;
   final SessionFinancialSnapshot financial;
@@ -84,10 +109,18 @@ class PlayerSettlementRow {
     required this.buyIn,
     required this.rebuy,
     required this.cashOut,
+    this.sessionCashOut = 0,
+    this.tableCashOut = 0,
+    this.reentry = 0,
     required this.chipProfitLoss,
     required this.hasCashedOut,
     required this.financial,
   });
+
+  /// Cage cash returned for this person in this session.
+  double get cageCashOut => financial.cashOutForChips;
+
+  double get cageCashOutUnbacked => financial.cashOutUnbacked;
 
   factory PlayerSettlementRow.load(
     String sessionId,
@@ -95,11 +128,19 @@ class PlayerSettlementRow {
     Player player,
   ) {
     final personId = player.personId;
+    double sum(TransactionType type) => SessionService.transactionsFor(sessionId)
+        .where((t) => t.playerId == player.id && t.type == type)
+        .fold(0.0, (s, t) => s + t.amount);
+    final sessionCash = sum(TransactionType.cashOut);
+    final tableCash = sum(TransactionType.tableCashOut);
     return PlayerSettlementRow(
       player: player,
       buyIn: SessionService.playerBuyInOnly(sessionId, player.id),
       rebuy: SessionService.playerRebuyOnly(sessionId, player.id),
       cashOut: SessionService.playerTotalCashOut(sessionId, player.id),
+      sessionCashOut: sessionCash,
+      tableCashOut: tableCash,
+      reentry: SessionService.playerReentry(sessionId, player.id),
       chipProfitLoss: SessionService.playerProfitLoss(sessionId, player.id),
       hasCashedOut: SessionService.hasCashedOut(sessionId, player.id),
       financial: personId == null || personId.isEmpty

@@ -65,6 +65,12 @@ class TransactionTypeAdapter extends TypeAdapter<TransactionType> {
         return TransactionType.transferIn;
       case 7:
         return TransactionType.dealerTips;
+      case 8:
+        return TransactionType.tableCashOut;
+      case 9:
+        return TransactionType.reentry;
+      case 10:
+        return TransactionType.houseWin;
       default:
         return TransactionType.buyIn;
     }
@@ -96,6 +102,15 @@ class TransactionTypeAdapter extends TypeAdapter<TransactionType> {
         break;
       case TransactionType.dealerTips:
         writer.writeByte(7);
+        break;
+      case TransactionType.tableCashOut:
+        writer.writeByte(8);
+        break;
+      case TransactionType.reentry:
+        writer.writeByte(9);
+        break;
+      case TransactionType.houseWin:
+        writer.writeByte(10);
         break;
     }
   }

@@ -75,8 +75,7 @@ class DiscountWorkflowView {
 
     var bustRealized = false;
     if (playerId != null && playerId.isNotEmpty) {
-      bustRealized = SessionService.hasCashedOut(sessionId, playerId) &&
-          SessionService.playerTotalCashOut(sessionId, playerId) == 0;
+      bustRealized = SessionService.hasZeroBustOut(sessionId, playerId);
     }
 
     final suggestion = RebateService.suggest(

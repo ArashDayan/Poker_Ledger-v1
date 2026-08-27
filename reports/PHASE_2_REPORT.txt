@@ -1,0 +1,14 @@
+I have analyzed the current project state and the "Banker's Field Review" which identified critical UX friction points. To address these, I have prepared a detailed Implementation Plan for Phase 2 (P0 Speed & Workflow Optimization).
+
+### Key Objectives for Phase 2:
+1.  **Instant Actions**: Transform the **Table View** into a live console where tapping a seat opens a compact radial menu instead of a slow bottom sheet.
+2.  **One-Tap Rebuys**: Support **Long-press** on a seat to instantly record a repeat of the player's last rebuy amount.
+3.  **Smart Signatures**: Introduce a **Signature Policy** (e.g., signatures only for large cash-outs and edits), eliminating 90% of signature draws during active play.
+4.  **Persistent Undo**: Add an **Undo Strip** at the bottom of the session shell for immediate correction of mistakes.
+5.  **Navigation Shift**: Move **Table View** to the primary tab position for active sessions.
+
+The full details of the plan, including specific file modifications and the verification strategy, are available in the artifact below:
+
+[implementation_plan.artifact.md](file:///C:/Users/user/AppData/Local/Google/AndroidStudio2026.1.2/projects/poker_ledger-v1.e97385da/.artifacts/04851b55-9719-43c6-aec7-64fbbb76d112/implementation_plan.artifact.md)
+
+**Please review the plan. Once you approve, I will begin execution and save the final report to `reports/PHASE_2_REPORT.txt` as requested.**

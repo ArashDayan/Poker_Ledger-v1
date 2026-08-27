@@ -11,10 +11,12 @@ import '../../models/player.dart';
 import '../../providers/session_provider.dart';
 import '../../services/financial_capture_flow.dart';
 import '../../services/session_service.dart';
+import '../../services/session_settlement_view.dart';
 import '../../services/sound_service.dart';
 import '../../models/chip_movement.dart';
 import '../../providers/chip_bank_provider.dart';
 import '../../services/chip_tracking_service.dart';
+import '../../widgets/cashout_flow.dart';
 import '../../widgets/chip_distribution_sheet.dart';
 import '../../widgets/discount_review_entry.dart';
 import '../../widgets/player_chip_holdings.dart';
@@ -131,10 +133,34 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
     }
     if (_type == TransactionType.rebuy && !SessionService.canRebuy(session, widget.player.id)) {
       final proceed = await _confirmHouseRuleOverride(
-        'This player is not eligible for another rebuy at level '
-        '${session.currentLevel} under the current house rules.',
+        tr('rebuy_not_eligible_note'),
       );
       if (!proceed) return;
+    }
+
+    // Phase 7: a seated cash-out is the TABLE CASH-OUT — the table
+    // level. The counted chips STAY the person's physical holding
+    // (no cash comes back, no chip movement), so there is no funding
+    // question and no chip composition step. A $0 count is a bust and
+    // closes any open Discount cycle (parity). The cage redemption is
+    // the separate person-level operation (player account).
+    if (_type == TransactionType.cashOut) {
+      setState(() => _submitting = true);
+      try {
+        final ok = await performTableCashOut(
+          context,
+          player: provider.livePlayer(widget.player),
+          sessionId: session.id,
+          amount: amount,
+          hostSignatureBase64: _signature,
+        );
+        if (!ok) return;
+        AppSounds.play(AppSounds.forTransaction(TransactionType.cashOut));
+        if (mounted) Navigator.of(context).pop();
+      } finally {
+        if (mounted) setState(() => _submitting = false);
+      }
+      return;
     }
 
     final funding = await collectRequiredFunding(
@@ -168,13 +194,17 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
       // back or corrupt the financial record.
       if (distribution != null && distribution.isNotEmpty) {
         try {
+          // Phase 2a: chips belong to the PERSON (personId), or to the
+          // seat row for a legacy unlinked seat — resolved once here.
+          final holder = ChipTrackingService.holderRef(
+              playerId: widget.player.id, personId: widget.player.personId);
           await context.read<ChipBankProvider>().recordDistribution(
                 distribution: distribution,
                 from: _chipsLeaveBank
                     ? ChipLocation.bank
-                    : ChipLocation.player(widget.player.id),
+                    : ChipLocation.player(holder),
                 to: _chipsLeaveBank
-                    ? ChipLocation.player(widget.player.id)
+                    ? ChipLocation.player(holder)
                     : ChipLocation.bank,
                 reason: _chipReason,
                 sessionId: session.id,
@@ -213,11 +243,12 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
   }
 
   /// Chip tracking only makes sense for movements that physically hand
-  /// chips across the table.
+  /// chips across the table. A Phase 7 table cash-out records NO chip
+  /// movement — the counted chips stay the person's physical holding
+  /// (the person redeems at the cage as a separate operation).
   bool get _chipTrackingApplies =>
       _type == TransactionType.buyIn ||
-      _type == TransactionType.rebuy ||
-      _type == TransactionType.cashOut;
+      _type == TransactionType.rebuy;
 
   /// Buy-ins and rebuys take chips OUT of the bank; a cash-out brings
   /// them back in.
@@ -239,6 +270,14 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
   /// skip, or null if dismissed.
   Future<Map<String, int>?> _askChipDistribution(
       AppCurrency currency, double amount) async {
+    // Direction-correct composition (Phase 2b): a CASH-OUT takes chips
+    // FROM the person's (person-scoped) holding — suggested from and
+    // validated against that holding, never against bank inventory.
+    // Buy-in / rebuy take chips FROM the bank (source stays null).
+    final source = _type == TransactionType.cashOut
+        ? ChipLocation.player(ChipTrackingService.holderRef(
+            playerId: widget.player.id, personId: widget.player.personId))
+        : null;
     final result = await showModalBottomSheet<Map<String, int>>(
       context: context,
       isScrollControlled: true,
@@ -246,6 +285,7 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
       builder: (_) => ChipDistributionSheet(
         targetAmount: amount,
         currency: currency,
+        source: source,
       ),
     );
     if (result == null || result.isEmpty) return result;
@@ -295,9 +335,8 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
     // rendering the snapshot it was pushed with.
     final player = provider.livePlayer(widget.player);
     final fmt = CurrencyFormatter(session.currency);
-    final totalIn = SessionService.playerTotalIn(session.id, player.id);
-    final totalOut = SessionService.playerTotalCashOut(session.id, player.id);
-    final netResult = SessionService.playerProfitLoss(session.id, player.id);
+    final books = PlayerSettlementRow.load(session.id, session.currency, player);
+    final netResult = books.chipProfitLoss;
     final cashedOut = SessionService.hasCashedOut(session.id, player.id);
     final resultVisual = PlayerResultVisuals.of(
       occupied: true,
@@ -361,19 +400,29 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _infoRow('Total Buy-in + Rebuy', fmt.format(totalIn)),
+                  _infoRow(tr('report_purchases'), fmt.format(books.buyIn + books.rebuy)),
+                  if (books.reentry > 0) ...[
+                    const SizedBox(height: 6),
+                    _infoRow(tr('report_reentry'), fmt.format(books.reentry)),
+                  ],
                   const SizedBox(height: 6),
-                  _infoRow('Total Cashed Out', fmt.format(totalOut)),
+                  _infoRow(tr('report_table_cash_outs'), fmt.format(books.tableCashOut)),
+                  const SizedBox(height: 6),
+                  _infoRow(tr('report_session_cash_out'), fmt.format(books.sessionCashOut)),
+                  if (player.personId != null && player.personId!.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    _infoRow(tr('report_cage_cash'), fmt.format(books.cageCashOut)),
+                  ],
                   const Divider(height: 20),
                   _infoRow(
-                    'Net Result',
+                    tr('profit_loss'),
                     '${netResult >= 0 ? '+' : ''}${fmt.format(netResult)}',
                     valueColor: PlayerResultVisuals.amountColor(resultVisual),
                   ),
                   if (rebuysUsed > 0 || session.currentLevel > 1) ...[
                     const SizedBox(height: 6),
                     Text(
-                      'Rebuys used: $rebuysUsed · Table level: ${session.currentLevel}',
+                      '${tr('rebuy')}: $rebuysUsed · ${tr('level_label')} ${session.currentLevel}',
                       style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                     ),
                   ],
@@ -386,7 +435,10 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
             // instead of) the money figures above. The two legitimately
             // differ once players start winning chips from each other.
             PlayerChipHoldings(
-              playerId: player.id,
+              // Phase 2a: person-scoped holding (seat ref only for a
+              // legacy unlinked seat).
+              playerId: ChipTrackingService.holderRef(
+                  playerId: player.id, personId: player.personId),
               sessionId: session.id,
               currency: session.currency,
             ),
@@ -431,15 +483,13 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
                   SignatureImage(
                     base64Png: player.sampleSignatureBase64,
                     height: 88,
-                    emptyLabel: 'No sample captured — add one from Edit player.',
+                    emptyLabel: tr('no_sample_signature'),
                   ),
                   const SizedBox(height: 6),
                   Text(
                     player.hasSampleSignature
-                        ? 'Tap “verify signature” on any of this player’s rows in '
-                            'Timeline to compare it against this sample.'
-                        : 'Capturing a sample now gives you something to compare '
-                            'against if a signature is ever questioned.',
+                        ? tr('comparison_note')
+                        : tr('sample_signature_hint'),
                     style: const TextStyle(fontSize: 10.5, color: AppColors.textSecondary),
                   ),
                 ],
@@ -450,7 +500,7 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
               segments: [
                 ButtonSegment(value: TransactionType.buyIn, label: Text(tr('buy_in'))),
                 ButtonSegment(value: TransactionType.rebuy, label: Text(tr('rebuy'))),
-                ButtonSegment(value: TransactionType.cashOut, label: Text(tr('cash_out'))),
+                ButtonSegment(value: TransactionType.cashOut, label: Text(tr('table_cash_out'))),
               ],
               selected: {_type},
               onSelectionChanged: (s) => setState(() {

@@ -99,6 +99,23 @@ enum ChipMovementReason {
   /// Chips handed out for an add-on.
   addOn,
 
+  /// Cage/wallet issuance to a PERSON (Phase 4): chips issued from a
+  /// deposit draw against the person's wallet — NOT a table buy-in and
+  /// NOT a table participation. The chips enter the person-scoped
+  /// holding (personId, never a seat); the paired financial events are
+  /// frontMoneyOut + cashInForChips. A table buy-in is recorded later,
+  /// when the person actually sits and commits chips to a table.
+  depositIssuance,
+
+  /// Marker issuance to a PERSON (Phase 5): chips issued against a
+  /// marker (credit) that is a DRAW on the person's available deposit
+  /// (E2/W-2). NOT a table buy-in, NOT a participation. The paired
+  /// financial events are frontMoneyOut (the wallet draw) +
+  /// creditIssued (the IOU, player signature required by the existing
+  /// "marker = credit plus a signature" rule). The chips enter the
+  /// person-scoped holding (personId, never a seat, never P2P).
+  markerIssuance,
+
   /// Chips returned when a player cashes out.
   cashOut,
 
@@ -134,13 +151,32 @@ enum ChipMovementReason {
   /// still shows what happened and why it was undone.
   reversal,
 
-  /// Chips physically moved between two places for any other reason,
-  /// including player-to-player winnings.
+  /// LEGACY (read-only). Player-to-player chip transfers are no longer
+  /// a supported operation (E7): chips that change hands at the table
+  /// are physical play, captured through physical counts rather than
+  /// recorded transfers. Records written before the removal keep this
+  /// reason; no new movement may carry it. Parsed like any other reason
+  /// so history stays readable.
   transfer,
 
   /// Promotional loss-rebate chips. NOT a buy-in, NOT a rebuy, NOT
   /// cashInForChips. SessionService money formulas never see this.
-  lossRebate;
+  lossRebate,
+
+  /// HOUSE GAME (Phase 7): chips a player lost to the house at a
+  /// house-banked game (e.g. roulette) — the chips physically move
+  /// holder -> bank and become CASINO-OWNED.
+  ///
+  /// This is the chip-side counterpart of
+  /// [TransactionType.houseWin], and it is deliberately its own reason:
+  /// a house win is house-GAME revenue — fundamentally different from
+  /// [rake] (the house's fee on player-vs-player poker pots) and from
+  /// [cashOut] (the player's OWN chips returned for cash at the cage).
+  /// Keeping the reasons separate is what lets the movement log, the
+  /// audit and the reconciliation classify casino revenue by source,
+  /// and what lets "chips lost at roulette" become bank-owned without
+  /// ever reading as "poker rake" or "redemption".
+  houseWin;
 
   static ChipMovementReason parse(String? raw) {
     for (final r in ChipMovementReason.values) {
@@ -214,6 +250,23 @@ class ChipMovement extends HiveObject {
   @HiveField(10)
   String? note;
 
+  /// Original `fromLocation` as stored before the Phase 2a seat→person
+  /// re-key migration, when this movement was migrated. Null on every
+  /// record that was never re-keyed (written person-scoped from the
+  /// start, or still carrying an unlinked seat reference).
+  ///
+  /// Additive fields 11–12: old records load with null and keep
+  /// working. These are AUDIT fields for the reference refinement —
+  /// the physical movement itself is unchanged; only the holder
+  /// reference is refined from "this seat" to "this person". The
+  /// original reference is preserved permanently on the record.
+  @HiveField(11)
+  String? legacyFrom;
+
+  /// Original `toLocation` before the re-key (see [legacyFrom]).
+  @HiveField(12)
+  String? legacyTo;
+
   ChipMovement({
     required this.id,
     required this.chipTypeId,
@@ -225,6 +278,8 @@ class ChipMovement extends HiveObject {
     this.sessionId,
     this.transactionId,
     this.note,
+    this.legacyFrom,
+    this.legacyTo,
     DateTime? timestamp,
   }) : timestamp = timestamp ?? DateTime.now();
 
@@ -248,6 +303,8 @@ class ChipMovement extends HiveObject {
         'timestamp': timestamp.toIso8601String(),
         'transactionId': transactionId,
         'note': note,
+        'legacyFrom': legacyFrom,
+        'legacyTo': legacyTo,
       };
 
   static ChipMovement fromJson(Map<String, dynamic> j) => ChipMovement(
@@ -261,6 +318,8 @@ class ChipMovement extends HiveObject {
         reason: j['reason'] as String,
         transactionId: j['transactionId'] as String?,
         note: j['note'] as String?,
+        legacyFrom: j['legacyFrom'] as String?,
+        legacyTo: j['legacyTo'] as String?,
         timestamp: DateTime.tryParse(j['timestamp']?.toString() ?? ''),
       );
 }

@@ -220,4 +220,20 @@ class PlayerRegistryService {
     }
     await _write(_tagKey, m);
   }
+
+  /// Sets (or with null, clears) the person-level classification.
+  static Future<void> setTagForPerson(
+      String? personId, String name, PlayerTag? tag) async {
+    if (personId != null && personId.isNotEmpty) {
+      final k = personKey(personId);
+      final m = _map(_tagKey);
+      if (tag == null) {
+        m.remove(k);
+      } else {
+        m[k] = tag.index;
+      }
+      await _write(_tagKey, m);
+    }
+    await setTagForName(name, tag);
+  }
 }

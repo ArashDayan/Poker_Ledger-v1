@@ -7,16 +7,21 @@ import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
 import '../../models/player.dart';
 import '../../providers/session_provider.dart';
+import '../../services/chip_tracking_service.dart';
 import '../../services/financial_capture_flow.dart';
 import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/table_service.dart';
 import '../../widgets/quick_transaction_sheet.dart';
+import '../../widgets/cashout_flow.dart';
 import '../../widgets/chip_flow.dart';
+import '../../widgets/last_hand_summary.dart';
 import '../../widgets/poker_table_view.dart';
 import '../../widgets/quick_rake_sheet.dart';
 import '../../widgets/discount_review_entry.dart';
+import '../../widgets/record_hand_sheet.dart';
 import '../../widgets/table_selector_bar.dart';
+import '../history/hand_history_screen.dart';
 import '../players/players_tab.dart';
 import '../player_action/player_ledger_screen.dart';
 
@@ -67,6 +72,24 @@ class TableViewTab extends StatelessWidget {
       sessionId: session.id,
     );
     if (result == null) return;
+
+    // Phase 7 / 12: a seated cash-out from the table map is the
+    // TABLE CASH-OUT — same path as Players tab and Player Action.
+    // No funding (no cashier cash), no ChipFlow (chips stay the
+    // person's holding), no session cashOut leg.
+    if (type == TransactionType.cashOut) {
+      final ok = await performTableCashOut(
+        context,
+        player: player,
+        sessionId: session.id,
+        amount: result.amount,
+        hostSignatureBase64: result.signature ?? '',
+      );
+      if (!ok) return;
+      AppSounds.play(AppSounds.forTransaction(type));
+      return;
+    }
+
     final funding = await collectRequiredFunding(
       context,
       chipType: type,
@@ -88,12 +111,15 @@ class TableViewTab extends StatelessWidget {
         hostSignatureBase64: result.signature ?? '',
       );
       if (context.mounted) {
+        // Phase 2a: person-scoped chip holding.
+        final holderRef = ChipTrackingService.holderRef(
+            playerId: player.id, personId: player.personId);
         await ChipFlow.apply(context,
             distribution: dist,
             type: type,
             sessionId: session.id,
             transactionId: tx.id,
-            playerId: player.id);
+            holderRefId: holderRef);
         if (context.mounted) {
           await applyCollectedFunding(
             context,
@@ -145,7 +171,7 @@ class TableViewTab extends StatelessWidget {
             ),
             ListTile(
               leading: const Icon(Icons.logout, color: AppColors.danger),
-              title: Text(tr('cash_out')),
+              title: Text(tr('table_cash_out')),
               onTap: () {
                 Navigator.pop(ctx);
                 _quickAction(context, provider, player, TransactionType.cashOut);
@@ -177,6 +203,14 @@ class TableViewTab extends StatelessWidget {
                   currency: provider.current!.currency,
                   player: player,
                 );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.style_outlined, color: AppColors.gold),
+              title: Text(tr('record_hand')),
+              onTap: () {
+                Navigator.pop(ctx);
+                _recordHand(context, provider);
               },
             ),
             const Divider(height: 1),
@@ -311,6 +345,18 @@ class TableViewTab extends StatelessWidget {
             ),
           ),
           Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+            child: LastHandSummary(
+              hand: provider.lastHandAtActiveTable,
+              formatter: fmt,
+              tableName: table.name,
+              onRecord: table.status.isClosed
+                  ? null
+                  : () => _recordHand(context, provider),
+              onOpenHistory: () => _openHistory(context, session.id, table.id),
+            ),
+          ),
+          Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
             child: Text(
               tr('tap_seat_hint'),
@@ -322,5 +368,23 @@ class TableViewTab extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _recordHand(BuildContext context, SessionProvider provider) async {
+    final tableId = provider.activeTableId;
+    final hand = await showRecordHandSheet(context, tableId: tableId);
+    if (hand != null && context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(tr('hand_recorded'))));
+    }
+  }
+
+  void _openHistory(BuildContext context, String sessionId, String tableId) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => HandHistoryScreen(
+        sessionId: sessionId,
+        initialTableId: tableId,
+      ),
+    ));
   }
 }

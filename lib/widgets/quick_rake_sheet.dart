@@ -5,11 +5,13 @@ import '../core/house_rules.dart';
 import '../core/localization/app_localizations.dart';
 import 'chip_flow.dart';
 import '../core/rake_calculator.dart';
+import '../models/chip_movement.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/currency_formatter.dart';
 import '../models/enums.dart';
 import '../models/player.dart';
 import '../providers/session_provider.dart';
+import '../services/chip_tracking_service.dart';
 import '../services/sound_service.dart';
 
 /// Collect Rake, in both of the modes a banker actually works in.
@@ -200,10 +202,21 @@ Future<void> showQuickRakeSheet(
   // Rake in this app is always collected in physical chips, never cash,
   // so those chips must physically enter the Bank. Asked before the money
   // is written so cancelling the sheet cancels nothing.
+  // Direction-correct (Phase 2b): rake chips come from the table —
+  // from a named player's person-scoped holding when one was picked,
+  // otherwise from the table's float. Never suggested/validated
+  // against bank inventory.
+  final source = player != null
+      ? ChipLocation.player(ChipTrackingService.holderRef(
+          playerId: player.id, personId: player.personId))
+      : (provider.activeTableId != null
+          ? ChipLocation.table(provider.activeTableId!)
+          : null);
   final dist = await ChipFlow.ask(
     context,
     amount: amount,
     currency: session.currency,
+    source: source,
   );
   if (!context.mounted) return;
 
@@ -216,13 +229,17 @@ Future<void> showQuickRakeSheet(
   if (context.mounted) {
     // Player -> Bank when the rake came from a named player, otherwise
     // Table -> Bank. Never 'removed': these chips are now the house's.
+    // Phase 2a: the named player's chips live on their PERSON holding.
     await ChipFlow.apply(
       context,
       distribution: dist,
       type: TransactionType.rakeCollection,
       sessionId: session.id,
       transactionId: tx.id,
-      playerId: player?.id,
+      holderRefId: player == null
+          ? null
+          : ChipTrackingService.holderRef(
+              playerId: player.id, personId: player.personId),
       tableId: player == null ? provider.activeTableId : null,
     );
   }

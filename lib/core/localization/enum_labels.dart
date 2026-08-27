@@ -1,5 +1,6 @@
 import '../../models/enums.dart';
 import '../../models/financial_event.dart';
+import '../../models/hand.dart';
 import 'app_localizations.dart';
 
 /// Localized display names for the enums that appear in the UI.
@@ -58,6 +59,12 @@ extension TransactionTypeL10n on TransactionType {
         return tr('transfer_in');
       case TransactionType.dealerTips:
         return tr('dealer_tips');
+      case TransactionType.tableCashOut:
+        return tr('table_cash_out');
+      case TransactionType.reentry:
+        return tr('reentry');
+      case TransactionType.houseWin:
+        return tr('house_win');
     }
   }
 }
@@ -110,6 +117,28 @@ extension PaymentMethodL10n on PaymentMethod {
         return tr('payment_bank_transfer');
       case PaymentMethod.other:
         return tr('payment_other');
+    }
+  }
+}
+
+extension HandKindL10n on HandKind {
+  String get localizedLabel {
+    switch (this) {
+      case HandKind.poker:
+        return tr('hand_kind_poker');
+      case HandKind.houseGame:
+        return tr('hand_kind_house');
+    }
+  }
+}
+
+extension HandStatusL10n on HandStatus {
+  String get localizedLabel {
+    switch (this) {
+      case HandStatus.completed:
+        return tr('hand_status_completed');
+      case HandStatus.voided:
+        return tr('hand_voided');
     }
   }
 }

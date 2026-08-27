@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/localization/app_localizations.dart';
+import '../../core/localization/enum_labels.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
 import '../../widgets/polish.dart';
@@ -15,6 +16,7 @@ import '../../widgets/balance_indicator.dart';
 import '../../widgets/confirm_action_dialog.dart';
 import '../../widgets/session_settlement_summary.dart';
 import '../chip_bank/session_reconciliation_screen.dart';
+import '../history/hand_history_screen.dart';
 import '../house_rules/house_rules_screen.dart';
 import '../reports/reports_screen.dart';
 
@@ -276,7 +278,7 @@ class DashboardTab extends StatelessWidget {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(onBreak ? 'ON BREAK' : 'SESSION TIME',
+                      Text(onBreak ? tr('on_break') : tr('session_timer'),
                           style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                       Text(_formatDuration(session.elapsed),
                           style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
@@ -430,9 +432,7 @@ class DashboardTab extends StatelessWidget {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  "Current Pot is what's still on the table — it's the same figure "
-                  'the balance check below watches, and should reach zero once '
-                  'everyone has cashed out.',
+                  tr('current_pot_hint'),
                   style: TextStyle(fontSize: 9.5, color: AppColors.textSecondary.withValues(alpha: 0.8)),
                 ),
               ),
@@ -440,6 +440,11 @@ class DashboardTab extends StatelessWidget {
               Row(
                 children: [
                   _miniStat(tr('rake'), fmt.format(provider.totalRake), color: AppColors.gold),
+                  // Phase 7: house-banked game revenue — its own figure,
+                  // never merged into rake. Shown only when present.
+                  if (provider.totalHouseWin > 0)
+                    _miniStat(tr('house_win'), fmt.format(provider.totalHouseWin),
+                        color: AppColors.gold),
                   _miniStat(tr('dealer_tips'), fmt.format(provider.totalDealerTips),
                       color: AppColors.warning),
                   _miniStat(tr('host_profit'), fmt.format(provider.hostProfit),
@@ -532,6 +537,29 @@ class DashboardTab extends StatelessWidget {
               style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
         ],
         const SizedBox(height: 10),
+        if (provider.lastHandAtActiveTable != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => HandHistoryScreen(
+                    sessionId: session.id,
+                    initialTableId: provider.activeTableId,
+                    highlightHandId: provider.lastHandAtActiveTable!.id,
+                  ),
+                )),
+                child: Text(
+                  '${tr('last_hand')} · ${provider.activeTable.name} · '
+                  '#${provider.lastHandAtActiveTable!.handNumber} · '
+                  '${provider.lastHandAtActiveTable!.kind.localizedLabel}'
+                  '${provider.lastHandAtActiveTable!.rakeAmount > 0 ? ' · ${tr('rake')} ${fmt.format(provider.lastHandAtActiveTable!.rakeAmount)}' : ''}'
+                  '${provider.lastHandAtActiveTable!.houseWinAmount > 0 ? ' · ${tr('house_win')} ${fmt.format(provider.lastHandAtActiveTable!.houseWinAmount)}' : ''}',
+                ),
+              ),
+            ),
+          ),
         TextButton(onPressed: onViewHistory, child: Text(tr('view_full_timeline'))),
         const SizedBox(height: 6),
         if (isEnded)
@@ -619,7 +647,7 @@ class _TableFinancialCard extends StatelessWidget {
                     ),
                   ),
                   child: Text(
-                    t.status.isClosed ? 'CLOSED' : 'PAUSED',
+                    t.status.isClosed ? tr('closed') : tr('paused'),
                     style: TextStyle(
                       fontSize: 8.5,
                       fontWeight: FontWeight.bold,
@@ -664,12 +692,27 @@ class _TableFinancialCard extends StatelessWidget {
           Row(
             children: [
               _cell(tr('rake'), fmt.format(summary.rake), color: AppColors.gold),
-              _cell(tr('dealer_tips'), fmt.format(summary.dealerTips),
-                  color: AppColors.warning),
+              if (summary.houseWin > 0)
+                _cell(tr('house_win'), fmt.format(summary.houseWin),
+                    color: AppColors.gold)
+              else
+                _cell(tr('dealer_tips'), fmt.format(summary.dealerTips),
+                    color: AppColors.warning),
               _cell(tr('host_profit'), fmt.format(summary.hostProfit),
                   color: AppColors.accentGreen),
             ],
           ),
+          if (summary.houseWin > 0 && summary.dealerTips > 0) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _cell(tr('dealer_tips'), fmt.format(summary.dealerTips),
+                    color: AppColors.warning),
+                const Expanded(child: SizedBox.shrink()),
+                const Expanded(child: SizedBox.shrink()),
+              ],
+            ),
+          ],
           if (summary.cashDrop > 0) ...[
             const SizedBox(height: 10),
             Row(
@@ -727,15 +770,15 @@ class _StatusChip extends StatelessWidget {
     late final Color color;
     switch (status) {
       case SessionStatus.active:
-        label = 'ACTIVE';
+        label = tr('active');
         color = AppColors.accentGreen;
         break;
       case SessionStatus.onBreak:
-        label = 'ON BREAK';
+        label = tr('on_break');
         color = AppColors.warning;
         break;
       case SessionStatus.ended:
-        label = 'ENDED';
+        label = tr('ended');
         color = AppColors.textSecondary;
         break;
     }

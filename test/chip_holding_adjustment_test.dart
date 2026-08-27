@@ -106,17 +106,22 @@ void main() {
         reason: ChipMovementReason.buyIn,
       );
 
-      // P1 wins P2's 3M during play — recorded as a chip transfer.
-      await ChipTrackingService.recordPlayerTransfer(
-        fromPlayerId: 'p2',
-        toPlayerId: 'p1',
-        distribution: {c['1m']!.id: 3},
+      // P1 wins P2's 3M during play — captured by physical counts
+      // (P2P transfer removed, E7): the re-anchor pair nets to zero
+      // for the Bank.
+      await ChipTrackingService.adjustPlayerHoldingToCount(
+        playerId: 'p1',
+        counted: {c['1m']!.id: 5},
+      );
+      await ChipTrackingService.adjustPlayerHoldingToCount(
+        playerId: 'p2',
+        counted: {c['1m']!.id: 0},
       );
 
       // The holding now reflects the win: 5M, not the 2M buy-in.
       expect(_atPlayer('p1', c['1m']!.id), 5);
       expect(ChipTrackingService.playerHolding('p1').totalValue, 5000000);
-      // P2P transfer left the Bank untouched.
+      // The count re-anchor left the Bank untouched.
       expect(_atBank(c['1m']!.id), 15);
 
       // A 5M chip change (five 1M -> one 5M) must be ALLOWED.

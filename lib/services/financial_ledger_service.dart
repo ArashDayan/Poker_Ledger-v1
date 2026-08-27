@@ -308,6 +308,36 @@ class FinancialLedgerService {
   static double depositHeldMajor(String personId, AppCurrency currency) =>
       MoneyUnits.toMajor(currency, depositHeldMinor(personId, currency));
 
+  /// Derived outstanding CREDIT for one person in one currency:
+  /// `Σ creditIssued + Σ cashOutUnbacked − Σ creditRepaid` over active
+  /// events (reversals and reversed originals excluded).
+  ///
+  /// Read-only derivation that reuses [balance]'s active/reversed
+  /// rules — it does not change the outstanding-balance formula.
+  /// Deposit (front money) is deliberately NOT part of this: held
+  /// front money is the player's own cash, not credit. Never stored.
+  static int creditOutstandingMinor(String personId, AppCurrency currency) {
+    final events = _eventsFor(personId, currency: currency);
+    if (events.isEmpty) return 0;
+    final reversed = _reversedIds(events);
+    var minor = 0;
+    for (final e in events) {
+      if (e.isReversal || reversed.contains(e.id)) continue;
+      switch (e.type) {
+        case FinancialEventType.creditIssued:
+        case FinancialEventType.cashOutUnbacked:
+          minor += e.amountMinor;
+          break;
+        case FinancialEventType.creditRepaid:
+          minor -= e.amountMinor;
+          break;
+        default:
+          break;
+      }
+    }
+    return minor;
+  }
+
   /// Events recorded against [sessionId], newest first.
   ///
   /// A missing or empty sessionId matches nothing — events without a
@@ -461,7 +491,9 @@ class FinancialLedgerService {
       depositInMinor: depositIn,
       depositUsedForChipsMinor: usedForChips,
       depositReturnedMinor: depositOut - usedForChips,
-      depositRemainingMinor: remaining < 0 ? 0 : remaining,
+      depositRemainingMinor: personId == null
+          ? (remaining < 0 ? 0 : remaining)
+          : depositHeldMinor(personId, currency),
       sessionOutstandingMinor: outstanding,
       recorded: true,
     );
@@ -521,7 +553,7 @@ class FinancialLedgerService {
     String personId, {
     AppCurrency? currency,
   }) {
-    if (!_boxOpen) return const [];
+    if (!_boxOpen) return [];
     return HiveService.financialEvents.values
         .where((e) =>
             e.personId == personId &&

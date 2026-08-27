@@ -29,10 +29,11 @@ drift apart.
 
 The home screen was rebuilt around it: a felt vignette hero with the
 mark at real size, a gold-gradient wordmark, and three headline stats
-(Active / Sessions / Total Rake). Session rows are now cards with a
-coloured status spine, status/table/seated pills, and the rake figure
-called out in gold. Total Rake deliberately shows `—` when past sessions
-mix currencies, rather than adding Toman to dollars.
+(Active / Sessions / Host Profit). Session rows are now cards with a
+coloured status spine, status/table/seated pills, and Host Profit
+(rake + house wins) called out in gold. The figure deliberately shows
+`—` when past sessions mix currencies, rather than adding Toman to
+dollars.
 
 ### 2. Five configurable quick-rake slots
 
@@ -175,14 +176,11 @@ played, and every session they appeared in — tap any of those to jump
 straight to it. Also reachable from a player's detail screen and from the
 history button on their card during a live game.
 
-**How players are linked across sessions.** A `Player` row belongs to
-exactly one session and there is no global player registry, so a career
-is assembled by grouping rows on a **normalised name** (case- and
-whitespace-insensitive). This is a deliberate trade-off: two different
-people sharing a name are treated as one, and someone entered as "Ali"
-one week and "Ali K" the next shows as two. The alternative — fuzzy
-matching — risks silently merging two people's money history, which is
-far worse than a split record the banker can see and fix by renaming.
+**How players are linked across sessions.** Linked seats use a permanent
+player identity. Two people who share a display name stay two careers.
+Unlinked leftover seats still group by **normalised name** (case- and
+whitespace-insensitive) and are labelled as name-only history, not a
+Financial Account. Fuzzy matching is never used.
 
 The whole feature is a **read-only aggregation** of transactions that
 already exist. It cannot alter the ledger. Lifetime totals are suppressed
@@ -238,9 +236,9 @@ reflows the layout under the banker's thumb mid-tap.
 
 Per the brief: tap counts were **not** aggressively reduced, Table View
 behaviour is **unchanged** (tapping a player still opens the actions
-sheet), and the settlement/balance engine is **untouched** — session
-level only, `buy-ins + rebuys` vs `cash-outs + rake`, a $0 cash-out
-still valid, a winner's cash-out never capped by their buy-in.
+sheet), and the settlement/balance engine stays session-level only. See
+the accounting model below. A $0 cash-out is still valid, and a
+winner's cash-out is never capped by their buy-in.
 
 ### Regenerating the assets
 
@@ -307,18 +305,16 @@ Platform requirements already wired up: `USE_BIOMETRIC` permission,
 
 ## Building the APK
 
-This repository has no `android/` folder checked in (it was never
-`flutter create`d). To produce an installable APK:
+`android/` and `ios/` are in this repository. See [BUILD_APK.md](BUILD_APK.md).
 
 ```bash
 flutter pub get
-flutter create --platforms=android .   # generates android/ once
-dart run flutter_launcher_icons        # bakes the new chip icon
+dart run flutter_launcher_icons        # optional: refresh launcher icons
 flutter build apk --release
 # -> build/app/outputs/flutter-apk/app-release.apk
 ```
 
-Requires Flutter 3.24+ and a JDK 17 Android toolchain.
+Requires Flutter 3.19+ / Dart 3.3+ and a JDK 17 Android toolchain.
 
 ---
 
@@ -516,21 +512,30 @@ lib/
 
 ### The accounting model (read this before touching `session_service.dart`)
 
-Every dollar (or toman) is one of five transaction types:
-`buyIn`, `rebuy`, `cashOut`, `rakeCollection`, `cashDrop`.
+Session books (Phase 7) use these **locked** identities:
 
 ```
-Money In  = Total Buy-ins + Total Rebuys
-Money Out = Total Cash-outs + Total Rake
+Money In  = Buy-in + Rebuy + Re-entry
+Money Out = Cash-out + Table Cash-out + Rake + Dealer Tips + House Wins
+playerProfitLoss = (cashOut + tableCashOut − reentry) − (buyIn + rebuy)
+hostProfit = totalRake + totalHouseWin
 ```
 
-`SessionService.checkBalance()` compares the two **at the session level
-only**. A single player's cash-out is never compared against their own
-buy-in/rebuy — `SessionService.playerTotalIn` /
-`playerTotalCashOut` / `playerProfitLoss` are informational/reporting
-figures, never constraints. If Money In ≠ Money Out, the app shows the
-exact difference and a ranked list of likely causes (missing cash-out,
-unlogged rebuy, double payout, double-counted rake, etc.).
+Re-entry is **not** a purchase and is never folded into lifetime
+Purchases. Table cash-out is **not** a cage redemption: chips stay
+person-held. Cage redemption is the only person → bank chip return and
+writes **no** session `cashOut` leg. Rake, House Win and player-to-player
+chip movement stay separate. Player loss is not reduced by rake.
+
+`SessionService.checkBalance()` compares Money In / Money Out **at the
+session level only**. A single player's cash-out is never compared
+against their own buy-in. Discount/Rebate stays on the own-cash
+Financial Ledger and is never added to Money In, Money Out or Host
+Profit.
+
+Reports (Phase 10) show Purchases, Re-entry, Session cash-out legs,
+Table cash-outs, Cage cash returned, Rake, House Win and Host Profit
+as separate figures. Lifetime "Money In" on reports is purchases only.
 
 `cashDrop` (money moved to the safe/owner) is tracked and shown, but is
 intentionally **not** part of the balancing equation — it's an internal
@@ -587,19 +592,10 @@ where the data physically lives. This pass didn't touch that boundary.
 ## Not yet wired (left as clearly-marked extension points)
 
 - Voice notes: `LedgerTransaction.voiceNotePath` already exists as a data
-  field. To implement, add the `record`/`audioplayers` packages back to
-  `pubspec.yaml` and hook up a recorder button in `PlayerActionScreen`
-  (left out of the default dependency set for now to keep `pub get`
-  resolution lean).
-- Biometric unlock: add `local_auth` to `pubspec.yaml` for a
-  fingerprint/Face ID option alongside the PIN.
+  field. A recorder button is not on the money sheets.
 - Firebase/cloud sync: architecture is prepared (see above) but not
   implemented, per the current requirement to stay offline-first.
 
-## Future roadmap (intentionally not implemented)
-
-Per explicit request, these are postponed — the data model and services
-are kept generic enough not to block them later, but none of the
-following exist yet: chip inventory, chip color/value management,
-automatic chip distribution, chip reconciliation, or advanced casino
-inventory features.
+Chip inventory, denomination tracking, physical count, table float and
+session chip reconciliation **are implemented**. App Lock / biometrics
+are implemented via `local_auth`.

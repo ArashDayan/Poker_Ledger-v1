@@ -7,6 +7,7 @@ import 'package:hive/hive.dart';
 import 'package:poker_ledger/core/localization/app_localizations.dart';
 import 'package:poker_ledger/models/enums.dart';
 import 'package:poker_ledger/models/financial_event.dart';
+import 'package:poker_ledger/models/hand.dart';
 import 'package:poker_ledger/models/player.dart';
 import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
@@ -35,6 +36,7 @@ Future<void> _open() async {
   await Hive.openBox(HiveService.settingsBox);
   await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
   await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
+  await Hive.openBox<Hand>(HiveService.handsBox);
   _ali = (await PlayerIdentityService.createNew('Ali'))!.id;
   _baba = (await PlayerIdentityService.createNew('Ali'))!.id;
 }

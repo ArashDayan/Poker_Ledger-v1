@@ -7,9 +7,12 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 import '../models/enums.dart';
 import '../models/financial_event.dart';
+import '../models/hand.dart';
 import '../models/session.dart';
 import 'financial_ledger_service.dart';
+import 'hand_service.dart';
 import 'rebate_service.dart';
+import 'table_service.dart';
 import 'report_service.dart';
 import 'session_service.dart';
 import 'session_settlement_view.dart';
@@ -124,17 +127,9 @@ class ExportService {
             align: const {1: pw.Alignment.centerRight},
             headers: ['Metric', 'Amount'],
             data: [
-              ['Total Buy-in', fmt.formatRaw(SessionService.totalBuyIn(session.id))],
-              ['Total Rebuy', fmt.formatRaw(SessionService.totalRebuy(session.id))],
-              ['Money In (Buy-in + Rebuy)', fmt.formatRaw(balance.moneyIn)],
-              ['Total Cash-out', fmt.formatRaw(SessionService.totalCashOut(session.id))],
-              ['Rake Collected', fmt.formatRaw(SessionService.totalRake(session.id))],
-              ['Dealer Tips (in Money Out, not Host Profit)',
-                  fmt.formatRaw(SessionService.totalDealerTips(session.id))],
-              ['Money Out (Cash-out + Rake + Dealer Tips)', fmt.formatRaw(balance.moneyOut)],
+              ...sessionBooksRows(session),
               ['Cash Drops (tracked, not part of settlement)',
                   fmt.formatRaw(SessionService.totalCashDrop(session.id))],
-              ['Host Profit (rake only)', fmt.formatRaw(SessionService.hostProfit(session.id))],
               [
                 'Balance Status',
                 overlay != null && overlay.explainsGap
@@ -204,7 +199,9 @@ class ExportService {
                 ['Deposit received', fmt.formatRaw(fin.depositIn)],
                 ['Deposit used for chips', fmt.formatRaw(fin.depositUsedForChips)],
                 ['Deposit returned', fmt.formatRaw(fin.depositReturned)],
-                ['Deposit remaining', fmt.formatRaw(fin.depositRemaining)],
+                // E8: session-scoped projection — the lifetime remaining
+                // deposit is the wallet's figure (source of truth).
+                ['Deposit remaining (this session)', fmt.formatRaw(fin.depositRemaining)],
               ],
             ),
           ),
@@ -224,7 +221,7 @@ class ExportService {
             },
             headers: [
               'Seat', 'Name', 'Buy-in+Rebuy', 'Cash-out', 'P/L',
-              'Cashed out', 'Deposit remaining',
+              'Cashed out', 'Deposit remaining (this session)',
             ],
             data: settlement.players.map((row) {
               return [
@@ -265,6 +262,7 @@ class ExportService {
             }).toList(),
           ),
           ),
+          ..._handHistoryPdfSection(session, fmt),
           pw.Padding(
             padding: const pw.EdgeInsets.symmetric(horizontal: 18),
             child: _footerNote(),
@@ -290,6 +288,9 @@ class ExportService {
       moneyStillInPlay: SessionService.moneyStillInPlay(session.id),
     );
     final rows = <List<dynamic>>[
+      ['Metric', 'Amount'],
+      ...sessionBooksRows(session),
+      <dynamic>[],
       ['Timestamp', 'Type', 'Player', 'Amount', 'Note', 'Signed'],
       for (final t in txs)
         [
@@ -317,6 +318,7 @@ class ExportService {
         ],
       ],
       ..._rebateCsvFooter(session),
+      ..._handHistoryCsvSection(session),
     ];
     final csv = const ListToCsvConverter().convert(rows);
     final dir = await getApplicationDocumentsDirectory();
@@ -585,6 +587,113 @@ class ExportService {
     );
   }
 
+  static List<pw.Widget> _handHistoryPdfSection(
+    PokerSession session,
+    CurrencyFormatter fmt,
+  ) {
+    final hands = HandService.forSession(session.id, includeVoided: true);
+    if (hands.isEmpty) return const [];
+    final tables = TableService.tablesFor(session);
+    String tableName(String id) => tables
+        .firstWhere((t) => t.id == id, orElse: () => tables.first)
+        .name;
+    return [
+      pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+        child: _sectionTitle('Hand history (pot facts)'),
+      ),
+      pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(horizontal: 18),
+        child: _table(
+          headers: [
+            'Hand',
+            'Table',
+            'Kind',
+            'Time',
+            'Results',
+            'Pot',
+            'Rake',
+            'House Win',
+            'Status',
+          ],
+          data: [
+            for (final h in hands)
+              [
+                '#${h.handNumber}',
+                tableName(h.tableId),
+                h.kind.name,
+                h.completedAt.toString().substring(0, 16),
+                [
+                  for (final r in h.results)
+                    '${r.nameSnapshot} ${r.chipChange >= 0 ? '+' : ''}'
+                    '${fmt.formatRaw(r.chipChange)}',
+                ].join('; '),
+                fmt.formatRaw(h.potAmount),
+                fmt.formatRaw(h.rakeAmount),
+                fmt.formatRaw(h.houseWinAmount),
+                h.isVoided ? 'VOIDED' : 'Completed',
+              ],
+          ],
+        ),
+      ),
+    ];
+  }
+
+  static List<List<dynamic>> _handHistoryCsvSection(PokerSession session) {
+    final hands = HandService.forSession(session.id, includeVoided: true);
+    if (hands.isEmpty) return const [];
+    final tables = TableService.tablesFor(session);
+    String tableName(String id) => tables
+        .firstWhere((t) => t.id == id, orElse: () => tables.first)
+        .name;
+    return [
+      <dynamic>[],
+      [
+        'Hand #',
+        'Table',
+        'Kind',
+        'Completed at',
+        'Player',
+        'Seat',
+        'Chip change',
+        'Pot',
+        'Rake',
+        'House Win',
+        'Status',
+      ],
+      for (final h in hands)
+        if (h.results.isEmpty)
+          [
+            h.handNumber,
+            tableName(h.tableId),
+            h.kind.name,
+            h.completedAt.toIso8601String(),
+            '',
+            '',
+            '',
+            h.potAmount,
+            h.rakeAmount,
+            h.houseWinAmount,
+            h.isVoided ? 'VOIDED' : 'Completed',
+          ]
+        else
+          for (final r in h.results)
+            [
+              h.handNumber,
+              tableName(h.tableId),
+              h.kind.name,
+              h.completedAt.toIso8601String(),
+              r.nameSnapshot,
+              r.seatNumber,
+              r.chipChange,
+              h.potAmount,
+              h.rakeAmount,
+              h.houseWinAmount,
+              h.isVoided ? 'VOIDED' : 'Completed',
+            ],
+    ];
+  }
+
   static pw.Widget _footerNote() => pw.Container(
         margin: const pw.EdgeInsets.only(top: 20),
         child: pw.Text(
@@ -628,23 +737,27 @@ class ExportService {
                 _sectionTitle('Results by player'),
                 _table(
                   headers: [
-                    'Player', 'Sessions', 'Total In', 'Cashed Out',
-                    'Rebuys', 'Net', 'Last Played',
+                    'Player', 'Sessions', 'Purchases', 'Table Cash-outs',
+                    'Cage Cash', 'Re-entries', 'Rebuys', 'Net', 'Last Played',
                   ],
                   align: const {
                     1: pw.Alignment.center,
                     2: pw.Alignment.centerRight,
                     3: pw.Alignment.centerRight,
-                    4: pw.Alignment.center,
+                    4: pw.Alignment.centerRight,
                     5: pw.Alignment.centerRight,
+                    6: pw.Alignment.center,
+                    7: pw.Alignment.centerRight,
                   },
                   data: [
                     for (final r in rows)
                       [
                         r.name,
                         '${r.sessions}',
-                        fmt.formatRaw(r.totalIn),
-                        fmt.formatRaw(r.totalOut),
+                        fmt.formatRaw(r.purchases),
+                        fmt.formatRaw(r.tableCashOut),
+                        fmt.formatRaw(r.cageCash),
+                        fmt.formatRaw(r.reentry),
                         '${r.rebuys}',
                         '${r.net >= 0 ? '+' : ''}${fmt.formatRaw(r.net)}',
                         r.lastPlayed?.toString().substring(0, 10) ?? '-',
@@ -656,9 +769,9 @@ class ExportService {
                       style: const pw.TextStyle(fontSize: 10, color: _muted)),
                 _sectionTitle('Note'),
                 pw.Text(
-                  'Net is cash-out minus everything the player put in '
-                  '(buy-ins plus rebuys). A positive figure means the '
-                  'player finished ahead across the period.',
+                  'Net is each session\'s authoritative player P/L '
+                  '(cash-out + table cash-out − re-entry − buy-in − rebuy). '
+                  'A positive figure means the player finished ahead.',
                   style: const pw.TextStyle(fontSize: 9, color: _muted),
                 ),
                 _footerNote(),
@@ -671,22 +784,41 @@ class ExportService {
     return _write(doc, 'player_performance_${currency.name}.pdf');
   }
 
-  static Future<File> exportPlayerPerformanceCsv(AppCurrency currency) async {
+  static List<List<dynamic>> playerPerformanceCsvRows(AppCurrency currency) {
     final rows = ReportService.playerPerformance(currency);
-    final data = <List<dynamic>>[
-      ['Player', 'Sessions', 'Total In', 'Cashed Out', 'Rebuys', 'Net',
-       'Last Played'],
+    return [
+      [
+        'Player',
+        'Person ID',
+        'Sessions',
+        'Purchases',
+        'Table Cash-outs',
+        'Cage Cash',
+        'Unbacked Cash-out',
+        'Re-entries',
+        'Rebuys',
+        'Net',
+        'Last Played',
+      ],
       for (final r in rows)
         [
           r.name,
+          r.personId ?? '',
           r.sessions,
-          r.totalIn,
-          r.totalOut,
+          r.purchases,
+          r.tableCashOut,
+          r.cageCash,
+          r.cageCashUnbacked,
+          r.reentry,
           r.rebuys,
           r.net,
           r.lastPlayed?.toIso8601String() ?? '',
         ],
     ];
+  }
+
+  static Future<File> exportPlayerPerformanceCsv(AppCurrency currency) async {
+    final data = playerPerformanceCsvRows(currency);
     final dir = await getApplicationDocumentsDirectory();
     final file = File('${dir.path}/player_performance_${currency.name}.csv');
     await file.writeAsString(const ListToCsvConverter().convert(data));
@@ -724,11 +856,22 @@ class ExportService {
                   data: [
                     ['Sessions hosted', '${lifetime.sessions}'],
                     ['Player entries', '${lifetime.players}'],
-                    ['Money in (buy-ins + rebuys)',
-                        fmt.formatRaw(lifetime.moneyIn)],
-                    ['Cashed out to players', fmt.formatRaw(lifetime.cashedOut)],
+                    ['Purchases (buy-in + rebuy)',
+                        fmt.formatRaw(lifetime.purchases)],
+                    ['Re-entry (not a purchase)',
+                        fmt.formatRaw(lifetime.reentry)],
+                    ['Session cash-out legs',
+                        fmt.formatRaw(lifetime.sessionCashOut)],
+                    ['Table cash-outs',
+                        fmt.formatRaw(lifetime.tableCashOut)],
+                    ['Cage cash returned',
+                        fmt.formatRaw(lifetime.cageCashOut)],
+                    ['Unbacked cash-out',
+                        fmt.formatRaw(lifetime.cageCashOutUnbacked)],
                     ['Rake collected', fmt.formatRaw(lifetime.rake)],
-                    ['Banker profit', fmt.formatRaw(lifetime.bankerProfit)],
+                    ['House wins', fmt.formatRaw(lifetime.houseWin)],
+                    ['Banker profit (rake + house wins)',
+                        fmt.formatRaw(lifetime.bankerProfit)],
                     ['Average profit per session',
                         fmt.formatRaw(lifetime.averagePerSession)],
                     ['Average buy-in per entry',
@@ -737,20 +880,25 @@ class ExportService {
                 ),
                 _sectionTitle('By month'),
                 _table(
-                  headers: ['Month', 'Sessions', 'Money In', 'Rake', 'Profit'],
+                  headers: [
+                    'Month', 'Sessions', 'Purchases', 'Rake', 'House Win',
+                    'Profit',
+                  ],
                   align: const {
                     1: pw.Alignment.center,
                     2: pw.Alignment.centerRight,
                     3: pw.Alignment.centerRight,
                     4: pw.Alignment.centerRight,
+                    5: pw.Alignment.centerRight,
                   },
                   data: [
                     for (final m in months)
                       [
                         m.label,
                         '${m.sessions}',
-                        fmt.formatRaw(m.moneyIn),
+                        fmt.formatRaw(m.purchases),
                         fmt.formatRaw(m.rake),
+                        fmt.formatRaw(m.houseWin),
                         fmt.formatRaw(m.bankerProfit),
                       ],
                   ],
@@ -785,19 +933,39 @@ class ExportService {
     return _write(doc, 'banker_report_${currency.name}.pdf');
   }
 
-  static Future<File> exportBankerReportCsv(AppCurrency currency) async {
+  /// In-memory banker CSV matrix. Tests use this so path_provider is
+  /// not required. House Win is its own column and is never merged
+  /// into Rake.
+  static List<List<dynamic>> bankerCsvRows(AppCurrency currency) {
     final months = ReportService.monthly(currency);
     final lifetime = ReportService.lifetime(currency);
-    final data = <List<dynamic>>[
-      ['Period', 'Sessions', 'Player Entries', 'Money In', 'Cashed Out',
-       'Rake', 'Banker Profit'],
+    return [
+      [
+        'Period',
+        'Sessions',
+        'Player Entries',
+        'Purchases',
+        'Re-entry',
+        'Session Cash-out',
+        'Table Cash-outs',
+        'Cage Cash',
+        'Unbacked Cash-out',
+        'Rake',
+        'House Win',
+        'Banker Profit',
+      ],
       [
         'Lifetime',
         lifetime.sessions,
         lifetime.players,
-        lifetime.moneyIn,
-        lifetime.cashedOut,
+        lifetime.purchases,
+        lifetime.reentry,
+        lifetime.sessionCashOut,
+        lifetime.tableCashOut,
+        lifetime.cageCashOut,
+        lifetime.cageCashOutUnbacked,
         lifetime.rake,
+        lifetime.houseWin,
         lifetime.bankerProfit,
       ],
       for (final m in months)
@@ -805,16 +973,80 @@ class ExportService {
           m.label,
           m.sessions,
           m.players,
-          m.moneyIn,
-          m.cashedOut,
+          m.purchases,
+          m.reentry,
+          m.sessionCashOut,
+          m.tableCashOut,
+          m.cageCashOut,
+          m.cageCashOutUnbacked,
           m.rake,
+          m.houseWin,
           m.bankerProfit,
         ],
     ];
+  }
+
+  static Future<File> exportBankerReportCsv(AppCurrency currency) async {
+    final data = bankerCsvRows(currency);
     final dir = await getApplicationDocumentsDirectory();
     final file = File('${dir.path}/banker_report_${currency.name}.csv');
     await file.writeAsString(const ListToCsvConverter().convert(data));
     return file;
+  }
+
+  /// Session chip-book + cage split for tests and CSV/PDF.
+  static List<List<String>> sessionBooksRows(PokerSession session) {
+    final books = SessionService.checkBalance(session.id);
+    final fin = FinancialLedgerService.snapshotForSession(
+      session.id,
+      currency: session.currency,
+    );
+    final fmt = CurrencyFormatter(session.currency);
+    return [
+      [
+        'Purchases (buy-in + rebuy)',
+        fmt.formatRaw(SessionService.totalBuyIn(session.id) +
+            SessionService.totalRebuy(session.id))
+      ],
+      [
+        'Re-entry (carried chips committed — not a purchase)',
+        fmt.formatRaw(SessionService.totalReentry(session.id))
+      ],
+      [
+        'Money In (Buy-in + Rebuy + Re-entry)',
+        fmt.formatRaw(books.moneyIn)
+      ],
+      [
+        'Session cash-out legs',
+        fmt.formatRaw(SessionService.totalCashOut(session.id))
+      ],
+      [
+        'Table cash-outs (chips carried out of tables)',
+        fmt.formatRaw(SessionService.totalTableCashOut(session.id))
+      ],
+      ['Cage cash returned', fmt.formatRaw(fin.cashOutForChips)],
+      ['Unbacked cash-out', fmt.formatRaw(fin.cashOutUnbacked)],
+      [
+        'Rake Collected (poker)',
+        fmt.formatRaw(SessionService.totalRake(session.id))
+      ],
+      [
+        'Dealer Tips (in Money Out, not Host Profit)',
+        fmt.formatRaw(SessionService.totalDealerTips(session.id))
+      ],
+      [
+        'House Wins (house-banked games — separate from rake)',
+        fmt.formatRaw(SessionService.totalHouseWin(session.id))
+      ],
+      [
+        'Money Out (Cash-out + Table Cash-out + Rake + Tips + House Wins)',
+        fmt.formatRaw(books.moneyOut)
+      ],
+      [
+        'Host Profit (rake + house wins)',
+        fmt.formatRaw(SessionService.hostProfit(session.id))
+      ],
+    ];
   }
 
   // ------------------------------------------------------------------

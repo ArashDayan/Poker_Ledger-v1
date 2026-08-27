@@ -6,6 +6,7 @@ import '../../core/utils/currency_formatter.dart';
 import '../../services/player_history_service.dart';
 import '../../services/player_identity_service.dart';
 import '../../services/player_registry_service.dart';
+import '../../services/session_settlement_view.dart';
 import '../../widgets/player_type_badge.dart';
 import '../player_account/player_account_screen.dart';
 import '../reports/reports_screen.dart';
@@ -214,18 +215,28 @@ class PlayerHistoryScreen extends StatelessWidget {
   Widget _statsGrid(PlayerCareer c, CurrencyFormatter fmt, bool mixed) {
     String money(double v) => mixed ? '—' : fmt.format(v);
 
+    var tableOut = 0.0, sessionOut = 0.0, cage = 0.0, reentry = 0.0;
+    for (final r in c.records) {
+      final row = PlayerSettlementRow.load(
+          r.session.id, r.session.currency, r.player);
+      tableOut += row.tableCashOut;
+      sessionOut += row.sessionCashOut;
+      cage += row.cageCashOut;
+      reentry += row.reentry;
+    }
+
     final tiles = <List<String>>[
-      ['Total Buy-in', money(c.totalBuyIn)],
-      ['Total Rebuy', money(c.totalRebuy)],
-      ['Total Cash-out', money(c.totalCashOut)],
-      ['Total In', money(c.totalIn)],
-      ['Average Buy-in', money(c.averageBuyIn)],
+      [tr('report_purchases'), money(c.totalIn)],
+      [tr('report_reentry'), money(reentry)],
+      [tr('report_table_cash_outs'), money(tableOut)],
+      [tr('report_session_cash_out'), money(sessionOut)],
+      [tr('report_cage_cash'), money(cage)],
+      [tr('average_buy_in'), money(c.averageBuyIn)],
       [
-        'Average Result',
+        tr('profit_loss'),
         c.averageResult == null ? '—' : money(c.averageResult!)
       ],
-      ['Rebuys Taken', '${c.totalRebuys}'],
-      ['Sessions Settled', '${c.completedSessions}/${c.sessionsPlayed}'],
+      [tr('sessions_played'), '${c.completedSessions}/${c.sessionsPlayed}'],
     ];
 
     return Container(
@@ -382,8 +393,15 @@ class PlayerHistoryScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        'In ${fmt.format(r.totalIn)} · Out ${fmt.format(r.cashOut)}'
-                        '${r.rebuyCount > 0 ? ' · ${r.rebuyCount} rebuy${r.rebuyCount == 1 ? '' : 's'}' : ''}',
+                        () {
+                          final split = PlayerSettlementRow.load(
+                              r.session.id, r.session.currency, r.player);
+                          return '${tr('report_purchases')} ${fmt.format(r.totalIn)}'
+                              ' · ${tr('report_table_cash_outs')} ${fmt.format(split.tableCashOut)}'
+                              ' · ${tr('report_session_cash_out')} ${fmt.format(split.sessionCashOut)}'
+                              '${split.cageCashOut > 0 ? ' · ${tr('report_cage_cash')} ${fmt.format(split.cageCashOut)}' : ''}'
+                              '${r.rebuyCount > 0 ? ' · ${r.rebuyCount} ${tr('rebuy')}' : ''}';
+                        }(),
                         style: const TextStyle(
                             fontSize: 10.5, color: AppColors.textSecondary),
                       ),
@@ -397,7 +415,7 @@ class PlayerHistoryScreen extends StatelessWidget {
                     Text(
                       r.settled
                           ? '${up ? '+' : ''}${fmt.format(r.profitLoss)}'
-                          : 'In play',
+                          : tr('in_play'),
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 13.5,
@@ -408,7 +426,7 @@ class PlayerHistoryScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      ended ? 'Ended' : 'Live',
+                      ended ? tr('ended') : tr('live'),
                       style: const TextStyle(
                           fontSize: 9, color: AppColors.textSecondary),
                     ),

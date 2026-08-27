@@ -54,10 +54,8 @@ dev_dependencies:
   flutter_lints: ^4.0.0
   flutter_launcher_icons: ^0.14.1
 
-# Generates real Android/iOS launcher icons from assets/images/app_icon.png.
-# This project has no android/ios platform folders yet (never had
-# `flutter create .` run against it) — after running that once, generate
-# the actual icon files with:
+# Generates Android/iOS launcher icons from assets/images/app_icon.png.
+# Platform folders already exist under android/ and ios/.
 #   dart run flutter_launcher_icons
 flutter_launcher_icons:
   android: "launcher_icon"

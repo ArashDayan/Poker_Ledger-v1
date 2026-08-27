@@ -66,8 +66,11 @@ class PlayerCareer {
   double get totalIn => records.fold(0.0, (s, r) => s + r.totalIn);
   double get totalCashOut => records.fold(0.0, (s, r) => s + r.cashOut);
 
-  /// Lifetime profit/loss. Money out minus money in, across everything.
-  double get netResult => totalCashOut - totalIn;
+  /// Lifetime profit/loss. Sum of each session's authoritative
+  /// [SessionService.playerProfitLoss] (re-entry corrected). Never
+  /// `totalCashOut - totalIn`, which would ignore re-entry and
+  /// double-count carried chips.
+  double get netResult => records.fold(0.0, (s, r) => s + r.profitLoss);
 
   int get totalRebuys => records.fold(0, (s, r) => s + r.rebuyCount);
 
@@ -163,9 +166,22 @@ class PlayerHistoryService {
       name.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 
   /// Builds one record for a specific player row.
+  ///
+  /// A pre-seat registration that never took a seat and never recorded
+  /// a transaction is not a session appearance — listing it would
+  /// inflate "sessions played" with nights the person never played.
+  /// A player who DID play (has transactions) keeps their appearance
+  /// record even after being unseated, so unseating a player can never
+  /// erase their history.
   static PlayerSessionRecord? recordFor(Player player) {
     final session = HiveService.sessions.get(player.sessionId);
     if (session == null) return null;
+    if (!player.seated &&
+        SessionService.transactionsFor(session.id, includeVoided: true)
+                .where((t) => t.playerId == player.id)
+                .isEmpty) {
+      return null;
+    }
     return PlayerSessionRecord(
       session: session,
       player: player,

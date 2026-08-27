@@ -6,9 +6,12 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
+import '../../models/bank_count.dart';
 import '../../providers/chip_bank_provider.dart';
 import '../../services/chip_bank_service.dart';
+import '../../services/chip_migration.dart';
 import '../../services/chip_tracking_service.dart';
+import '../../services/hive_service.dart';
 
 /// Session chip reconciliation.
 ///
@@ -82,6 +85,16 @@ class _ChipAuditScreenState extends State<ChipAuditScreen> {
           _VerdictCard(report: report, fmt: fmt),
           const SizedBox(height: 16),
 
+          // Phase 2a — unmigrated legacy chip records (seats that were
+          // never linked to a person) and any migration error. Shown
+          // here because this is the banker's "where are the chips"
+          // screen; the list is the honest residue, never hidden.
+          if (ChipMigration.hasUnmigratedLegacy ||
+              (ChipMigration.storedReport()?.error != null)) ...[
+            _MigrationCard(fmt: fmt),
+            const SizedBox(height: 16),
+          ],
+
           _TotalsGrid(report: report),
           const SizedBox(height: 18),
 
@@ -106,7 +119,9 @@ class _ChipAuditScreenState extends State<ChipAuditScreen> {
                   Text(tr('physical_count_hint'),
                       style: const TextStyle(
                           fontSize: 11, color: AppColors.textSecondary)),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 6),
+                  _LatestCountLine(),
+                  const SizedBox(height: 8),
                   ...ChipBankService.allChips().map((chip) {
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 8),
@@ -149,6 +164,33 @@ class _ChipAuditScreenState extends State<ChipAuditScreen> {
                       ),
                     );
                   }),
+                  const SizedBox(height: 6),
+                  ElevatedButton.icon(
+                    onPressed: _counts.isEmpty
+                        ? null
+                        : () async {
+                            try {
+                              final count = BankCount(
+                                id: 'count-${DateTime.now().microsecondsSinceEpoch}',
+                                countedAt: DateTime.now(),
+                                counts: Map<String, int>.from(_counts),
+                                note: tr('count_sheet_audit_note'),
+                              );
+                              await HiveService.bankCounts
+                                  .put(count.id, count);
+                              if (mounted) setState(() {});
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(tr('count_sheet_saved'))));
+                            } catch (e) {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context)
+                                    .showSnackBar(SnackBar(content: Text('$e')));
+                              }
+                            }
+                          },
+                    icon: const Icon(Icons.save_outlined, size: 16),
+                    label: Text(tr('save_count_sheet')),
+                  ),
                 ],
               ),
             ),
@@ -179,6 +221,94 @@ class _ChipAuditScreenState extends State<ChipAuditScreen> {
           _Note(text: tr('players_holding_chips_note')),
           const SizedBox(height: 8),
           _Note(text: tr('chip_tracking_note')),
+        ],
+      ),
+    );
+  }
+}
+
+/// Phase 2b — where the case ledger's baseline currently comes from:
+/// the latest count sheet, or the quantity record (legacy fallback).
+class _LatestCountLine extends StatelessWidget {
+  const _LatestCountLine();
+
+  @override
+  Widget build(BuildContext context) {
+    final latest = ChipTrackingService.latestBankCount();
+    final text = latest == null
+        ? tr('count_sheet_none')
+        : '${tr('latest_count_sheet')}: '
+            '${latest.countedAt.toIso8601String().substring(0, 16).replaceAll('T', ' ')}'
+            '${latest.note != null ? ' · ${latest.note}' : ''}';
+    return Text(
+      text,
+      style: TextStyle(
+        fontSize: 10.5,
+        color: latest == null ? AppColors.textSecondary : AppColors.gold,
+      ),
+    );
+  }
+}
+
+/// Phase 2a — the honest residue of the seat→person migration:
+/// records that live on seats never linked to a person, and any
+/// migration error. Nothing here is hidden or auto-invented.
+class _MigrationCard extends StatelessWidget {
+  final CurrencyFormatter fmt;
+  const _MigrationCard({required this.fmt});
+
+  @override
+  Widget build(BuildContext context) {
+    final report = ChipMigration.storedReport();
+    final unmigrated = ChipMigration.hasUnmigratedLegacy
+        ? ChipMigration.unmigratedSeats()
+        : const <UnmigratedSeat>[];
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+            color: (report?.error != null ? AppColors.danger : AppColors.gold)
+                .withValues(alpha: 0.45)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (report?.error != null) ...[
+            Text(tr('migration_error_title'),
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.danger)),
+            const SizedBox(height: 4),
+            Text(report!.error!,
+                style: const TextStyle(
+                    fontSize: 11, color: AppColors.textSecondary)),
+            const SizedBox(height: 4),
+          ],
+          if (unmigrated.isNotEmpty) ...[
+            Text(tr('legacy_chip_records_title'),
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.gold)),
+            const SizedBox(height: 4),
+            Text(tr('legacy_chip_records_hint'),
+                style: const TextStyle(
+                    fontSize: 11, color: AppColors.textSecondary, height: 1.3)),
+            const SizedBox(height: 8),
+            for (final u in unmigrated)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  '${u.name.isEmpty ? '…' : u.name} · ${u.movementCount} ${tr('movements_label')} · ${fmt.format(u.totalValue)}',
+                  style: const TextStyle(
+                      fontSize: 11.5, color: AppColors.textPrimary),
+                ),
+              ),
+          ],
         ],
       ),
     );

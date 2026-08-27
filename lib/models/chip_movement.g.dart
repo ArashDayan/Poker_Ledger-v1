@@ -26,13 +26,17 @@ class ChipMovementAdapter extends TypeAdapter<ChipMovement> {
       timestamp: fields[8] as DateTime?,
       transactionId: fields[9] as String?,
       note: fields[10] as String?,
+      // Records written before fields 11–12 exist have no entries:
+      // they were never re-keyed.
+      legacyFrom: fields[11] as String?,
+      legacyTo: fields[12] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, ChipMovement obj) {
     writer
-      ..writeByte(11)
+      ..writeByte(13)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -54,7 +58,11 @@ class ChipMovementAdapter extends TypeAdapter<ChipMovement> {
       ..writeByte(9)
       ..write(obj.transactionId)
       ..writeByte(10)
-      ..write(obj.note);
+      ..write(obj.note)
+      ..writeByte(11)
+      ..write(obj.legacyFrom)
+      ..writeByte(12)
+      ..write(obj.legacyTo);
   }
 
   @override

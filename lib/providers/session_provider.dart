@@ -5,8 +5,11 @@ import 'package:uuid/uuid.dart';
 import '../models/player.dart';
 import '../models/session.dart';
 import '../models/transaction.dart';
+import '../models/hand.dart';
 import '../services/box_watch_hub.dart';
+import '../services/hand_service.dart';
 import '../services/hive_service.dart';
+import '../services/participation_service.dart';
 import '../services/player_identity_service.dart';
 import '../services/session_service.dart';
 import '../services/chip_tracking_service.dart';
@@ -102,6 +105,7 @@ class SessionProvider extends ChangeNotifier {
     });
     _watchHub.attach(
         'financialEvents', () => HiveService.financialEvents.watch());
+    _watchHub.attach('hands', () => HiveService.hands.watch());
     return watchersHealthy;
   }
 
@@ -387,12 +391,17 @@ class SessionProvider extends ChangeNotifier {
   double get totalBuyIn => _current == null ? 0 : SessionService.totalBuyIn(_current!.id);
   double get totalRebuy => _current == null ? 0 : SessionService.totalRebuy(_current!.id);
   double get totalCashOut => _current == null ? 0 : SessionService.totalCashOut(_current!.id);
+  // Phase 7: carried chips committed via re-entry (session money IN,
+  // never a purchase), and house-banked game revenue (reported
+  // separately from rake).
+  double get totalReentry => _current == null ? 0 : SessionService.totalReentry(_current!.id);
+  double get totalHouseWin => _current == null ? 0 : SessionService.totalHouseWin(_current!.id);
   double get totalRake => _current == null ? 0 : SessionService.totalRake(_current!.id);
   double get totalCashDrop => _current == null ? 0 : SessionService.totalCashDrop(_current!.id);
   double get hostProfit => _current == null ? 0 : SessionService.hostProfit(_current!.id);
 
   /// Chips tipped to the dealer this session. Reported separately from
-  /// [hostProfit], which remains rake alone.
+  /// [hostProfit] (rake + house wins). Tips are never host profit.
   double get totalDealerTips =>
       _current == null ? 0 : SessionService.totalDealerTips(_current!.id);
   double get moneyStillInPlay =>
@@ -610,6 +619,228 @@ class SessionProvider extends ChangeNotifier {
       );
     }
     return player;
+  }
+
+  // ---------------------------------------------------------------
+  // Pre-seat registration (Phase 1).
+  //
+  // Registration and seating are separate concepts:
+  //   * registerPlayer  — the person exists in this session, no seat.
+  //   * seatRegisteredPlayer — the registration takes a table + seat.
+  //   * unseatPlayer — the registration gives up its seat and stays.
+  //   * removeRegistration — deletes ONLY a clean unseated row.
+  //
+  // Seating operations never write a transaction, a financial event or
+  // a chip movement: they move the seat pointer on an existing row and
+  // nothing else. Financial history therefore survives every seat
+  // change by construction.
+  // ---------------------------------------------------------------
+
+  /// Registered (not seated) players in the active session.
+  List<Player> get unseatedPlayers =>
+      _current == null ? const [] : SessionService.unseatedPlayersFor(_current!.id);
+
+  /// Seated players in the active session.
+  List<Player> get seatedPlayers =>
+      _current == null ? const [] : SessionService.seatedPlayersFor(_current!.id);
+
+  /// Registers [personId] for the active session without giving them a
+  /// seat.
+  ///
+  /// Idempotent per (session, person): if the person already has a row
+  /// in this session — seated or not — that row is returned unchanged.
+  /// [personId] must already exist (created/confirmed by the caller
+  /// through [PlayerIdentityService]); this method never invents or
+  /// links identities.
+  Future<Player> registerPlayer({
+    required String personId,
+    required String name,
+  }) async {
+    if (_current == null) throw StateError('No active session.');
+    if (personId.trim().isEmpty) {
+      throw StateError('A registered player needs a confirmed person.');
+    }
+    final existing = SessionService.registeredForSession(_current!.id, personId);
+    if (existing != null) return existing;
+
+    final player = Player(
+      id: _uuid.v4(),
+      sessionId: _current!.id,
+      name: name.trim().isEmpty ? (PlayerIdentityService.byId(personId)?.displayName ?? '') : name.trim(),
+      seatNumber: 0, // placeholder — no seat logic reads it while unseated
+      tableId: null,
+      personId: personId,
+      seated: false,
+    );
+    await HiveService.players.put(player.id, player);
+    notifyListeners();
+    return player;
+  }
+
+  /// Seats a registered (unseated) player at [tableId].
+  ///
+  /// [seat] null takes the first free seat. The move writes ONLY the
+  /// seat fields on the existing row — no transaction, no financial
+  /// event, no chip movement. The opening buy-in, when the banker
+  /// wants one, is recorded afterwards through the normal money flow.
+  Future<Player> seatRegisteredPlayer(Player player, String tableId,
+      {int? seat}) async {
+    if (_current == null) throw StateError('No active session.');
+    if (player.seated) return player; // already seated — nothing to do
+    SessionService.assertSessionActive(_current!.id);
+    // Materialise so the destination table is explicit on the session,
+    // matching the add-player path (a synthesized table id stored on
+    // the player would outlive the session's implicit table).
+    await TableService.materialise(_current!);
+
+    final blocked = TableService.seatingBlocker(_current!, tableId);
+    if (blocked != null) throw StateError(blocked);
+    final target = TableService.tableById(_current!, tableId);
+    final taken = TableService.occupiedSeats(_current!, tableId,
+        excludePlayerId: player.id);
+
+    int? chosen = seat;
+    if (chosen == null) {
+      for (var i = 1; i <= target.seatCount; i++) {
+        if (!taken.contains(i)) {
+          chosen = i;
+          break;
+        }
+      }
+    }
+    if (chosen == null) {
+      throw StateError('${target.name} is full.');
+    }
+    if (taken.contains(chosen)) {
+      throw StateError('Seat $chosen at ${target.name} is already taken.');
+    }
+
+    player.tableId = tableId;
+    player.seatNumber = chosen;
+    player.seated = true;
+    await player.save();
+    notifyListeners();
+    return player;
+  }
+
+  /// RE-ENTRY (Phase 7): seats the unseated [player] at [tableId] using
+  /// the chips they already hold, and records the `reentry` commitment.
+  ///
+  /// See [TableService.reenterWithHeldChips] for the financial model:
+  /// ONE re-entry money leg (NOT a buy-in — the original purchase is
+  /// never counted again), NO chip movement (the held chips travel with
+  /// the person), NO Financial Ledger event (no cash changes hands),
+  /// and a NEW TableParticipation at the destination.
+
+  /// Latest non-voided hand at the table being viewed.
+  Hand? get lastHandAtActiveTable {
+    if (_current == null) return null;
+    return HandService.lastForTable(_current!.id, activeTableId);
+  }
+
+  Future<Hand> recordHand({
+    required String tableId,
+    required HandKind kind,
+    required List<HandResultDraft> drafts,
+    double? potAmount,
+    double rakeAmount = 0,
+    double houseWinAmount = 0,
+    String? note,
+    String? hostSignatureBase64,
+    Map<String, Map<String, int>>? postHandCounts,
+    Map<String, int>? rakeChips,
+    Map<String, Map<String, int>>? houseWinChipsByPlayer,
+  }) async {
+    if (_current == null) throw StateError('No active session.');
+    final hand = await HandService.record(
+      sessionId: _current!.id,
+      tableId: tableId,
+      kind: kind,
+      drafts: drafts,
+      potAmount: potAmount,
+      rakeAmount: rakeAmount,
+      houseWinAmount: houseWinAmount,
+      note: note,
+      hostSignatureBase64: hostSignatureBase64,
+      postHandCounts: postHandCounts,
+      rakeChips: rakeChips,
+      houseWinChipsByPlayer: houseWinChipsByPlayer,
+    );
+    notifyListeners();
+    return hand;
+  }
+
+  Future<Hand> voidHand(String handId) async {
+    final hand = await HandService.voidHand(handId);
+    notifyListeners();
+    return hand;
+  }
+
+  Future<LedgerTransaction> reenterWithHeldChips(
+    Player player,
+    String tableId, {
+    int? seat,
+    required double amount,
+    required String hostSignatureBase64,
+    String? note,
+  }) async {
+    if (_current == null) throw StateError('No active session.');
+    await TableService.materialise(_current!);
+    final tx = await TableService.reenterWithHeldChips(
+      _current!,
+      player,
+      tableId,
+      seat: seat,
+      amount: amount,
+      hostSignatureBase64: hostSignatureBase64,
+      note: note,
+    );
+    _redoStack.clear();
+    notifyListeners();
+    return tx;
+  }
+
+  /// Removes the player from their seat; the registration (and every
+  /// record attached to it) stays in the session.
+  ///
+  /// The only writes are `seated = false` and `tableId = null`.
+  /// seatNumber is kept as history, transactions / financial events /
+  /// chip movements / the person link are untouched, and the freed
+  /// seat is immediately available to another player.
+  Future<void> unseatPlayer(Player player) async {
+    if (_current == null) throw StateError('No active session.');
+    if (!player.seated) return; // already unseated — idempotent
+    SessionService.assertSessionActive(_current!.id);
+    player.seated = false;
+    player.tableId = null;
+    await player.save();
+    notifyListeners();
+  }
+
+  /// Deletes an unseated registration row.
+  ///
+  /// Refused whenever the row carries this session's records
+  /// (transactions, voided or not) — deleting history is exactly what
+  /// this phase must not do. A clean registration row (never seated,
+  /// never recorded) may be deleted; the underlying person identity
+  /// and all cross-session financial history survive either way.
+  Future<void> removeRegistration(Player player) async {
+    if (_current == null) throw StateError('No active session.');
+    if (player.seated) {
+      throw StateError(
+          'This player is seated. Remove them from the seat first.');
+    }
+    SessionService.assertSessionActive(_current!.id);
+    final hasRecords = SessionService
+            .transactionsFor(_current!.id, includeVoided: true)
+            .any((t) => t.playerId == player.id);
+    if (hasRecords) {
+      throw StateError(
+          'This player has records in this session and cannot be removed. '
+          'Remove them from the seat instead.');
+    }
+    await HiveService.players.delete(player.id);
+    notifyListeners();
   }
 
   /// Stores (or replaces) the player's reference signature specimen.
@@ -1065,6 +1296,9 @@ class SessionProvider extends ChangeNotifier {
     _current!.status = SessionStatus.ended;
     _current!.endedAt = DateTime.now();
     await _current!.save();
+    // Phase 6: the session's commitments end with the session — every
+    // still-open participation closes with reason sessionEnd.
+    ParticipationService.closeOpenAtSessionEnd(_current!.id);
     notifyListeners();
   }
 }

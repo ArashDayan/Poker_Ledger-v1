@@ -10,8 +10,12 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:poker_ledger/models/enums.dart';
+import 'package:poker_ledger/models/financial_event.dart';
+import 'package:poker_ledger/models/hand.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
+import 'package:poker_ledger/models/table_participation.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/providers/session_provider.dart';
 import 'package:poker_ledger/services/hive_service.dart';
@@ -30,6 +34,10 @@ Future<void> _open() async {
   await Hive.openBox<Player>(HiveService.playersBox);
   await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
   await Hive.openBox(HiveService.settingsBox);
+  await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
+  await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
+  await Hive.openBox<TableParticipation>(HiveService.participationsBox);
+  await Hive.openBox<Hand>(HiveService.handsBox);
 }
 
 Future<void> _close() async {

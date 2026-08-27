@@ -81,18 +81,6 @@ bool exchangeAllowed({
   return true;
 }
 
-bool transferAllowed({
-  required String from,
-  required String to,
-  required Map<String, int> distribution,
-}) {
-  if (from == to) return false;
-  if (distribution.values.fold(0, (a, b) => a + b) <= 0) return false;
-  for (final e in distribution.entries) {
-    if (e.value > _atPlayer(from, e.key)) return false;
-  }
-  return true;
-}
 
 void main() {
   setUp(_open);
@@ -369,8 +357,14 @@ void main() {
   });
 
   // -------------------------------------------------------------------
-  group('Player-to-player transfer', () {
-    test('moves chips between players without touching the Bank', () async {
+  group('Physical count (P2P transfer removed — E7)', () {
+    // Player-to-player chip transfer is no longer a supported
+    // operation. Chips that change hands at the table are physical
+    // play; the approved mechanism is a physical count that re-anchors
+    // each player's holding (the bank is the neutral counterparty of
+    // the re-anchor, so the pair nets to zero for the case).
+    test('a count moves value between players without touching the Bank',
+        () async {
       final c = await _stock();
       await ChipTrackingService.recordDistribution(
         distribution: {c['100']!.id: 10},
@@ -380,15 +374,15 @@ void main() {
       );
       final bankBefore = ChipTrackingService.currentBankValue();
 
-      expect(
-        transferAllowed(
-            from: 'a', to: 'b', distribution: {c['100']!.id: 3}),
-        isTrue,
+      // Play happens: the banker counts the stacks — a now holds 7 x
+      // $100, b now holds 3 x $100.
+      await ChipTrackingService.adjustPlayerHoldingToCount(
+        playerId: 'a',
+        counted: {c['100']!.id: 7},
       );
-      await ChipTrackingService.recordPlayerTransfer(
-        fromPlayerId: 'a',
-        toPlayerId: 'b',
-        distribution: {c['100']!.id: 3},
+      await ChipTrackingService.adjustPlayerHoldingToCount(
+        playerId: 'b',
+        counted: {c['100']!.id: 3},
       );
 
       expect(ChipTrackingService.currentBankValue(), bankBefore);
@@ -402,8 +396,7 @@ void main() {
       );
     });
 
-    test('refuses a transfer to the same player, in gate and service',
-        () async {
+    test('refuses negative counts', () async {
       final c = await _stock();
       await ChipTrackingService.recordDistribution(
         distribution: {c['100']!.id: 5},
@@ -411,41 +404,12 @@ void main() {
         to: ChipLocation.player('a'),
         reason: ChipMovementReason.buyIn,
       );
-      expect(
-        transferAllowed(
-            from: 'a', to: 'a', distribution: {c['100']!.id: 1}),
-        isFalse,
-      );
       await expectLater(
-        ChipTrackingService.recordPlayerTransfer(
-          fromPlayerId: 'a',
-          toPlayerId: 'a',
-          distribution: {c['100']!.id: 1},
+        ChipTrackingService.adjustPlayerHoldingToCount(
+          playerId: 'a',
+          counted: {c['100']!.id: -1},
         ),
         throwsArgumentError,
-      );
-    });
-
-    test('refuses to move more than the source holds', () async {
-      final c = await _stock();
-      await ChipTrackingService.recordDistribution(
-        distribution: {c['100']!.id: 2},
-        from: ChipLocation.bank,
-        to: ChipLocation.player('a'),
-        reason: ChipMovementReason.buyIn,
-      );
-      expect(
-        transferAllowed(
-            from: 'a', to: 'b', distribution: {c['100']!.id: 3}),
-        isFalse,
-      );
-    });
-
-    test('refuses an empty selection', () async {
-      await _stock();
-      expect(
-        transferAllowed(from: 'a', to: 'b', distribution: {}),
-        isFalse,
       );
     });
 
@@ -461,10 +425,13 @@ void main() {
       final txCount = HiveService.transactions.length;
       final total = ChipTrackingService.reconcile().totalAccountedFor;
 
-      await ChipTrackingService.recordPlayerTransfer(
-        fromPlayerId: 'a',
-        toPlayerId: 'b',
-        distribution: {c['100']!.id: 3},
+      await ChipTrackingService.adjustPlayerHoldingToCount(
+        playerId: 'a',
+        counted: {c['100']!.id: 7},
+      );
+      await ChipTrackingService.adjustPlayerHoldingToCount(
+        playerId: 'b',
+        counted: {c['100']!.id: 3},
       );
 
       expect(HiveService.transactions.length, txCount);

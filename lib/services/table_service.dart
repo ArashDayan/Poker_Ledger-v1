@@ -1,7 +1,10 @@
 import '../models/enums.dart';
 import '../models/player.dart';
 import '../models/session.dart';
+import '../models/table_participation.dart';
+import '../models/transaction.dart';
 import 'hive_service.dart';
+import 'participation_service.dart';
 import 'session_service.dart';
 
 /// Lifecycle of one table inside a session.
@@ -248,7 +251,14 @@ class TableService {
     final tables = tablesFor(session);
     final isFirst = tables.isNotEmpty && tables.first.id == tableId;
     return SessionService.playersFor(session.id)
-        .where((p) => p.tableId == tableId || (isFirst && p.tableId == null))
+        // Seated players only. An unseated registration stores
+        // tableId == null, which the first-table mapping below would
+        // otherwise absorb into the first table — seat occupancy,
+        // dealer movement, close gating and the table view must never
+        // see a player who holds no seat.
+        .where((p) =>
+            p.seated &&
+            (p.tableId == tableId || (isFirst && p.tableId == null)))
         .toList()
       ..sort((a, b) => a.seatNumber.compareTo(b.seatNumber));
   }
@@ -278,8 +288,15 @@ class TableService {
     return null;
   }
 
-  /// Money currently in play at one table — buy-ins + rebuys − cash-outs
-  /// for the players sitting there.
+  /// Money currently in play at one table — the seated players' net
+  /// commitment to the session's table play (Phase 7):
+  ///
+  ///   totalIn + re-entries − cash-outs − house wins
+  ///
+  /// A re-entered player (carried chips committed to this table) counts
+  /// at their NET commitment — the re-entry cancels the matching table
+  /// cash-out, so the same chips are not counted twice. A house win
+  /// reduces the commitment (the chips became casino-owned).
   ///
   /// Purely informational, for the host's own overview. It is NOT part of
   /// the balance check: rake is collected for the house as a whole, so
@@ -287,8 +304,10 @@ class TableService {
   static double moneyInPlayAt(PokerSession session, String tableId) {
     var total = 0.0;
     for (final p in playersAt(session, tableId)) {
-      total += SessionService.playerTotalIn(session.id, p.id) -
-          SessionService.playerTotalCashOut(session.id, p.id);
+      total += SessionService.playerTotalIn(session.id, p.id) +
+          SessionService.playerReentry(session.id, p.id) -
+          SessionService.playerTotalCashOut(session.id, p.id) -
+          SessionService.playerHouseWin(session.id, p.id);
     }
     return total;
   }
@@ -639,6 +658,10 @@ class TableService {
     double? amount,
   }) async {
     SessionService.assertSessionActive(session.id);
+    if (!player.seated) {
+      throw StateError(
+          'This player is not seated. Seat them before moving tables.');
+    }
     final blocked = seatingBlocker(session, targetTableId);
     if (blocked != null) throw StateError(blocked);
     final target = tableById(session, targetTableId);
@@ -707,6 +730,31 @@ class TableService {
       );
     }
 
+    // Phase 6 — participation lifecycle on a move:
+    //  * FUNDED move: the source participation closes with the
+    //    transfer-out (its closing leg, already stamped by
+    //    recordTransaction); the destination participation was opened
+    //    by the transfer-in stamp.
+    //  * DRY move (no money carried): the commitment follows the seat
+    //    — the open participation's table moves, no legs involved.
+    // The participation still sits at the source table here in both
+    // cases (a funded move has stamped but not yet closed it; a dry
+    // move has written no legs at all).
+    final openP = ParticipationService.openFor(
+      sessionId: session.id,
+      seatPlayerId: player.id,
+      tableId: sourceTableId,
+    );
+    if (openP != null) {
+      if (carried > 0) {
+        ParticipationService.close(
+            openP.id,
+            reason: ParticipationCloseReason.transferOut);
+      } else {
+        ParticipationService.moveTable(openP.id, targetTableId);
+      }
+    }
+
     // NOTE ON HISTORY: the player's existing transactions deliberately
     // keep the tableId they were recorded with. A buy-in taken at Table 1
     // happened at Table 1 — rewriting it to Table 2 because the player
@@ -725,6 +773,104 @@ class TableService {
     // anywhere else in the chip model, and it would make the same chips
     // appear to exist in two locations. The invariant "no chips are
     // created or destroyed by a transfer" is satisfied by doing nothing.
+  }
+
+  /// RE-ENTRY (Phase 7): seats the (unseated) player at
+  /// [targetTableId] using chips they ALREADY hold in their person-scoped
+  /// chip holding, and records the commitment.
+  ///
+  /// THE FINANCIAL MODEL — THIS IS NOT A PURCHASE
+  /// The carried chips were already purchased (a buy-in or a wallet
+  /// issuance — possibly in a previous session). Re-entry moves the
+  /// player's EXISTING commitment into the new table context:
+  ///   * ONE `reentry` money leg (the counted amount, signature):
+  ///     session money IN at the destination table. It is NOT a buy-in —
+  ///     [SessionService.totalBuyIn] and every wallet figure are
+  ///     untouched, so the original purchase is never counted twice.
+  ///   * NO chip movement: the chips already sit in the person-scoped
+  ///     holding and travel with the person.
+  ///   * NO Financial Ledger event: no cash changes hands.
+  ///   * A NEW TableParticipation opens at the destination (stamped by
+  ///     the re-entry leg); the previous participation was closed by the
+  ///     table cash-out (or a move). Any stale still-open one is closed
+  ///     here so exactly one open commitment per (person, table, session)
+  ///     stays true.
+  ///
+  /// The counted [amount] is the banker's fact (E9) — recorded exactly
+  /// as entered, like every other player money leg.
+  static Future<LedgerTransaction> reenterWithHeldChips(
+    PokerSession session,
+    Player player,
+    String targetTableId, {
+    int? seat,
+    required double amount,
+    required String hostSignatureBase64,
+    String? note,
+  }) async {
+    SessionService.assertSessionActive(session.id);
+    if (player.seated) {
+      throw StateError(
+          'This player is already seated. Cash them out of the table (or '
+          'move them) before a re-entry.');
+    }
+    final personId = player.personId;
+    if (personId == null || personId.isEmpty) {
+      throw StateError(
+          'Re-entry commits the person\'s held chips — link a person to '
+          'this player first.');
+    }
+    if (amount <= 0) {
+      throw ArgumentError(
+          'Re-entry needs a positive carried amount — the player is '
+          'committing chips they hold.');
+    }
+    final blocked = seatingBlocker(session, targetTableId);
+    if (blocked != null) throw StateError(blocked);
+    final target = tableById(session, targetTableId);
+    final taken = occupiedSeats(session, targetTableId,
+        excludePlayerId: player.id);
+
+    int? chosen = seat;
+    if (chosen == null) {
+      for (var i = 1; i <= target.seatCount; i++) {
+        if (!taken.contains(i)) {
+          chosen = i;
+          break;
+        }
+      }
+    }
+    if (chosen == null) {
+      throw StateError('${target.name} is full.');
+    }
+    if (taken.contains(chosen)) {
+      throw StateError('Seat $chosen at ${target.name} is already taken.');
+    }
+
+    // The commitment moves: close any stale still-open participation at
+    // ANOTHER table (the normal path closed it at the table cash-out).
+    for (final p in ParticipationService.forSession(session.id)) {
+      if (p.seatPlayerId != player.id || !p.isOpen) continue;
+      if (p.tableId == targetTableId) continue;
+      ParticipationService.close(p.id,
+          reason: ParticipationCloseReason.tableCashOut);
+    }
+
+    // Seat first, then write the leg: recordTransaction attributes a
+    // player leg to the table the player is sitting at, and the re-entry
+    // stamp opens the new participation there.
+    player.tableId = targetTableId;
+    player.seatNumber = chosen;
+    player.seated = true;
+    await player.save();
+
+    return SessionService.recordTransaction(
+      sessionId: session.id,
+      playerId: player.id,
+      type: TransactionType.reentry,
+      amount: amount,
+      hostSignatureBase64: hostSignatureBase64,
+      note: note ?? 'Re-entry with held chips',
+    );
   }
 
   /// Ensures the session has an explicit table list. Called before the
@@ -770,6 +916,13 @@ class TableSummary {
   final double moneyOut;
 
   final double cashOut;
+
+  /// Phase 7: table cash-outs AT THIS TABLE — the players who left
+  /// carrying counted chips. Already included in [moneyOut]; kept
+  /// separate so the UI can explain where the money went (it stayed the
+  /// person's holding — it is not a cage redemption).
+  final double tableCashOut;
+
   final double rake;
   final double cashDrop;
 
@@ -779,6 +932,17 @@ class TableSummary {
   ///
   /// NEVER part of [hostProfit] — see [TransactionType.dealerTips].
   final double dealerTips;
+
+  /// Phase 7: re-entries AT THIS TABLE — carried chips committed by
+  /// players who left another table. Already included in [moneyIn]; NOT
+  /// a buy-in (totalBuyIn is untouched), just the same chips back in
+  /// table play.
+  final double reentry;
+
+  /// Phase 7: house wins banked from this table's players at
+  /// house-banked games. Already included in [moneyOut]; house-game
+  /// revenue, kept separate from [rake] in every report.
+  final double houseWin;
 
   /// Money carried onto / off this table by players changing seats.
   /// Already included in [moneyIn] / [moneyOut]; kept separately so the
@@ -799,8 +963,10 @@ class TableSummary {
   final double currentPot;
 
   /// The house's take from this table. Mirrors
-  /// [SessionService.hostProfit], which is rake.
-  double get hostProfit => rake;
+  /// [SessionService.hostProfit]: poker rake + house-banked game wins
+  /// (Phase 7 — the two stay separately reported as [rake] /
+  /// [houseWin]; this is only their sum).
+  double get hostProfit => rake + houseWin;
 
   const TableSummary({
     required this.table,
@@ -810,9 +976,12 @@ class TableSummary {
     this.moneyIn = 0,
     this.moneyOut = 0,
     this.cashOut = 0,
+    this.tableCashOut = 0,
     this.rake = 0,
     this.cashDrop = 0,
     this.dealerTips = 0,
+    this.reentry = 0,
+    this.houseWin = 0,
     this.transferIn = 0,
     this.transferOut = 0,
     this.currentPot = 0,
@@ -839,19 +1008,30 @@ class TableSummary {
       final buyIn = sum(TransactionType.buyIn);
       final rebuy = sum(TransactionType.rebuy);
       final cashOut = sum(TransactionType.cashOut);
+      final tableCashOut = sum(TransactionType.tableCashOut);
       final rake = sum(TransactionType.rakeCollection);
       final drop = sum(TransactionType.cashDrop);
       final tips = sum(TransactionType.dealerTips);
+      // Phase 7: carried chips committed to this table by players who
+      // left another table (NOT a buy-in), and chips the house banked
+      // from this table's players at house-banked games.
+      final reentry = sum(TransactionType.reentry);
+      final houseWin = sum(TransactionType.houseWin);
       // Money arriving with, and leaving with, players who changed table.
       final transferIn = sum(TransactionType.transferIn);
       final transferOut = sum(TransactionType.transferOut);
 
-      // Money entering this table: bought in here, or carried in.
-      final moneyIn = buyIn + rebuy + transferIn;
-      // Money leaving this table: paid out to players, retained by the
-      // house as rake, tipped to the dealer, or carried away to another
-      // table. Tips appear here ONCE — they are not added anywhere else.
-      final moneyOut = cashOut + rake + tips + transferOut;
+      // Money entering this table: bought in here, carried in by a move,
+      // or committed by a re-entry with held chips (Phase 7).
+      final moneyIn = buyIn + rebuy + transferIn + reentry;
+      // Money leaving this table: paid out to players (cage redemption),
+      // carried out of the table by a table cash-out (Phase 7 — the
+      // chips stay the person's holding), retained by the house as rake,
+      // banked by the house at a house-banked game (Phase 7), tipped to
+      // the dealer, or carried away to another table. Each appears here
+      // ONCE — they are not added anywhere else.
+      final moneyOut =
+          cashOut + tableCashOut + rake + houseWin + tips + transferOut;
 
       return TableSummary(
         table: t,
@@ -861,9 +1041,12 @@ class TableSummary {
         moneyIn: moneyIn,
         moneyOut: moneyOut,
         cashOut: cashOut,
+        tableCashOut: tableCashOut,
         rake: rake,
         cashDrop: drop,
         dealerTips: tips,
+        reentry: reentry,
+        houseWin: houseWin,
         transferIn: transferIn,
         transferOut: transferOut,
         // What is still physically on this table. Once the table is

@@ -97,6 +97,25 @@ class Player extends HiveObject {
   @HiveField(17)
   String? personId;
 
+  /// Whether this registration currently occupies a physical seat.
+  ///
+  /// Phase 1 — pre-seat registration. A player may be registered for a
+  /// session BEFORE taking a seat: registration (this row + the linked
+  /// person) is independent from seating (tableId + seatNumber).
+  ///
+  /// Additive HiveField 18: every seat row saved before this field
+  /// exists loads as `seated == true`, so existing sessions behave
+  /// exactly as before. An unseated registration stores `tableId ==
+  /// null` and a placeholder `seatNumber` (0) that no seat logic may
+  /// read while `seated` is false.
+  ///
+  /// Unseating a player only flips this flag and clears [tableId]; it
+  /// never touches transactions, financial events, chip movements or
+  /// the linked [personId], so financial history survives a seat change
+  /// by construction.
+  @HiveField(18)
+  bool seated;
+
   Player({
     required this.id,
     required this.sessionId,
@@ -116,6 +135,7 @@ class Player extends HiveObject {
     this.sampleSignature2Base64,
     this.sampleSignature2At,
     this.personId,
+    this.seated = true,
   })  : tags = tags ?? [],
         joinedAt = joinedAt ?? DateTime.now();
 
@@ -138,6 +158,7 @@ class Player extends HiveObject {
         'sampleSignature2Base64': sampleSignature2Base64,
         'sampleSignature2At': sampleSignature2At?.toIso8601String(),
         'personId': personId,
+        'seated': seated,
       };
 
   static Player fromJson(Map<String, dynamic> json) => Player(
@@ -169,6 +190,9 @@ class Player extends HiveObject {
             ? null
             : DateTime.parse(json['sampleSignature2At'] as String),
         personId: json['personId'] as String?,
+        // Absent on every backup/JSON written before pre-seat
+        // registration existed: those seats were all seated.
+        seated: json['seated'] as bool? ?? true,
       );
 
   /// Whether this player has busted out of a tournament.

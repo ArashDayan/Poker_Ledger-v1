@@ -59,6 +59,12 @@ class _HistoryTabState extends State<HistoryTab> {
         return Icons.login;
       case TransactionType.dealerTips:
         return Icons.volunteer_activism;
+      case TransactionType.tableCashOut:
+        return Icons.exit_to_app;
+      case TransactionType.reentry:
+        return Icons.login;
+      case TransactionType.houseWin:
+        return Icons.casino;
     }
   }
 

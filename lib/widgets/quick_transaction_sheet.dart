@@ -43,8 +43,13 @@ Future<QuickTransactionResult?> showQuickTransactionSheet(
   );
   String signature = '';
   bool submitting = false;
+  // Re-entry (Phase 7) also requires the host signature: it is a
+  // counted amount of carried chips being committed to the table.
   final requiresSignature =
-      type == TransactionType.buyIn || type == TransactionType.rebuy || type == TransactionType.cashOut;
+      type == TransactionType.buyIn ||
+      type == TransactionType.rebuy ||
+      type == TransactionType.cashOut ||
+      type == TransactionType.reentry;
 
   return showModalBottomSheet<QuickTransactionResult>(
     context: context,

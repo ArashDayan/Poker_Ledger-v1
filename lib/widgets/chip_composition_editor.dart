@@ -9,6 +9,7 @@ import '../models/enums.dart';
 import '../models/transaction.dart';
 import '../providers/chip_bank_provider.dart';
 import '../services/chip_tracking_service.dart';
+import '../services/hive_service.dart';
 import 'chip_flow.dart';
 
 /// Edits the physical chip breakdown already recorded against a money
@@ -79,6 +80,24 @@ class _ChipCompositionEditorState extends State<_ChipCompositionEditor> {
   late Map<String, int> _selection;
   bool _saving = false;
 
+  /// Where this transaction's chips physically come from (Phase 2b,
+  /// direction-correct): the Bank for outflows; the holder's
+  /// PERSON-scoped holding for inflows (seat ref only when the seat is
+  /// legacy-unlinked); the table for table-level flows.
+  ChipLocation get _sourceLocation {
+    final out = ChipFlow.leavesBank(widget.transaction.type);
+    if (out) return ChipLocation.bank;
+    final ref = widget.transaction.playerId;
+    if (ref != null) {
+      final seat = HiveService.players.get(ref);
+      return ChipLocation.player(ChipTrackingService.holderRef(
+          playerId: ref, personId: seat?.personId));
+    }
+    return widget.tableId != null
+        ? ChipLocation.table(widget.tableId!)
+        : ChipLocation.bank;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -124,13 +143,20 @@ class _ChipCompositionEditorState extends State<_ChipCompositionEditor> {
     setState(() => _saving = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
+      // Phase 2a: a composition correction must keep the chips on the
+      // PERSON's holding (the seat row ref for a legacy unlinked seat).
+      final seatRef = widget.transaction.playerId;
+      final seat = seatRef == null ? null : HiveService.players.get(seatRef);
       await ChipFlow.edit(
         context,
         transactionId: widget.transaction.id,
         distribution: _selection,
         type: widget.transaction.type,
         sessionId: widget.transaction.sessionId,
-        playerId: widget.transaction.playerId,
+        holderRefId: seatRef == null
+            ? null
+            : ChipTrackingService.holderRef(
+                playerId: seatRef, personId: seat?.personId),
         tableId: widget.tableId,
       );
       if (!mounted) return;
@@ -237,14 +263,16 @@ class _ChipCompositionEditorState extends State<_ChipCompositionEditor> {
                       children: [
                         for (final chip in chips)
                           Builder(builder: (_) {
-                            // What the source can supply, with this
+                            // What the SOURCE can supply (Phase 2b,
+                            // direction-correct: bank for outflows, the
+                            // holder's person holding for inflows, the
+                            // table for table-level flows), with this
                             // transaction's own contribution added back
                             // because the edit reverses it first.
-                            final atBank = ChipTrackingService.quantityAt(
-                                ChipLocation.bank, chip.id);
+                            final atSource = ChipTrackingService.quantityAt(
+                                _sourceLocation, chip.id);
                             final committed = _original[chip.id] ?? 0;
-                            final available =
-                                out ? atBank + committed : atBank;
+                            final available = atSource + committed;
                             return _EditRow(
                               label: (chip.name != null &&
                                       chip.name!.isNotEmpty)
@@ -252,7 +280,10 @@ class _ChipCompositionEditorState extends State<_ChipCompositionEditor> {
                                   : fmt.format(chip.value),
                               was: committed,
                               available: available,
-                              showAvailable: out,
+                              sourceLabel: out
+                                  ? tr('in_bank')
+                                  : tr('source_available'),
+                              showAvailable: true,
                               colorValue: chip.colorValue,
                               quantity: _selection[chip.id] ?? 0,
                               lineValue: fmt.format(
@@ -382,6 +413,9 @@ class _EditRow extends StatelessWidget {
   final int was;
   final int available;
   final bool showAvailable;
+  /// Localized label for where [available] lives ("In bank" /
+  /// "Available at source").
+  final String sourceLabel;
   final int? colorValue;
   final int quantity;
   final String lineValue;
@@ -392,6 +426,7 @@ class _EditRow extends StatelessWidget {
     required this.was,
     required this.available,
     required this.showAvailable,
+    required this.sourceLabel,
     required this.quantity,
     required this.lineValue,
     required this.onChanged,
@@ -446,7 +481,7 @@ class _EditRow extends StatelessWidget {
                 ),
                 Text(
                   showAvailable
-                      ? '${tr('was')}: $was · ${tr('in_bank')}: $available'
+                      ? '${tr('was')}: $was · $sourceLabel: $available'
                       : '${tr('was')}: $was',
                   style: TextStyle(
                     fontSize: 10.5,

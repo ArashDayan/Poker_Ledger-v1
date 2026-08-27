@@ -30,13 +30,16 @@ class PlayerAdapter extends TypeAdapter<Player> {
       sampleSignature2Base64: fields[15] as String?,
       sampleSignature2At: fields[16] as DateTime?,
       personId: fields[17] as String?,
+      // Records written before field 18 exists have no entry for it:
+      // every pre-registration seat was seated.
+      seated: fields[18] as bool? ?? true,
     );
   }
 
   @override
   void write(BinaryWriter writer, Player obj) {
     writer
-      ..writeByte(18)
+      ..writeByte(19)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -72,6 +75,8 @@ class PlayerAdapter extends TypeAdapter<Player> {
       ..writeByte(16)
       ..write(obj.sampleSignature2At)
       ..writeByte(17)
-      ..write(obj.personId);
+      ..write(obj.personId)
+      ..writeByte(18)
+      ..write(obj.seated);
   }
 }

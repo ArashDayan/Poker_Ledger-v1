@@ -141,8 +141,11 @@ class _ChipHoldingAdjustmentSheetState
     setState(() => _saving = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
+      // Phase 2a: the count re-anchors the PERSON's holding (the
+      // reference the ledger uses), not the seat's.
       final made = await ChipTrackingService.adjustPlayerHoldingToCount(
-        playerId: p.id,
+        playerId: ChipTrackingService.holderRef(
+            playerId: p.id, personId: p.personId),
         counted: _parsedCounts(),
         sessionId: widget.sessionId,
       );

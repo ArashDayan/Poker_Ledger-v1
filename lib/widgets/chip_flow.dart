@@ -6,6 +6,7 @@ import '../core/utils/currency_formatter.dart';
 import '../models/chip_movement.dart';
 import '../models/enums.dart';
 import '../providers/chip_bank_provider.dart';
+import '../services/chip_bank_service.dart';
 import '../services/chip_tracking_service.dart';
 import 'chip_distribution_sheet.dart';
 
@@ -42,6 +43,8 @@ class ChipFlow {
 
   static ChipMovementReason reasonFor(TransactionType type) {
     switch (type) {
+      case TransactionType.buyIn:
+        return ChipMovementReason.buyIn;
       case TransactionType.rebuy:
         return ChipMovementReason.rebuy;
       case TransactionType.cashOut:
@@ -50,8 +53,15 @@ class ChipFlow {
         return ChipMovementReason.rake;
       case TransactionType.dealerTips:
         return ChipMovementReason.dealerTips;
-      default:
-        return ChipMovementReason.buyIn;
+      case TransactionType.houseWin:
+        return ChipMovementReason.houseWin;
+      case TransactionType.tableCashOut:
+      case TransactionType.reentry:
+      case TransactionType.cashDrop:
+      case TransactionType.transferOut:
+      case TransactionType.transferIn:
+        throw ArgumentError(
+            'ChipFlow does not apply to ${type.name}.');
     }
   }
 
@@ -71,11 +81,18 @@ class ChipFlow {
   /// the sheet was dismissed. A value mismatch produces a confirmation,
   /// never a refusal — the money must be recordable even when the chip
   /// maths is awkward mid-game.
+  /// [source] — where the chips physically come from (Phase 2b,
+  /// direction-correct composition). null = the Bank (buy-in / rebuy /
+  /// float flows). Pass the person's location for return /
+  /// redemption-shaped flows and the table's location for table-level
+  /// rake: the sheet then suggests from and validates against that
+  /// location, never against the bank.
   static Future<Map<String, int>?> ask(
     BuildContext context, {
     required double amount,
     required AppCurrency currency,
     Map<String, int>? initial,
+    ChipLocation? source,
   }) async {
     if (!isConfigured(context)) return <String, int>{};
 
@@ -87,6 +104,7 @@ class ChipFlow {
         targetAmount: amount,
         currency: currency,
         initial: initial,
+        source: source,
       ),
     );
     if (result == null || result.isEmpty) return result;
@@ -133,23 +151,25 @@ class ChipFlow {
   /// roll back or corrupt the financial record, which is already stored
   /// by the time this runs.
   ///
-  /// [playerId] null means a table-level movement (e.g. rake collected
-  /// from the table rather than a named player).
+  /// [holderRefId] is the chip-holder reference (Phase 2a: the
+  /// personId, or the seat row id for a legacy unlinked seat). Null
+  /// means a table-level movement (e.g. rake collected from the table
+  /// rather than a named player).
   static Future<void> apply(
     BuildContext context, {
     required Map<String, int>? distribution,
     required TransactionType type,
     required String sessionId,
     required String transactionId,
-    String? playerId,
+    String? holderRefId,
     String? tableId,
   }) async {
     if (distribution == null || distribution.isEmpty) return;
 
     // Where the chips sit when they are not in the Bank. A rake taken
     // from the table itself has no player, so it comes off the table.
-    final counterparty = playerId != null
-        ? ChipLocation.player(playerId)
+    final counterparty = holderRefId != null
+        ? ChipLocation.player(holderRefId)
         : (tableId != null ? ChipLocation.table(tableId) : ChipLocation.bank);
 
     // Rake and cash-out move chips INTO the bank; buy-in/rebuy out of it.
@@ -186,7 +206,7 @@ class ChipFlow {
     required TransactionType type,
     required String sessionId,
     required String transactionId,
-    String? playerId,
+    String? holderRefId,
     String? tableId,
   }) async {
     final dist = await ask(context, amount: amount, currency: currency);
@@ -197,7 +217,7 @@ class ChipFlow {
       type: type,
       sessionId: sessionId,
       transactionId: transactionId,
-      playerId: playerId,
+      holderRefId: holderRefId,
       tableId: tableId,
     );
   }
@@ -213,11 +233,11 @@ class ChipFlow {
     required Map<String, int> distribution,
     required TransactionType type,
     required String sessionId,
-    String? playerId,
+    String? holderRefId,
     String? tableId,
   }) async {
-    final counterparty = playerId != null
-        ? ChipLocation.player(playerId)
+    final counterparty = holderRefId != null
+        ? ChipLocation.player(holderRefId)
         : (tableId != null ? ChipLocation.table(tableId) : ChipLocation.bank);
     final out = leavesBank(type);
 

@@ -9,11 +9,17 @@ import '../../models/enums.dart';
 import '../../providers/chip_bank_provider.dart';
 import '../../services/chip_tracking_service.dart';
 import '../../services/hive_service.dart';
+import '../../services/player_identity_service.dart';
 
 /// Human-readable label for a chip location.
 ///
 /// Resolves player and table ids to names where it can, so the audit log
 /// reads "Bank → Ali" rather than "bank → player:9f3c…".
+///
+/// Phase 2a: holder references are PERSON-scoped, so identity names are
+/// tried first; a legacy unlinked seat reference (pre-migration history)
+/// still resolves through the session row, and anything else degrades to
+/// an id tail rather than a wrong name.
 String describeLocation(ChipLocation loc) {
   switch (loc.kind) {
     case ChipLocationKind.bank:
@@ -21,8 +27,16 @@ String describeLocation(ChipLocation loc) {
     case ChipLocationKind.removed:
       return tr('location_removed');
     case ChipLocationKind.player:
-      final p = loc.refId == null ? null : HiveService.players.get(loc.refId!);
-      return p?.name ?? tr('location_player');
+      final ref = loc.refId;
+      if (ref == null) return tr('location_player');
+      final identity = PlayerIdentityService.byId(ref);
+      if (identity != null && identity.displayName.trim().isNotEmpty) {
+        return identity.displayName.trim();
+      }
+      final p = HiveService.players.get(ref);
+      if (p != null) return p.name;
+      final tail = ref.length >= 4 ? ref.substring(ref.length - 4) : ref;
+      return '${tr('location_player')} …$tail';
     case ChipLocationKind.table:
       // Table names live inside the session map rather than their own
       // box, so fall back to the id — still unambiguous for the banker.
@@ -38,6 +52,10 @@ String describeReason(ChipMovementReason r) {
       return tr('reason_rebuy');
     case ChipMovementReason.addOn:
       return tr('reason_add_on');
+    case ChipMovementReason.depositIssuance:
+      return tr('reason_deposit_issuance');
+    case ChipMovementReason.markerIssuance:
+      return tr('reason_marker_issuance');
     case ChipMovementReason.cashOut:
       return tr('reason_cash_out');
     case ChipMovementReason.tableFloat:
@@ -56,6 +74,8 @@ String describeReason(ChipMovementReason r) {
       return tr('undo');
     case ChipMovementReason.lossRebate:
       return tr('reason_loss_rebate');
+    case ChipMovementReason.houseWin:
+      return tr('reason_house_win');
   }
 }
 

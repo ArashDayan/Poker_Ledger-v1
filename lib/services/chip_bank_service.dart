@@ -149,8 +149,17 @@ class ChipBankService {
     await chip.save();
   }
 
-  /// Sets an absolute count — the "I recounted the case" operation, which
-  /// is how the spec describes day-to-day use.
+  /// Sets the INVENTORY record (chips owned), e.g. after genuinely
+  /// acquiring or destroying chips.
+  ///
+  /// SEMANTICS (Phase 2b): this is NOT "I recounted the case" and it is
+  /// NOT a variance correction. Recounting the case is a [BankCount]
+  /// (count sheet) — a physical fact that becomes the case ledger's
+  /// baseline. Once any count sheet exists, editing [ChipType.quantity]
+  /// no longer moves the case ledger baseline at all; it only updates
+  /// the owned-inventory record. Variances are documented through
+  /// counts + the reconciliation report, never by rewriting a number
+  /// here (no silent history rewrites).
   static Future<void> setQuantity(String id, int quantity) =>
       updateChip(id, quantity: quantity);
 

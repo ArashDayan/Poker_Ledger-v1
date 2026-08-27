@@ -53,7 +53,7 @@ class ChipExchangeRules {
   static String? blocker({
     required String? playerId,
     required Map<String, int> given,
-    required Map<String, int> received, {
+    required Map<String, int> received,
     required String choosePlayer,
     required String empty,
     required String unbalanced,

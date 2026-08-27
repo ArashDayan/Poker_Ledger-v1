@@ -8,14 +8,21 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../models/enums.dart';
 import '../../models/financial_event.dart';
+import '../../providers/chip_bank_provider.dart';
 import '../../providers/session_provider.dart';
+import '../../services/chip_tracking_service.dart';
 import '../../services/deposit_to_chips.dart';
 import '../../services/financial_capture.dart';
 import '../../services/financial_ledger_service.dart';
 import '../../services/rebate_service.dart';
 import '../../services/session_service.dart';
+import '../../services/hive_service.dart';
+import '../../services/wallet_service.dart';
 import '../../services/sound_service.dart';
+import '../../models/chip_movement.dart';
+import '../../widgets/cashout_flow.dart';
 import '../../widgets/chip_flow.dart';
+import '../../widgets/financial_funding_sheet.dart';
 import '../../widgets/rebate_grant_sheet.dart';
 import '../../widgets/signature_pad.dart';
 
@@ -55,6 +62,10 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
       context.watch<SessionProvider>();
     } catch (_) {}
     final account = FinancialLedgerService.accountFor(widget.personId);
+    // Phase 3: the wallet is the single lifetime view (E8) — deposit,
+    // credit, the person-scoped chip holding and the seating reference,
+    // all derived, never stored.
+    final wallet = WalletService.walletFor(widget.personId);
     final name = widget.displayName ?? account.displayName;
 
     return Scaffold(
@@ -77,6 +88,10 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
             _notRecordedCard()
           else
             ...account.balances.map(_balanceCard),
+          if (wallet.hasActivity) ...[
+            const SizedBox(height: 10),
+            _walletCard(wallet),
+          ],
           if (_sessionChipNote != null) ...[
             const SizedBox(height: 10),
             _sessionChipNote!,
@@ -99,10 +114,31 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
               label: Text(tr('use_deposit_for_chips')),
             ),
             const SizedBox(height: 8),
+            // Phase 5 — marker (wallet draw): funded only by the
+            // available deposit, player signature required, no seat
+            // or table involved.
+            OutlinedButton.icon(
+              onPressed: _issueMarker,
+              icon: const Icon(Icons.draw_outlined, size: 18),
+              label: Text(tr('issue_marker')),
+            ),
+            const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: _returnDeposit,
               icon: const Icon(Icons.north_east, size: 18),
               label: Text(tr('return_deposit')),
+            ),
+          ],
+          // Phase 7 — cage redemption (person level): the person's
+          // counted chips return to the Bank and their own cash
+          // returns to them as cash. Available whenever the person
+          // holds chips (after a table cash-out or wallet issuance).
+          if (_chipsInHand > 0) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _redeemAtCage,
+              icon: const Icon(Icons.account_balance_wallet_outlined, size: 18),
+              label: Text(tr('redeem_at_cage')),
             ),
           ],
           if (widget.sessionId != null && widget.sessionId!.isNotEmpty) ...[
@@ -228,8 +264,7 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
     } catch (_) {}
     var bustRealized = false;
     if (playerId != null) {
-      bustRealized = SessionService.hasCashedOut(sessionId, playerId) &&
-          SessionService.playerTotalCashOut(sessionId, playerId) == 0;
+      bustRealized = SessionService.hasZeroBustOut(sessionId, playerId);
     }
     await askRebateGrant(
       context,
@@ -304,6 +339,132 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
     final account = FinancialLedgerService.accountFor(widget.personId);
     if (account.balances.isNotEmpty) return account.balances.first.currency;
     return AppCurrency.usd;
+  }
+
+  /// Phase 7 — the person's physical chip holding (person-scoped,
+  /// Phase 2a). Nonzero after a table cash-out or a wallet issuance.
+  double get _chipsInHand =>
+      WalletService.walletFor(widget.personId).chipsInHand;
+
+  /// Phase 7 — CAGE REDEMPTION (person level): the person's counted
+  /// chips return to the Bank and their own cash returns to them as
+  /// cash. The count is authoritative (E9); the marker gate nets (E2);
+  /// the Discount cycle closes here (existing engine, parity).
+  Future<void> _redeemAtCage() async {
+    final wallet = WalletService.walletFor(widget.personId);
+    if (wallet.chipsInHand <= 0) return;
+
+    String? sessionId = widget.sessionId;
+    AppCurrency currency = _actionCurrency;
+    try {
+      final provider = context.read<SessionProvider>();
+      sessionId ??= provider.current?.id;
+      currency = provider.current?.currency ?? currency;
+    } catch (_) {}
+    final fmt = CurrencyFormatter(currency);
+
+    // 1. The count (authoritative) + the host signature.
+    final amountCtrl = TextEditingController(
+        text: wallet.chipsInHand.toStringAsFixed(0));
+    var signature = '';
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 16,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+        ),
+        child: StatefulBuilder(
+          builder: (ctx, setSheet) => SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(tr('redeem_at_cage'),
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                Text(tr('redeem_hint'),
+                    style: const TextStyle(
+                        fontSize: 12.5,
+                        color: AppColors.textSecondary,
+                        height: 1.35)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: amountCtrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    labelText: tr('amount'),
+                    prefixText: fmt.symbol == r'$' ? r'$ ' : null,
+                    suffixText: fmt.symbol == r'$' ? null : fmt.symbol,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(tr('host_signature'),
+                    style: const TextStyle(
+                        fontSize: 12, color: AppColors.textSecondary)),
+                const SizedBox(height: 8),
+                SignaturePad(
+                    onChanged: (sig) => setSheet(() => signature = sig)),
+                const SizedBox(height: 14),
+                ElevatedButton(
+                  onPressed: signature.isEmpty
+                      ? null
+                      : () => Navigator.pop(ctx, true),
+                  child: Text(tr('confirm')),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: Text(tr('cancel')),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final amount = double.tryParse(amountCtrl.text.replaceAll(',', ''));
+    if (amount == null || amount < 0 || signature.isEmpty) return;
+
+    // 2. How the person's cash comes back (existing funding sheet).
+    final funding = await askChipCashOutFunding(
+        context, formatter: fmt, amount: amount);
+    if (funding == null || !mounted) return;
+
+    // 3. The counted chips, from the person's person-scoped holding.
+    // Skip / dismiss records no chip composition (money still records).
+    Map<String, int>? dist;
+    try {
+      if (context.read<ChipBankProvider>().chips.isNotEmpty) {
+        dist = await ChipFlow.ask(
+          context,
+          amount: amount,
+          currency: currency,
+          source: ChipLocation.player(widget.personId),
+        );
+      }
+    } catch (_) {}
+    if (!mounted) return;
+
+    // 4. The redemption (marker gate, chips -> bank, cash -> person,
+    //    Discount cycle close).
+    final ok = await performCageRedemption(
+      context,
+      player: null, // person-level: no seat involved
+      personId: widget.personId,
+      sessionId: (sessionId != null && sessionId.isNotEmpty) ? sessionId : null,
+      currency: currency,
+      amount: amount,
+      funding: funding,
+      hostSignatureBase64: signature,
+      composition: (dist == null || dist.isEmpty) ? null : dist,
+    );
+    if (ok && mounted) setState(() {});
   }
 
   double _depositMajor(AppCurrency currency) =>
@@ -389,24 +550,42 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
       final provider = context.read<SessionProvider>();
       sessionId ??= provider.current?.id;
     } catch (_) {}
-    if (sessionId == null || sessionId.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr('deposit_need_session'))),
-        );
-      }
-      return;
-    }
-    final player = DepositToChips.seatedPlayer(sessionId, widget.personId);
+    final hasSession = sessionId != null && sessionId.isNotEmpty;
+
+    final player =
+        hasSession ? DepositToChips.seatedPlayer(sessionId!, widget.personId) : null;
     if (player == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr('deposit_need_seat'))),
+      // Phase 4 — seat-free wallet issuance: the cage issues chips
+      // from the deposit draw straight into the PERSON's holding.
+      // No seat and no session required (session-optional, C-1). The
+      // banker amount + signature, then the bank-anchored composition.
+      final choice = await _askConvert(currency: currency, initial: held);
+      if (choice == null) return;
+      final dist = await ChipFlow.ask(
+          context, amount: choice.amount, currency: currency);
+      if (dist == null || dist.isEmpty || !mounted) return;
+      try {
+        await DepositToChips.issueToWallet(
+          personId: widget.personId,
+          currency: currency,
+          amount: choice.amount,
+          composition: dist,
+          hostSignatureBase64: choice.signature,
+          sessionId: hasSession ? sessionId : null,
         );
+        AppSounds.play(AppSounds.forTransaction(TransactionType.buyIn));
+        if (mounted) setState(() {});
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('$e')));
+        }
       }
       return;
     }
 
+    // Seated: the existing path — a table buy-in funded from the
+    // deposit (behavior unchanged; Phase 6 owns participation).
     final choice = await _askConvert(currency: currency, initial: held);
     if (choice == null) return;
 
@@ -419,20 +598,22 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
     try {
       final result = await DepositToChips.convert(
         personId: widget.personId,
-        sessionId: sessionId,
+        sessionId: sessionId!,
         playerId: player.id,
         currency: currency,
         amount: choice.amount,
         hostSignatureBase64: choice.signature,
       );
       if (mounted) {
+        // Phase 2a: issued chips enter the person's holding.
         await ChipFlow.apply(
           context,
           distribution: dist,
           type: result.chipTransaction.type,
           sessionId: sessionId,
           transactionId: result.chipTransaction.id,
-          playerId: player.id,
+          holderRefId: ChipTrackingService.holderRef(
+              playerId: player.id, personId: player.personId),
         );
       }
       AppSounds.play(AppSounds.forTransaction(result.chipTransaction.type));
@@ -443,6 +624,130 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
             .showSnackBar(SnackBar(content: Text('$e')));
       }
     }
+  }
+
+  /// Phase 5 — marker (wallet draw): amount + the PLAYER's signature,
+  /// then the bank-anchored composition, then the seat-free draw.
+  /// Funded only by the available deposit; no seat, no table, no
+  /// participation.
+  Future<void> _issueMarker() async {
+    final currency = _depositCurrency;
+    final held = _depositMajor(currency);
+    if (held <= 0) return;
+
+    String? sessionId = widget.sessionId;
+    try {
+      final provider = context.read<SessionProvider>();
+      sessionId ??= provider.current?.id;
+    } catch (_) {}
+    final hasSession = sessionId != null && sessionId.isNotEmpty;
+
+    final choice = await _askMarker(currency: currency, initial: held);
+    if (choice == null) return;
+    final dist = await ChipFlow.ask(
+        context, amount: choice.amount, currency: currency);
+    if (dist == null || dist.isEmpty || !mounted) return;
+    try {
+      await DepositToChips.issueMarker(
+        personId: widget.personId,
+        currency: currency,
+        amount: choice.amount,
+        composition: dist,
+        playerSignatureBase64: choice.signature,
+        sessionId: hasSession ? sessionId : null,
+      );
+      AppSounds.play(AppSounds.forTransaction(TransactionType.buyIn));
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
+  /// Marker amount + the player's signature (existing rule: a marker
+  /// is credit plus a signature — this is the player's, not the
+  /// banker's).
+  Future<_ConvertChoice?> _askMarker({
+    required AppCurrency currency,
+    required double initial,
+  }) async {
+    final fmt = CurrencyFormatter(currency);
+    final ctrl = TextEditingController(
+      text: initial.toStringAsFixed(currency == AppCurrency.usd ? 2 : 0),
+    );
+    var signature = '';
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 16,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+        ),
+        child: StatefulBuilder(
+          builder: (ctx, setSheet) => SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(tr('issue_marker'),
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                Text(tr('marker_draw_hint'),
+                    style: const TextStyle(
+                        fontSize: 12.5,
+                        color: AppColors.textSecondary,
+                        height: 1.35)),
+                const SizedBox(height: 8),
+                Text(
+                  '${tr('remaining_deposit')}: ${fmt.format(initial)}',
+                  style: const TextStyle(
+                      fontSize: 13, color: AppColors.textSecondary),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: ctrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    labelText: tr('amount'),
+                    prefixText: fmt.symbol == r'$' ? r'$ ' : null,
+                    suffixText: fmt.symbol == r'$' ? null : fmt.symbol,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(tr('marker_player_sign_hint'),
+                    style: const TextStyle(
+                        fontSize: 12, color: AppColors.textSecondary)),
+                const SizedBox(height: 8),
+                SignaturePad(
+                    onChanged: (sig) => setSheet(() => signature = sig)),
+                const SizedBox(height: 14),
+                ElevatedButton(
+                  onPressed: signature.isEmpty
+                      ? null
+                      : () => Navigator.pop(ctx, true),
+                  child: Text(tr('confirm')),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: Text(tr('cancel')),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (confirmed != true || !mounted) return null;
+    final amount = double.tryParse(ctrl.text.replaceAll(',', ''));
+    if (amount == null || amount <= 0 || signature.isEmpty) return null;
+    return _ConvertChoice(amount, signature);
   }
 
   Future<_ConvertChoice?> _askConvert({
@@ -669,6 +974,129 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
               style: const TextStyle(
                   fontSize: 12.5, color: AppColors.textSecondary, height: 1.35)),
         ],
+      ),
+    );
+  }
+
+  /// Phase 3 — the wallet strip: the person's physical chip holding
+  /// (person-scoped, Phase 2a) plus the per-currency figures the
+  /// wallet derives for the marker rule (W-2) and open credit.
+  /// Informational only — no action is taken from this card.
+  /// The table name for a commitment (session tables live in the
+  /// session record; degrades to the id).
+  String _tableName(String sessionId, String tableId) {
+    try {
+      final s = HiveService.sessions.get(sessionId);
+      for (final t in s?.tables ?? const <Map>[]) {
+        if (t['id'] == tableId) return (t['name'] as String? ?? tableId);
+      }
+    } catch (_) {}
+    return tableId;
+  }
+
+  Widget _walletCard(WalletPosition wallet) {
+    final chipsFmt = CurrencyFormatter(
+        wallet.currencies.isNotEmpty
+            ? wallet.currencies.first.currency
+            : AppCurrency.usd);
+    final rows = <Widget>[
+      Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(tr('wallet_chips_in_hand'),
+              style: const TextStyle(
+                  fontSize: 12.5, color: AppColors.textSecondary)),
+          Text(chipsFmt.format(wallet.chipsInHand),
+              style: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.gold)),
+        ],
+      ),
+      // Phase 6: open table commitments (derived from participations —
+      // lifecycle reference only, no money on the card).
+      if (wallet.openParticipationCount > 0)
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(tr('wallet_open_commitments'),
+                  style: const TextStyle(
+                      fontSize: 12.5, color: AppColors.textSecondary)),
+              Text(
+                wallet.openParticipations
+                    .map((p) => _tableName(p.sessionId, p.tableId))
+                    .join(' · '),
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.accentGreen),
+              ),
+            ],
+          ),
+        ),
+    ];
+    for (final p in wallet.currencies) {
+      final fmt = CurrencyFormatter(p.currency);
+      if (p.depositHeld > 0) {
+        rows.add(
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(tr('wallet_available_marker'),
+                    style: const TextStyle(
+                        fontSize: 12.5,
+                        color: AppColors.textSecondary)),
+                Text(fmt.format(p.availableMarkerBalance),
+                    style: const TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.gold)),
+              ],
+            ),
+          ),
+        );
+      }
+      if (p.creditOutstanding > 0) {
+        rows.add(
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(tr('wallet_credit_outstanding'),
+                    style: const TextStyle(
+                        fontSize: 12.5,
+                        color: AppColors.textSecondary)),
+                Text(fmt.format(p.creditOutstanding),
+                    style: const TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.danger)),
+              ],
+            ),
+          ),
+        );
+      }
+    }
+    if (rows.length == 1 && wallet.chipsInHand <= 0) {
+      // No wallet figure worth showing.
+      return const SizedBox.shrink();
+    }
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceElevated,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: rows,
       ),
     );
   }

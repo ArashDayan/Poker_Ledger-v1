@@ -15,7 +15,7 @@ import '../../services/hive_service.dart';
 import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
 import '../../widgets/chip_exchange_sheet.dart';
-import '../../widgets/chip_transfer_sheet.dart';
+
 import '../../widgets/poker_chip_logo.dart';
 import '../../widgets/table_selector_bar.dart';
 import '../../widgets/void_linked_financial_sheet.dart';
@@ -263,17 +263,10 @@ class _SessionShellScreenState extends State<SessionShellScreen> {
     );
   }
 
-  Future<void> _openTransfer() async {
-    final provider = context.read<SessionProvider>();
-    final session = provider.current;
-    if (session == null) return;
-    await showChipTransferSheet(
-      context,
-      players: provider.players,
-      currency: session.currency,
-      sessionId: session.id,
-    );
-  }
+  // Player-to-player chip transfer REMOVED (E7): a pot being pushed is
+  // physical play, not a financial operation. The ledger captures net
+  // movement through physical counts; chips that change hands at the
+  // table are never recorded player→player.
 
   void _showTimerNotice(SessionTimerNotice notice) {
     if (!mounted) return;
@@ -419,9 +412,6 @@ class _SessionShellScreenState extends State<SessionShellScreen> {
                 case 'chip_exchange':
                   _openExchange();
                   break;
-                case 'chip_transfer':
-                  _openTransfer();
-                  break;
                 case 'chip_reconcile':
                   _openReconciliation();
                   break;
@@ -478,15 +468,6 @@ class _SessionShellScreenState extends State<SessionShellScreen> {
                 child: ListTile(
                   leading: const Icon(Icons.swap_horiz),
                   title: Text(tr('chip_exchange')),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              PopupMenuItem(
-                value: 'chip_transfer',
-                enabled: provider.players.length > 1,
-                child: ListTile(
-                  leading: const Icon(Icons.swap_calls),
-                  title: Text(tr('player_chip_transfer')),
                   contentPadding: EdgeInsets.zero,
                 ),
               ),

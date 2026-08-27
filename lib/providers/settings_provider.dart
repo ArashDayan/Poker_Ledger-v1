@@ -82,12 +82,12 @@ class SettingsProvider extends ChangeNotifier {
 
   Future<void> togglePrivacyMode() => setPrivacyMode(!_privacyMode);
 
-  /// Whether the Home screen's cumulative Total Rake figure is shown.
+  /// Whether the Home screen's cumulative Host Profit figure is shown.
   ///
-  /// A DISPLAY PREFERENCE ONLY. It never reaches the rake calculation —
-  /// `SessionService.hostProfit` remains the single source of truth and
-  /// is queried unchanged whether this is on or off. Hiding simply
-  /// swaps the rendered string for a mask.
+  /// A DISPLAY PREFERENCE ONLY. It never reaches the calculation —
+  /// `SessionService.hostProfit` (rake + house wins) remains the single
+  /// source of truth and is queried unchanged whether this is on or off.
+  /// Hiding simply swaps the rendered string for a mask.
   ///
   /// Separate from [privacyMode], which blanks every amount app-wide.
   /// A banker may want the running house take off the home screen (it is

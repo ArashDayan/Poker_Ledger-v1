@@ -5,10 +5,12 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/localization/enum_labels.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/currency_formatter.dart';
+import '../../models/hand.dart';
 import '../../models/session.dart';
 import '../../models/player.dart';
 import '../../models/transaction.dart';
 import '../../providers/session_provider.dart';
+import '../../services/hand_service.dart';
 import '../../services/player_history_service.dart';
 import '../../services/table_service.dart';
 import '../../services/session_service.dart';
@@ -62,6 +64,8 @@ class PlayerLedgerScreen extends StatelessWidget {
           _summary(fmt, buyIn, rebuy, out, net, rake),
           const SizedBox(height: 12),
           _careerCard(career, fmt),
+          const SizedBox(height: 12),
+          ..._handsSection(session.id, live.id, fmt),
           const SizedBox(height: 18),
           Row(
             children: [
@@ -239,6 +243,90 @@ class PlayerLedgerScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  List<Widget> _handsSection(
+      String sessionId, String seatPlayerId, CurrencyFormatter fmt) {
+    final hands = HandService.forPlayer(sessionId, seatPlayerId,
+        includeVoided: true);
+    if (hands.isEmpty) return const [];
+    return [
+      Row(
+        children: [
+          Container(width: 3, height: 13, color: AppColors.gold),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              tr('hand_history').toUpperCase(),
+              style: const TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.1,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+          Text('${hands.length}',
+              style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.gold)),
+        ],
+      ),
+      const SizedBox(height: 10),
+      for (final h in hands)
+        Opacity(
+          opacity: h.isVoided ? 0.55 : 1,
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceElevated,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.divider),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${tr('hand_number')} #${h.handNumber} · ${h.kind.localizedLabel}',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ),
+                    if (h.isVoided)
+                      Text(tr('hand_voided'),
+                          style: const TextStyle(
+                              fontSize: 10, color: AppColors.danger)),
+                  ],
+                ),
+                Text(
+                  h.completedAt.toString().substring(0, 16),
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.textSecondary),
+                ),
+                if (h.resultFor(seatPlayerId) != null)
+                  Text(
+                    '${tr('hand_chip_change')}: '
+                    '${h.resultFor(seatPlayerId)!.chipChange >= 0 ? '+' : ''}'
+                    '${fmt.format(h.resultFor(seatPlayerId)!.chipChange)}',
+                    style: const TextStyle(fontSize: 12.5),
+                  ),
+                Text(
+                  '${tr('hand_pot')} ${fmt.format(h.potAmount)}'
+                  ' · ${tr('hand_rake')} ${fmt.format(h.rakeAmount)}'
+                  ' · ${tr('hand_house_win')} ${fmt.format(h.houseWinAmount)}',
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.textSecondary),
+                ),
+              ],
+            ),
+          ),
+        ),
+    ];
   }
 
   Widget _cell(String label, String value) => Expanded(
@@ -450,6 +538,18 @@ class PlayerLedgerScreen extends StatelessWidget {
         return AppColors.textSecondary;
       case TransactionType.dealerTips:
         return AppColors.warning;
+      // A table cash-out is money out of the table (the player carries
+      // the chips — no cash changes hands).
+      case TransactionType.tableCashOut:
+        return AppColors.danger;
+      // A re-entry is money INTO the table: the player's carried chips
+      // are committed here (green, like a buy-in — without being one).
+      case TransactionType.reentry:
+        return AppColors.accentGreen;
+      // A house win is money the player lost to the house at a
+      // house-banked game — an outflow, like a cash-out.
+      case TransactionType.houseWin:
+        return AppColors.danger;
     }
   }
 }

@@ -96,9 +96,18 @@ class _ReportsHubScreenState extends State<ReportsHubScreen> {
               children: [
                 _row(tr('sessions'), '${lifetime.sessions}'),
                 _row(tr('entries'), '${lifetime.players}'),
-                _row(tr('money_in'), fmt.format(lifetime.moneyIn)),
-                _row(tr('total_cash_out'), fmt.format(lifetime.cashedOut)),
+                _row(tr('report_purchases'), fmt.format(lifetime.purchases)),
+                _row(tr('report_reentry'), fmt.format(lifetime.reentry)),
+                _row(tr('report_session_cash_out'),
+                    fmt.format(lifetime.sessionCashOut)),
+                _row(tr('report_table_cash_outs'),
+                    fmt.format(lifetime.tableCashOut)),
+                _row(tr('report_cage_cash'), fmt.format(lifetime.cageCashOut)),
+                if (lifetime.cageCashOutUnbacked > 0)
+                  _row(tr('report_cage_unbacked'),
+                      fmt.format(lifetime.cageCashOutUnbacked)),
                 _row(tr('rake_collected'), fmt.format(lifetime.rake)),
+                _row(tr('house_win'), fmt.format(lifetime.houseWin)),
                 _row(tr('banker_profit'), fmt.format(lifetime.bankerProfit),
                     highlight: true),
               ],
@@ -161,9 +170,22 @@ class _ReportsHubScreenState extends State<ReportsHubScreen> {
                           child: Row(
                             children: [
                               Expanded(
-                                child: Text(p.name,
-                                    style: const TextStyle(fontSize: 12.5),
-                                    overflow: TextOverflow.ellipsis),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(p.name,
+                                        style: const TextStyle(fontSize: 12.5),
+                                        overflow: TextOverflow.ellipsis),
+                                    Text(
+                                      '${tr('report_purchases')} ${fmt.format(p.purchases)}'
+                                      ' · ${tr('report_table_cash_outs')} ${fmt.format(p.tableCashOut)}'
+                                      ' · ${tr('report_cage_cash')} ${fmt.format(p.cageCash)}',
+                                      style: const TextStyle(
+                                          fontSize: 10,
+                                          color: AppColors.textSecondary),
+                                    ),
+                                  ],
+                                ),
                               ),
                               Text('${p.sessions}',
                                   style: const TextStyle(

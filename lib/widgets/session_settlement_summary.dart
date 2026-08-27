@@ -31,11 +31,20 @@ class SessionSettlementSummary extends StatelessWidget {
         _section(tr('settle_poker_chips'), [
           _row(tr('settle_buy_in'), fmt.format(view.buyIn)),
           _row(tr('settle_rebuy'), fmt.format(view.rebuy)),
+          if (view.reentry > 0)
+            _row(tr('settle_reentry'), fmt.format(view.reentry)),
           _row(tr('money_in_buyin_rebuy'), fmt.format(view.chipBalance.moneyIn)),
-          _row(tr('settle_cash_out'), fmt.format(view.cashOut)),
+          _row(tr('report_session_cash_out'), fmt.format(view.cashOut)),
+          _row(tr('settle_table_cash_out'), fmt.format(view.tableCashOut)),
+          _row(tr('report_cage_cash'), fmt.format(fin.cashOutForChips)),
+          if (fin.cashOutUnbacked > 0)
+            _row(tr('report_cage_unbacked'), fmt.format(fin.cashOutUnbacked)),
           _row(tr('rake_collected'), fmt.format(view.rake), color: AppColors.gold),
           _row(tr('dealer_tips'), fmt.format(view.dealerTips),
               color: AppColors.warning),
+          // House-game revenue on its OWN line — never merged with rake.
+          _row(tr('settle_house_win'), fmt.format(view.houseWin),
+              color: AppColors.gold),
           _row(tr('money_out_cashout_rake_tips'),
               fmt.format(view.chipBalance.moneyOut)),
           _row(tr('host_profit'), fmt.format(view.hostProfit),
@@ -57,7 +66,10 @@ class SessionSettlementSummary extends StatelessWidget {
           _row(tr('settle_deposit_in'), fmt.format(fin.depositIn)),
           _row(tr('settle_deposit_used'), fmt.format(fin.depositUsedForChips)),
           _row(tr('settle_deposit_returned'), fmt.format(fin.depositReturned)),
-          _row(tr('settle_deposit_remaining'), fmt.format(fin.depositRemaining),
+          // E8: session-scoped figure — a PROJECTION of this session's
+          // deposit activity. The lifetime remaining deposit lives in
+          // the wallet (player account), which is the source of truth.
+          _row(tr('settle_deposit_session'), fmt.format(fin.depositRemaining),
               color: fin.hasDepositRemaining ? AppColors.gold : null),
         ]),
         if (_sessionRebate != null) ...[
@@ -312,7 +324,16 @@ class SessionSettlementSummary extends StatelessWidget {
                 Text(
                   '${tr('settle_buy_in')} ${fmt.format(row.buyIn)}'
                   ' · ${tr('settle_rebuy')} ${fmt.format(row.rebuy)}'
-                  ' · ${tr('settle_cash_out')} ${fmt.format(row.cashOut)}',
+                  '${row.reentry > 0 ? ' · ${tr('settle_reentry')} ${fmt.format(row.reentry)}' : ''}',
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.textSecondary),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${tr('report_table_cash_outs')} ${fmt.format(row.tableCashOut)}'
+                  ' · ${tr('report_session_cash_out')} ${fmt.format(row.sessionCashOut)}'
+                  ' · ${tr('report_cage_cash')} ${fmt.format(row.cageCashOut)}'
+                  '${row.cageCashOutUnbacked > 0 ? ' · ${tr('report_cage_unbacked')} ${fmt.format(row.cageCashOutUnbacked)}' : ''}',
                   style: const TextStyle(
                       fontSize: 11, color: AppColors.textSecondary),
                 ),
@@ -331,7 +352,7 @@ class SessionSettlementSummary extends StatelessWidget {
                 if (row.financial.recorded) ...[
                   const SizedBox(height: 2),
                   Text(
-                    '${tr('settle_deposit_remaining')}: '
+                    '${tr('settle_deposit_session')}: '
                     '${fmt.format(row.financial.depositRemaining)}'
                     ' · ${tr('settle_cash_in_for_chips')}: '
                     '${fmt.format(row.financial.cashInForChips)}',

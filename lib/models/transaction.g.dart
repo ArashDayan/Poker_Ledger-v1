@@ -26,13 +26,16 @@ class LedgerTransactionAdapter extends TypeAdapter<LedgerTransaction> {
       editedAt: fields[11] as DateTime?,
       signedWhileAbsent: fields[12] == null ? false : fields[12] as bool,
       tableId: fields[13] as String?,
+      // Added in Phase 6 (participation tracking); legacy rows read
+      // null and keep working.
+      participationId: fields[14] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, LedgerTransaction obj) {
     writer
-      ..writeByte(14)
+      ..writeByte(15)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -60,6 +63,8 @@ class LedgerTransactionAdapter extends TypeAdapter<LedgerTransaction> {
       ..writeByte(12)
       ..write(obj.signedWhileAbsent)
       ..writeByte(13)
-      ..write(obj.tableId);
+      ..write(obj.tableId)
+      ..writeByte(14)
+      ..write(obj.participationId);
   }
 }
