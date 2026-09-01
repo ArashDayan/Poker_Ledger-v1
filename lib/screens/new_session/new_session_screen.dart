@@ -10,7 +10,7 @@ import '../../providers/session_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/tournament_service.dart';
 import '../../widgets/quick_rake_slots_editor.dart';
-import '../session_shell/session_shell_screen.dart';
+import '../shell/open_floor_session.dart';
 
 class NewSessionScreen extends StatefulWidget {
   const NewSessionScreen({super.key});
@@ -191,9 +191,10 @@ class _NewSessionScreenState extends State<NewSessionScreen> {
           _mode == SessionMode.cashGame && _rebateEnabled ? _plannedEndAt : null,
     );
     if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => SessionShellScreen(sessionId: session.id)),
-    );
+    // ICR-02: a live session opens on the Floor (the session is loaded
+    // and the shell switches to it); the five-tab console is no longer
+    // the product-level destination for live play.
+    openFloorSession(context, session);
   }
 
   /// Builds an amount field's decoration with the correct currency

@@ -10,7 +10,7 @@ import '../../services/session_settlement_view.dart';
 import '../../widgets/player_type_badge.dart';
 import '../player_account/player_account_screen.dart';
 import '../reports/reports_screen.dart';
-import '../session_shell/session_shell_screen.dart';
+import '../shell/open_floor_session.dart';
 import '../../models/enums.dart';
 
 /// One player's complete record across every session the host has run.
@@ -362,13 +362,18 @@ class PlayerHistoryScreen extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => ended
-                  ? ReportsScreen(sessionId: r.session.id)
-                  : SessionShellScreen(sessionId: r.session.id),
-            ),
-          ),
+          onTap: () {
+            // ICR-02: a live session opens on the Floor; ended nights
+            // keep the report/review path.
+            if (ended) {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                    builder: (_) => ReportsScreen(sessionId: r.session.id)),
+              );
+              return;
+            }
+            openFloorSession(context, r.session);
+          },
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
             decoration: BoxDecoration(

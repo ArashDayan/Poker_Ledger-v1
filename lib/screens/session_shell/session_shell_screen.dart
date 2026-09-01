@@ -1,31 +1,18 @@
 import 'dart:async';
 import '../../core/localization/app_localizations.dart';
-import '../../core/localization/enum_labels.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/utils/currency_formatter.dart';
-import '../../models/enums.dart';
-import '../../models/session.dart';
 import '../../providers/chip_bank_provider.dart';
 import '../../providers/session_provider.dart';
-import '../../providers/settings_provider.dart';
-import '../../services/financial_ledger_service.dart';
 import '../../services/hive_service.dart';
-import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
-import '../../widgets/chip_exchange_sheet.dart';
 
 import '../../widgets/poker_chip_logo.dart';
-import '../../widgets/table_selector_bar.dart';
-import '../../widgets/void_linked_financial_sheet.dart';
-import '../chip_bank/session_reconciliation_screen.dart';
+import '../../widgets/session_chrome.dart';
 import '../dashboard/dashboard_tab.dart';
 import '../history/transaction_history_screen.dart';
-import '../house_rules/house_rules_screen.dart';
 import '../players/players_tab.dart';
-import '../reports/reports_screen.dart';
-import '../settings/settings_screen.dart';
 import '../table_view/table_view_tab.dart';
 import '../tournament/tournament_tab.dart';
 import '../transactions/transactions_tab.dart';
@@ -234,32 +221,9 @@ class _SessionShellScreenState extends State<SessionShellScreen> {
         action: SnackBarAction(
           label: tr('view'),
           textColor: Colors.black,
-          onPressed: () => _openReconciliation(),
+          onPressed: () => openSessionReconciliation(context),
         ),
       ),
-    );
-  }
-
-  void _openReconciliation() {
-    final session = context.read<SessionProvider>().current;
-    if (session == null) return;
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => SessionReconciliationScreen(
-        sessionId: session.id,
-        currency: session.currency,
-      ),
-    ));
-  }
-
-  Future<void> _openExchange() async {
-    final provider = context.read<SessionProvider>();
-    final session = provider.current;
-    if (session == null) return;
-    await showChipExchangeSheet(
-      context,
-      players: provider.players,
-      currency: session.currency,
-      sessionId: session.id,
     );
   }
 
@@ -295,43 +259,8 @@ class _SessionShellScreenState extends State<SessionShellScreen> {
     );
   }
 
-  Future<void> _handleUndo(BuildContext context, SessionProvider provider, PokerSession session) async {
-    final txs = SessionService.transactionsFor(session.id);
-    if (txs.isEmpty) return;
-    final last = txs.last;
-    final linked = FinancialLedgerService.activeEventsLinkedTo(last.id);
-    VoidChipFinancialChoice? choice;
-    if (linked.isNotEmpty) {
-      choice = await askVoidChipWithLinkedFinancial(
-        context,
-        transactionId: last.id,
-        formatter: CurrencyFormatter(session.currency),
-      );
-      if (choice == null || !context.mounted) return;
-    }
-    final voided = provider.undo();
-    if (voided == null || !context.mounted) return;
-    if (choice == VoidChipFinancialChoice.chipAndReverseLinked) {
-      await FinancialLedgerService.reverseLinkedTo(voided.id);
-    } else if (choice == VoidChipFinancialChoice.chipOnly && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr('void_chip_only_warn'))),
-      );
-    }
-    final fmt = CurrencyFormatter(session.currency);
-    final playerName = voided.playerId == null
-        ? 'the table'
-        : provider.players
-            .firstWhere((p) => p.id == voided.playerId, orElse: () => provider.players.first)
-            .name;
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${tr('undone')}: ${voided.type.localizedLabel} · ${fmt.format(voided.amount)} · $playerName'),
-        duration: const Duration(seconds: 4),
-      ),
-    );
-  }
+  // Undo/redo/session overflow actions live in widgets/session_chrome.dart
+  // (shared with Floor). This console intentionally has no own copy.
 
   @override
   Widget build(BuildContext context) {
@@ -371,141 +300,16 @@ class _SessionShellScreenState extends State<SessionShellScreen> {
           ],
         ),
         actions: [
-          // Privacy Mode lives in the AppBar, not buried in Settings: it
-          // is needed the instant someone leans over the table, and a
-          // banker will not navigate two screens deep to hide numbers.
-          Builder(builder: (ctx) {
-            final settings = ctx.watch<SettingsProvider>();
-            return IconButton(
-              tooltip: settings.privacyMode
-                  ? 'Show amounts'
-                  : 'Hide amounts (privacy mode)',
-              onPressed: () => ctx.read<SettingsProvider>().togglePrivacyMode(),
-              icon: Icon(
-                settings.privacyMode
-                    ? Icons.visibility_off_outlined
-                    : Icons.visibility_outlined,
-                color: settings.privacyMode ? AppColors.gold : null,
-              ),
-            );
-          }),
+          // Shared with Floor (session_chrome.dart) so privacy/session
+          // actions can never drift between the two live-session hosts.
+          const PrivacyToggleButton(),
           if (showAddPlayerAction)
             IconButton(
               tooltip: tr('add_player'),
               onPressed: () => PlayersTab.showAddPlayerSheet(context),
               icon: const Icon(Icons.person_add_outlined),
             ),
-          PopupMenuButton<String>(
-            tooltip: tr('more'),
-            icon: const Icon(Icons.more_vert),
-            onSelected: (v) {
-              switch (v) {
-                case 'undo':
-                  _handleUndo(context, provider, session);
-                  break;
-                case 'redo':
-                  provider.redo();
-                  break;
-                case 'tables':
-                  showTableManagerSheet(context);
-                  break;
-                case 'chip_exchange':
-                  _openExchange();
-                  break;
-                case 'chip_reconcile':
-                  _openReconciliation();
-                  break;
-                case 'house_rules':
-                  Navigator.of(context)
-                      .push(MaterialPageRoute(builder: (_) => const HouseRulesScreen()));
-                  break;
-                case 'reports':
-                  Navigator.of(context)
-                      .push(MaterialPageRoute(builder: (_) => ReportsScreen(sessionId: session.id)));
-                  break;
-                case 'settings':
-                  Navigator.of(context)
-                      .push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
-                  break;
-              }
-            },
-            itemBuilder: (ctx) => [
-              // Undo/Redo live here deliberately small and out of the way
-              // — a banker reaches for them rarely, and they shouldn't
-              // compete for attention with the buttons used constantly.
-              PopupMenuItem(
-                value: 'undo',
-                enabled: provider.canUndo,
-                child: ListTile(
-                  dense: true,
-                  leading: const Icon(Icons.undo, size: 18),
-                  title: Text(tr('undo_last'), style: const TextStyle(fontSize: 13)),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              PopupMenuItem(
-                value: 'redo',
-                enabled: provider.canRedo,
-                child: ListTile(
-                  dense: true,
-                  leading: const Icon(Icons.redo, size: 18),
-                  title: Text(tr('redo'), style: const TextStyle(fontSize: 13)),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              const PopupMenuDivider(),
-              PopupMenuItem(
-                value: 'tables',
-                child: ListTile(
-                  leading: const Icon(Icons.table_bar_outlined),
-                  title: Text(tr('tables')),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              PopupMenuItem(
-                value: 'chip_exchange',
-                enabled: provider.players.isNotEmpty,
-                child: ListTile(
-                  leading: const Icon(Icons.swap_horiz),
-                  title: Text(tr('chip_exchange')),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              PopupMenuItem(
-                value: 'chip_reconcile',
-                child: ListTile(
-                  leading: const Icon(Icons.fact_check_outlined),
-                  title: Text(tr('session_chip_reconciliation')),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              const PopupMenuDivider(),
-              PopupMenuItem(
-                value: 'house_rules',
-                child: ListTile(
-                  leading: const Icon(Icons.gavel_outlined),
-                  title: Text(tr('house_rules')),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              PopupMenuItem(
-                value: 'reports',
-                child: ListTile(
-                  leading: const Icon(Icons.summarize_outlined),
-                  title: Text(tr('reports')),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-              PopupMenuItem(
-                value: 'settings',
-                child: ListTile(
-                  leading: const Icon(Icons.settings_outlined),
-                  title: Text(tr('settings')),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-            ],
-          ),
+          const SessionOverflowMenu(),
         ],
       ),
       body: IndexedStack(index: _index, children: tabs),

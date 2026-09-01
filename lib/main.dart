@@ -6,11 +6,12 @@ import 'core/theme/app_theme.dart';
 import 'providers/app_lock_provider.dart';
 import 'providers/chip_bank_provider.dart';
 import 'providers/license_provider.dart';
+import 'providers/product_nav_controller.dart';
 import 'providers/session_provider.dart';
 import 'providers/settings_provider.dart';
 import 'screens/license/license_gate.dart';
 import 'screens/security/app_lock_gate.dart';
-import 'screens/home/session_list_screen.dart';
+import 'screens/shell/product_shell_screen.dart';
 import 'screens/settings/pin_lock_screen.dart';
 import 'screens/splash/splash_screen.dart';
 import 'services/hive_service.dart';
@@ -90,6 +91,10 @@ class PokerLedgerApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => SettingsProvider()),
         ChangeNotifierProvider(create: (_) => SessionProvider()),
+        // Product destination controller (Floor | Players | House).
+        // Sibling of SessionProvider on purpose: navigation state never
+        // holds money state.
+        ChangeNotifierProvider(create: (_) => ProductNavController()),
         // Licensing is a sibling provider, not a wrapper around the
         // others, so nothing about session/settings behaviour changes.
         ChangeNotifierProvider(create: (_) => LicenseProvider()),
@@ -153,7 +158,7 @@ class PokerLedgerApp extends StatelessWidget {
             home: const SplashScreen(
               child: LicenseGate(
                 child: AppLockGate(
-                  child: PinLockScreen(child: SessionListScreen()),
+                  child: PinLockScreen(child: ProductShellScreen()),
                 ),
               ),
             ),

@@ -16,7 +16,7 @@ import '../player_history/players_directory_screen.dart';
 import '../reports/reports_hub_screen.dart';
 import '../chip_bank/chip_bank_screen.dart';
 import '../reports/reports_screen.dart';
-import '../session_shell/session_shell_screen.dart';
+import '../shell/open_floor_session.dart';
 import '../settings/settings_screen.dart';
 
 /// The home screen — the first thing a banker sees when they open the app
@@ -458,13 +458,17 @@ class _SessionTile extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           onTap: () async {
-            await Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => isEnded
-                    ? ReportsScreen(sessionId: session.id)
-                    : SessionShellScreen(sessionId: session.id),
-              ),
-            );
+            // ICR-02: a live session opens on the Floor, not in the
+            // legacy console. Ended nights keep the report/review path.
+            if (isEnded) {
+              await Navigator.of(context).push(
+                MaterialPageRoute(
+                    builder: (_) => ReportsScreen(sessionId: session.id)),
+              );
+              onReturn();
+              return;
+            }
+            openFloorSession(context, session);
             onReturn();
           },
           child: IntrinsicHeight(

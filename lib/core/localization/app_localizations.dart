@@ -1009,6 +1009,19 @@ class AppLocalizations {
       'report_table_cash_outs': 'Table cash-outs',
       'report_cage_cash': 'Cage cash returned',
       'report_cage_unbacked': 'Unbacked cash-out',
+
+      // ICR-02 — product shell (Floor | Players | House)
+      'nav_floor': 'Floor',
+      'nav_players': 'Players',
+      'nav_house': 'House',
+      'floor_no_live': 'No live session',
+      'floor_no_live_hint':
+          'Start a new night or open a previous one — the Floor is where the live tables run.',
+      'switch_night': 'Switch night',
+      'session_tools': 'Session tools',
+      'house_hub_hint':
+          'House-level tools: the chip bank, reports, the session book, house rules and configuration (backup and license live inside Settings).',
+
     },
     'fa': {
       'app_title': 'دفتر پوکر',
@@ -2001,6 +2014,19 @@ class AppLocalizations {
       'report_table_cash_outs': 'تسویه‌های میز',
       'report_cage_cash': 'نقد برگشتی صندوق',
       'report_cage_unbacked': 'تسویه بدون پشتوانه',
+
+      // ICR-02 — product shell (Floor | Players | House)
+      'nav_floor': 'سالن',
+      'nav_players': 'بازیکنان',
+      'nav_house': 'خانه',
+      'floor_no_live': 'نشست فعالی در جریان نیست',
+      'floor_no_live_hint':
+          'یک شب جدید شروع کنید یا یک نشست قبلی را باز کنید — میزهای زنده در سالن هستند.',
+      'switch_night': 'تعویض شب',
+      'session_tools': 'ابزارهای نشست',
+      'house_hub_hint':
+          'ابزارهای سطح خانه: بانک ژتون، گزارش‌ها، دفتر نشست‌ها، قوانین خانه و تنظیمات (نسخه پشتیبان و لایسنس در تنظیمات هستند).',
+
     },
   };
 
