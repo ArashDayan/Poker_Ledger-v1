@@ -89,8 +89,9 @@ class PlayerIdentityService {
   /// Fuzzy / partial matches are deliberately not used — a close name
   /// is how two different people's money gets mixed.
   ///
-  /// An empty list means there is nothing to confirm: the caller should
-  /// create a new identity, not guess.
+  /// An empty list means there is no exact match on file. It is still
+  /// the caller's job to ask the operator explicitly (ICR-03): an empty
+  /// list must never silently auto-create a person.
   static List<PlayerIdentity> suggest(String name) {
     if (!_boxOpen) return const [];
     final key = normaliseName(name);
@@ -135,6 +136,63 @@ class PlayerIdentityService {
     return max + 1;
   }
 
+  /// Display form of a Player Number.
+  ///
+  /// `0` or any value below [PlayerIdentity.firstPlayerNumber] is
+  /// "not assigned yet" and must NEVER look like a real membership
+  /// number. The UI shows the em dash here; callers prepend `#` only
+  /// when the number is assigned.
+  static String numberLabel(int number) =>
+      number >= PlayerIdentity.firstPlayerNumber ? '$number' : '—';
+
+  /// Searchable Player Master directory used by explicit seating.
+  ///
+  /// Matches (case/spacing-insensitive, partial allowed) Player Number,
+  /// first name, last name or display name. A number query also accepts
+  /// the optional `#` prefix. Results are ordered by assigned number
+  /// (unassigned identities last), then display name, so the operator
+  /// can scan a familiar membership register rather than a random list.
+  ///
+  /// Search is a decision aid for a human. It is NOT identity linking
+  /// on its own: a match still requires the operator to select the
+  /// person in the confirmation step.
+  static List<PlayerIdentity> search(String query) {
+    if (!_boxOpen) return const [];
+    final list = HiveService.playerIdentities.values.toList();
+    final q = normaliseName(query);
+    final numeric = int.tryParse(query.trim().replaceFirst('#', '').trim());
+
+    list.retainWhere((identity) {
+      if (numeric != null &&
+          numeric >= PlayerIdentity.firstPlayerNumber &&
+          identity.playerNumber.toString().contains(numeric.toString())) {
+        return true;
+      }
+      if (q.isEmpty) return true;
+      if (identity.firstName.isNotEmpty &&
+          normaliseName(identity.firstName).contains(q)) {
+        return true;
+      }
+      if (identity.lastName.isNotEmpty &&
+          normaliseName(identity.lastName).contains(q)) {
+        return true;
+      }
+      if (normaliseName(identity.displayName).contains(q)) return true;
+      return false;
+    });
+
+    list.sort((a, b) {
+      final aHas = a.hasPlayerNumber;
+      final bHas = b.hasPlayerNumber;
+      if (aHas != bHas) return aHas ? -1 : 1;
+      final byNumber = a.playerNumber.compareTo(b.playerNumber);
+      if (byNumber != 0 && aHas && bHas) return byNumber;
+      return normaliseName(a.displayName)
+          .compareTo(normaliseName(b.displayName));
+    });
+    return list;
+  }
+
   /// Creates a brand-new identity. Never reuses an existing id, even
   /// when the display name already exists — two people named Ali are
   /// two identities.
@@ -144,13 +202,32 @@ class PlayerIdentityService {
   /// the typed name; both can be corrected on the master record later.
   /// [displayName] is preserved verbatim — screens keep showing what
   /// the banker typed.
-  static Future<PlayerIdentity?> createNew(String displayName,
-      {String? note}) async {
+  ///
+  /// [firstName] / [lastName] override the automatic split when the
+  /// registration form collects them. [idNumber] is stored as optics /
+  /// identity confirmation data only; it is never used to merge people.
+  ///
+  /// This method writes ONLY the identity row. It never seats the
+  /// person, creates a session participation, moves chips or writes a
+  /// financial/session event.
+  static Future<PlayerIdentity?> createNew(
+    String displayName, {
+    String? note,
+    String? firstName,
+    String? lastName,
+    String? idNumber,
+  }) async {
     if (!_boxOpen) return null;
     final trimmed = displayName.trim();
     if (trimmed.isEmpty) return null;
     final now = DateTime.now();
     final split = PlayerIdentity.splitDisplayName(trimmed);
+    final first = (firstName != null && firstName.trim().isNotEmpty)
+        ? firstName.trim()
+        : split.first;
+    final last = (lastName != null && lastName.trim().isNotEmpty)
+        ? lastName.trim()
+        : split.last;
     final identity = PlayerIdentity(
       id: _uuid.v4(),
       displayName: trimmed,
@@ -158,8 +235,9 @@ class PlayerIdentityService {
       updatedAt: now,
       note: note,
       playerNumber: nextPlayerNumber(),
-      firstName: split.first,
-      lastName: split.last,
+      firstName: first,
+      lastName: last,
+      idNumber: idNumber,
     );
     await HiveService.playerIdentities.put(identity.id, identity);
     return identity;
@@ -274,11 +352,13 @@ class PlayerIdentityService {
     }
   }
 
-  /// Applies an explicit seating decision and returns the personId to
+  /// Applies an explicit identity decision and returns the personId to
   /// store on the new [Player] row.
   ///
-  /// [confirm] is only invoked when [suggest] is non-empty. The service
-  /// never calls it with an empty list, and never links without it.
+  /// [confirm] is invoked even when there are no suggestions: an exact
+  /// silent auto-create is exactly the bug ICR-03 removes. The service
+  /// never links without an explicit link result and never creates
+  /// without an explicit create result.
   ///
   /// Returns null when the banker cancelled, or when the identity box
   /// is unavailable (degraded mode — the seat is created unlinked).
@@ -289,11 +369,6 @@ class PlayerIdentityService {
     ) confirm,
   }) async {
     final suggestions = suggest(name);
-    if (suggestions.isEmpty) {
-      final created = await createNew(name);
-      return created?.id;
-    }
-
     final result = await confirm(suggestions);
     if (result.isCancel) return null;
 
@@ -310,8 +385,12 @@ class PlayerIdentityService {
       return id;
     }
 
-    final created = await createNew(name);
-    return created?.id;
+    if (result.isCreateNew) {
+      final created = await createNew(name);
+      return created?.id;
+    }
+
+    return null;
   }
 
   /// Writes [personId] onto a seat. Does not create or merge identities.

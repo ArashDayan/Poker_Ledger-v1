@@ -130,8 +130,9 @@ void main() {
   });
 
   group('resolveForSeating is confirm-only', () {
-    test('no suggestion creates a new identity without asking', () async {
+    test('ICR-03: no suggestion still asks; cancel writes nothing', () async {
       var asked = false;
+      final before = HiveService.playerIdentities.length;
       final personId = await PlayerIdentityService.resolveForSeating(
         name: 'Sara',
         confirm: (_) async {
@@ -139,7 +140,23 @@ void main() {
           return const IdentityLinkResult.cancel();
         },
       );
-      expect(asked, isFalse);
+      expect(asked, isTrue,
+          reason: 'an empty suggestion list must never auto-create');
+      expect(personId, isNull);
+      expect(HiveService.playerIdentities.length, before);
+    });
+
+    test('ICR-03: no suggestion + explicit Register New creates identity',
+        () async {
+      var asked = false;
+      final personId = await PlayerIdentityService.resolveForSeating(
+        name: 'Sara',
+        confirm: (_) async {
+          asked = true;
+          return const IdentityLinkResult.createNew();
+        },
+      );
+      expect(asked, isTrue);
       expect(personId, isNotNull);
       expect(PlayerIdentityService.byId(personId!)!.displayName, 'Sara');
     });
@@ -302,5 +319,4 @@ void main() {
       expect(identity.toJson()['creditLimitMinor'], 0);
     });
   });
-
 }

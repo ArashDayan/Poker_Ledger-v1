@@ -9,6 +9,7 @@ import '../../models/player.dart';
 import '../../providers/session_provider.dart';
 import '../../services/chip_tracking_service.dart';
 import '../../services/financial_capture_flow.dart';
+import '../../services/player_identity_service.dart';
 import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/table_service.dart';
@@ -19,6 +20,7 @@ import '../../widgets/last_hand_summary.dart';
 import '../../widgets/poker_table_view.dart';
 import '../../widgets/quick_rake_sheet.dart';
 import '../../widgets/discount_review_entry.dart';
+import '../../widgets/select_player_sheet.dart';
 import '../../widgets/record_hand_sheet.dart';
 import '../../widgets/table_selector_bar.dart';
 import '../history/hand_history_screen.dart';
@@ -142,6 +144,9 @@ class TableViewTab extends StatelessWidget {
   }
 
   void _seatSheet(BuildContext context, SessionProvider provider, Player player) {
+    final unlinked = player.personId == null ||
+        player.personId!.isEmpty ||
+        PlayerIdentityService.byId(player.personId) == null;
     showModalBottomSheet(
       context: context,
       builder: (ctx) => SafeArea(
@@ -153,6 +158,20 @@ class TableViewTab extends StatelessWidget {
               child: Text('${tr('seat')} ${player.seatNumber} · ${player.name}',
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             ),
+            // ICR-03: an occupied seat with no valid identity link must
+            // not be left silently nameless. Linking is explicit and
+            // never creates an identity.
+            if (unlinked)
+              ListTile(
+                leading: const Icon(Icons.link, color: AppColors.gold),
+                title: Text(tr('link_to_existing_player')),
+                subtitle: Text(tr('unlinked_seat_hint'),
+                    style: const TextStyle(fontSize: 11)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  showLinkExistingPlayerSheet(context, player: player);
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.add_card, color: AppColors.accentGreen),
               title: Text(tr('buy_in')),

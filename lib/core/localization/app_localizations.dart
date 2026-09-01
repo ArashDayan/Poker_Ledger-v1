@@ -1022,6 +1022,54 @@ class AppLocalizations {
       'house_hub_hint':
           'House-level tools: the chip bank, reports, the session book, house rules and configuration (backup and license live inside Settings).',
 
+      // ICR-03 — explicit Player Selection → Seating
+      'identity_new_person_title': 'Not found on file?',
+      'identity_new_person_body':
+          'No one named {name} is on file. Create this as a new registered player? Registration writes a Player Identity only — no seat, no chips, no money.',
+      'register_new_player': 'Register new',
+      'name_required': 'Name is required.',
+      'identity_created': 'Identity created',
+      'identity_create_failed': 'Could not create identity.',
+      'select_table_and_seat': 'Select table & seat',
+      'select_table_seat_hint':
+          'Choose an open table and its first free seat.',
+      'select_player_hint':
+          'Search the Player Master by number or name, or Register New.',
+      'search_player_number_or_name': 'Player number or name',
+      'no_identity_match': 'No identity matches.',
+      'no_match_link_hint':
+          'No match? Register the person from Players → Register, then Link them here.',
+      'confirm_seat_player': 'Confirm player',
+      'confirm_link_player': 'Confirm link',
+      'link_occupied_seat_hint':
+          'This seat is occupied but not linked to a permanent identity. Choose the existing person explicitly.',
+      'link_to_existing_player': 'Link to existing player',
+      'unlinked_seat_hint':
+          'This seat has no Player Identity link yet.',
+      'seat_no_money_note':
+          'Seating only. No buy-in, chips, cash-out or discount is created.',
+      'seat_blocked': 'This seat cannot be used.',
+      'duplicate_active_title': 'Already active elsewhere',
+      'duplicate_active_body':
+          '{name} is already seated at {table} Seat {seat}. One active table participation per player is enforced.',
+      'already_registered_title': 'Already registered for this session',
+      'already_registered_unseated_body':
+          '{name} is already registered for this session but not seated. Seat them from the Registered — not seated section instead of linking a second row.',
+      'go_to_seat': 'Go to seat',
+      'register_new_identity': 'Save identity',
+      'register_new_only_note':
+          'Creates a Player Identity only. You still choose and confirm the player for this seat afterwards.',
+      'register_new_hint': 'Creates identity only — no seat yet.',
+      'display_name': 'Display name',
+      'first_name_optional': 'First name (optional)',
+      'last_name_optional': 'Last name (optional)',
+      'id_number_optional': 'ID number (optional)',
+      'id_number': 'ID number',
+      'identity_specimen_on_file': 'Specimen signature on file',
+      'saving': 'Saving…',
+      'change_player': 'Change player',
+      'linked_to_seat': 'Linked to seat',
+      'all_tables_full': 'All tables are full.',
     },
     'fa': {
       'app_title': 'دفتر پوکر',
@@ -2027,6 +2075,54 @@ class AppLocalizations {
       'house_hub_hint':
           'ابزارهای سطح خانه: بانک ژتون، گزارش‌ها، دفتر نشست‌ها، قوانین خانه و تنظیمات (نسخه پشتیبان و لایسنس در تنظیمات هستند).',
 
+      // ICR-03 — فرایند صریح انتخاب بازیکن و نشاندن
+      'identity_new_person_title': 'در پرونده نیست؟',
+      'identity_new_person_body':
+          'کسی با نام {name} در پرونده نیست. به‌عنوان بازیکن جدید ثبت شود؟ ثبت فقط یک هویت بازیکن می‌سازد — نه صندلی، نه ژتون، نه پول.',
+      'register_new_player': 'ثبت بازیکن جدید',
+      'name_required': 'نام الزامی است.',
+      'identity_created': 'هویت ایجاد شد',
+      'identity_create_failed': 'هویت ایجاد نشد.',
+      'select_table_and_seat': 'انتخاب میز و صندلی',
+      'select_table_seat_hint':
+          'یک میز باز و اولین صندلی خالی آن را انتخاب کنید.',
+      'select_player_hint':
+          'با شماره یا نام در دفتر بازیکنان جستجو کنید یا بازیکن جدید ثبت کنید.',
+      'search_player_number_or_name': 'شماره یا نام بازیکن',
+      'no_identity_match': 'هیچ هویتی مطابقت ندارد.',
+      'no_match_link_hint':
+          'نتیجه‌ای نیست؟ شخص را از «بازیکنان → ثبت بازیکن» ثبت کنید و سپس اینجا پیوند دهید.',
+      'confirm_seat_player': 'تأیید بازیکن',
+      'confirm_link_player': 'تأیید پیوند',
+      'link_occupied_seat_hint':
+          'این صندلی اشغال است اما به هویت دائمی پیوند نشده. فرد موجود را صریحاً انتخاب کنید.',
+      'link_to_existing_player': 'پیوند به بازیکن موجود',
+      'unlinked_seat_hint':
+          'این صندلی هنوز به هویت بازیکن پیوند ندارد.',
+      'seat_no_money_note':
+          'فقط نشاندن. هیچ خرید ورود، ژتون، تسویه یا تخفیفی ایجاد نمی‌شود.',
+      'seat_blocked': 'این صندلی قابل استفاده نیست.',
+      'duplicate_active_title': 'قبلاً جای دیگر فعال است',
+      'duplicate_active_body':
+          '{name} هم‌اکنون روی {table} در صندلی {seat} نشسته است. فقط یک حضور فعال روی میز برای هر بازیکن مجاز است.',
+      'already_registered_title': 'قبلاً برای این نشست ثبت شده است',
+      'already_registered_unseated_body':
+          '{name} قبلاً برای این نشست ثبت شده اما بدون صندلی است. به‌جای پیوند ردیف دوم، او را از بخش «ثبت‌شده — بدون صندلی» بنشانید.',
+      'go_to_seat': 'رفتن به صندلی',
+      'register_new_identity': 'ذخیره هویت',
+      'register_new_only_note':
+          'فقط یک هویت بازیکن ساخته می‌شود. پس از آن، بازیکن را برای این صندلی انتخاب و تأیید می‌کنید.',
+      'register_new_hint': 'فقط هویت ایجاد می‌شود — هنوز صندلی نیست.',
+      'display_name': 'نام نمایشی',
+      'first_name_optional': 'نام (اختیاری)',
+      'last_name_optional': 'نام خانوادگی (اختیاری)',
+      'id_number_optional': 'شماره شناسنامه یا کد (اختیاری)',
+      'id_number': 'شماره شناسنامه یا کد',
+      'identity_specimen_on_file': 'نمونه امضا در پرونده موجود است',
+      'saving': 'در حال ذخیره…',
+      'change_player': 'تغییر بازیکن',
+      'linked_to_seat': 'به صندلی پیوند شد',
+      'all_tables_full': 'همه میزها پر هستند.',
     },
   };
 

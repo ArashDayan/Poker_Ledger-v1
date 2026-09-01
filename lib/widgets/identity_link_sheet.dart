@@ -18,8 +18,34 @@ Future<IdentityLinkResult> confirmIdentityLink(
   required String typedName,
   required List<PlayerIdentity> suggestions,
 }) async {
+  // ICR-03: even a box with no match must NOT auto-create. The banker
+  // taps "Register New" explicitly; Back/Cancel returns cancel and
+  // nothing is written.
   if (suggestions.isEmpty) {
-    return const IdentityLinkResult.createNew();
+    final created = await showDialog<IdentityLinkResult>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('identity_new_person_title'),
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        content: Text(
+          tr('identity_new_person_body').replaceAll('{name}', typedName),
+          style: const TextStyle(fontSize: 13.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(ctx, const IdentityLinkResult.cancel()),
+            child: Text(tr('cancel')),
+          ),
+          ElevatedButton(
+            onPressed: () =>
+                Navigator.pop(ctx, const IdentityLinkResult.createNew()),
+            child: Text(tr('register_new_player')),
+          ),
+        ],
+      ),
+    );
+    return created ?? const IdentityLinkResult.cancel();
   }
 
   final result = await showDialog<IdentityLinkResult>(

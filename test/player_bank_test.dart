@@ -61,9 +61,11 @@ void main() {
   tearDown(_close);
 
   test('1. first registration creates a persistent identity', () async {
+    // ICR-03: creation is an explicit decision even when there is no
+    // name suggestion; cancel is a zero-write path.
     final id = await PlayerIdentityService.resolveForSeating(
       name: 'Ali',
-      confirm: (_) async => const IdentityLinkResult.cancel(),
+      confirm: (_) async => const IdentityLinkResult.createNew(),
     );
     expect(id, isNotNull);
     expect(PlayerIdentityService.byId(id!)!.displayName, 'Ali');

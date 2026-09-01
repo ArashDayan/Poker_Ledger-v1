@@ -18,6 +18,7 @@ import '../../services/sound_service.dart';
 import '../../services/table_service.dart';
 import '../../widgets/identity_link_sheet.dart';
 import '../../widgets/player_card.dart';
+import '../../widgets/select_player_sheet.dart';
 import '../../widgets/player_type_badge.dart';
 import '../../widgets/signature_compare_sheet.dart';
 import '../../widgets/signature_pad.dart';
@@ -31,66 +32,81 @@ import '../player_account/player_account_screen.dart';
 import '../player_history/player_history_screen.dart';
 
 /// Players tab: seat management + the fast per-player money actions.
-/// This is the banker's main screen during a live game — adding a player
-/// and recording their opening buy-in is ONE action here (see
-/// [showAddPlayerSheet]), and every subsequent buy-in/rebuy/cash-out is a
-/// tap-then-confirm quick sheet rather than a full-screen form.
+/// This is the banker's main screen during a live game. New players go
+/// through the explicit ICR-03 Select Player → Register New (if needed)
+/// → Confirm → Seat flow and are seated WITHOUT a buy-in; the opening
+/// buy-in is a separate tap-then-confirm quick sheet. Every subsequent
+/// buy-in/rebuy/cash-out is also a tap-then-confirm quick sheet.
 class PlayersTab extends StatelessWidget {
   const PlayersTab({super.key});
 
   /// Opens the add/edit player sheet.
   ///
-  /// [presetTableId] is the table the banker was actually looking at when
-  /// they tapped an empty seat. Passing it makes the destination explicit
-  /// rather than inferred: without it the provider had to guess from
-  /// `isMultiTable`, which reads false whenever `session.tables` has not
-  /// been materialised yet, and the player was then stored with a null
-  /// tableId and vanished from the table the banker was standing at.
+  /// For a NEW player this delegates to the ICR-03 explicit seating flow
+  /// (Select existing / Register New → Confirm → Seat). The only write
+  /// before the final Seat action is an explicit Register New identity
+  /// write. No buy-in, chips, cash-out, discount or financial event is
+  /// created by this entry point.
   ///
-  /// Null means "no specific table" (the Players tab / app-bar entry
-  /// points), where the provider's existing default is correct.
+  /// [presetTableId] / [presetSeat] are the table and empty seat the
+  /// banker looked at. Without them the flow asks for a table and seat
+  /// first before choosing the person.
+  ///
+  /// Editing an already-seated player keeps the existing editor below;
+  /// it never invents a person identity.
   static Future<void> showAddPlayerSheet(BuildContext context,
       {Player? existing, int? presetSeat, String? presetTableId}) async {
+    // ICR-03: every NEW seat goes through explicit
+    // Select Player → Register New (if needed) → Confirm → Seat.
+    // Editing an already-seated player goes through the existing editor
+    // below and never invents a person.
+    if (existing == null) {
+      await showSeatPlayerSheet(
+        context,
+        presetTableId: presetTableId,
+        presetSeat: presetSeat,
+      );
+      return;
+    }
+
     final provider = context.read<SessionProvider>();
-    final isEdit = existing != null;
-    final nameCtrl = TextEditingController(text: existing?.name ?? '');
-    int? selectedSeat = existing?.seatNumber ?? presetSeat;
-    final buyInCtrl = TextEditingController(
-      text: isEdit ? '' : (provider.current?.defaultBuyInAmount?.toStringAsFixed(0) ?? ''),
-    );
-    final tags = <PlayerTag>{...(existing?.tags ?? [])};
+    final player = existing;
+    // After the delegation above, this function only ever edits an
+    // already-seated player. New seating uses ICR-03 explicit selection.
+    final nameCtrl = TextEditingController(text: player.name);
+    int? selectedSeat = player.seatNumber;
+    final tags = <PlayerTag>{...player.tags};
     // The player's own reference signature. Captured once, at the table,
     // when they sit down — it is the specimen every later transaction
     // signature gets compared against if a dispute comes up.
-    String sampleSignature = existing?.sampleSignatureBase64 ?? '';
+    String sampleSignature = player.sampleSignatureBase64 ?? '';
     // Second specimen. Two samples let the app measure how much this
     // person's own signature naturally varies, which is what makes a
     // similarity score meaningful rather than arbitrary.
-    String sampleSignature2 = existing?.sampleSignature2Base64 ?? '';
+    String sampleSignature2 = player.sampleSignature2Base64 ?? '';
     // Snapshot of what was already on file, so we can tell "showing a
     // saved sample" apart from "the banker is drawing a new one".
-    final existingSample = existing?.sampleSignatureBase64 ?? '';
-    final existingSample2 = existing?.sampleSignature2Base64 ?? '';
-    final fmt = CurrencyFormatter(provider.current!.currency);
+    final existingSample = player.sampleSignatureBase64 ?? '';
+    final existingSample2 = player.sampleSignature2Base64 ?? '';
     // Seat numbers are per-table, so both the seat grid and the
     // "already taken" check must be scoped to the table this player is
     // being seated at — Table 1 Seat 3 and Table 2 Seat 3 are two
     // different people.
-    final targetTableId = existing != null
-        ? TableService.tableForPlayer(provider.current!, existing).id
-        : provider.activeTableId;
+    final targetTableId =
+        TableService.tableForPlayer(provider.current!, player).id;
     final targetTable =
         TableService.tableById(provider.current!, targetTableId);
     final tableSeatCount = targetTable.seatCount;
     final occupiedByOthers = TableService.occupiedSeats(
       provider.current!,
       targetTableId,
-      excludePlayerId: existing?.id,
+      excludePlayerId: player.id,
     );
 
-    // Phase 1: banker-only setup — name, seat, buy-in amount, private tags.
-    // Tags are never shown again past this point, especially not on the
-    // signature step the player themselves sees.
+    // Edit-only setup: name, seat and private tags. ICR-03 keeps buy-in
+    // out of seating; it is recorded separately after the player is
+    // seated. Tags are never shown again past this point, especially
+    // not on the signature step the player themselves sees.
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -107,7 +123,7 @@ class PlayersTab extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(isEdit ? 'Edit Player' : 'Add Player',
+                Text(tr('edit_player'),
                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 if (provider.isMultiTable) ...[
                   const SizedBox(height: 4),
@@ -145,20 +161,6 @@ class PlayersTab extends StatelessWidget {
                     );
                   }).toList(),
                 ),
-                if (!isEdit) ...[
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: buyInCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: InputDecoration(
-                      labelText: tr('initial_buy_in'),
-                      hintText: tr('skip_for_now'),
-                      prefixText: fmt.symbol == '\$' ? '\$ ' : null,
-                      suffixText: fmt.symbol == '\$' ? null : fmt.symbol,
-                    ),
-                    onChanged: (_) => setSheetState(() {}),
-                  ),
-                ],
                 const SizedBox(height: 16),
                 Align(
                   alignment: Alignment.centerLeft,
@@ -277,212 +279,40 @@ class PlayersTab extends StatelessWidget {
                       return;
                     }
                     final seat = selectedSeat!;
-                    if (existing != null) {
-                      final player = existing;
-                      player.name = nameCtrl.text.trim();
-                      player.seatNumber = seat;
-                      player.tags = tags.toList();
-                      if (sampleSignature != (player.sampleSignatureBase64 ?? '')) {
-                        await provider.setPlayerSampleSignature(
-                            player, sampleSignature.isEmpty ? null : sampleSignature);
-                      }
-                      if (sampleSignature2 !=
-                          (player.sampleSignature2Base64 ?? '')) {
-                        await provider.setPlayerSampleSignature2(player,
-                            sampleSignature2.isEmpty ? null : sampleSignature2);
-                      }
-                      // updatePlayer persists and notifies; refresh() makes
-                      // the rename/reseat visible on every open tab in the
-                      // same frame rather than a microtask later.
-                      await provider.updatePlayer(player);
-                      provider.refresh();
-                      if (ctx.mounted) Navigator.pop(ctx);
-                      return;
+                    player.name = nameCtrl.text.trim();
+                    player.seatNumber = seat;
+                    player.tags = tags.toList();
+                    if (sampleSignature != (player.sampleSignatureBase64 ?? '')) {
+                      await provider.setPlayerSampleSignature(
+                          player, sampleSignature.isEmpty ? null : sampleSignature);
                     }
-
-                    // BLACKLIST GATE — creation path only.
-                    //
-                    // Placed here, after validation but before anything
-                    // is written, so every add-player route funnels
-                    // through it: the Players tab, an empty seat on the
-                    // poker table, and the app-bar action all open this
-                    // same sheet.
-                    //
-                    // Editing an existing player returned above, which
-                    // is deliberate: they are already seated, so warning
-                    // about it would be noise rather than a decision.
-                    //
-                    // A strong warning, never a lock — Continue seats
-                    // them normally, Cancel abandons the add entirely.
-                    if (PlayerRegistryService.isBlacklistedName(
-                        nameCtrl.text.trim())) {
-                      final proceed = await confirmBlacklistedPlayer(
-                        ctx,
-                        playerName: nameCtrl.text.trim(),
-                      );
-                      if (!proceed) return;
+                    if (sampleSignature2 !=
+                        (player.sampleSignature2Base64 ?? '')) {
+                      await provider.setPlayerSampleSignature2(player,
+                          sampleSignature2.isEmpty ? null : sampleSignature2);
                     }
-
-                    // IDENTITY GATE — creation path only.
-                    //
-                    // A name match is only a suggestion. The service
-                    // never auto-links; this dialog is the confirmation
-                    // the rule requires. Cancel aborts the add so a
-                    // dismissed prompt cannot silently create a
-                    // duplicate person or merge two people.
-                    final name = nameCtrl.text.trim();
-                    String? personId;
-                    try {
-                      personId =
-                          await PlayerIdentityService.resolveForSeating(
-                        name: name,
-                        confirm: (suggestions) => confirmIdentityLink(
-                          ctx,
-                          typedName: name,
-                          suggestions: suggestions,
-                        ),
-                      );
-                    } catch (e) {
-                      if (ctx.mounted) {
-                        ScaffoldMessenger.of(ctx).showSnackBar(
-                            SnackBar(content: Text('$e')));
-                      }
-                      return;
-                    }
-                    if (personId == null &&
-                        PlayerIdentityService.suggest(name).isNotEmpty) {
-                      // Suggestions existed and the banker cancelled.
-                      return;
-                    }
-
-                    final buyIn = double.tryParse(buyInCtrl.text.replaceAll(',', ''));
-                    final tagList = tags.toList();
-                    final sample = sampleSignature.isEmpty ? null : sampleSignature;
-                    // Sample 2 is captured in this same sheet, so it has
-                    // to be carried into creation alongside Sample 1 —
-                    // otherwise it is discarded when the sheet closes.
-                    final sample2 =
-                        sampleSignature2.isEmpty ? null : sampleSignature2;
-                    Navigator.pop(ctx); // close the config sheet first
-
-                    if ((buyIn ?? 0) <= 0) {
-                      try {
-                        await provider.addPlayerWithBuyIn(
-                          name: name,
-                          seatNumber: seat,
-                          tags: tagList,
-                          buyInAmount: null,
-                          hostSignatureBase64: null,
-                          sampleSignatureBase64: sample,
-                          sampleSignature2Base64: sample2,
-                          // Explicit destination when the sheet was
-                          // opened from a table's empty seat.
-                          tableId: presetTableId,
-                          personId: personId,
-                        );
-                        AppSounds.play(SoundEffect.addPlayer);
-                      } catch (e) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
-                        }
-                      }
-                      return;
-                    }
-
-                    // Phase 2: minimal player-facing signing step — ONLY
-                    // action, amount, signature. No name context beyond the
-                    // amount, no tags, nothing judgmental.
-                    if (!context.mounted) return;
-                    final result = await showQuickTransactionSheet(
-                      context,
-                      title: tr('buy_in'),
-                      type: TransactionType.buyIn,
-                      initialAmount: buyIn,
-                      formatter: fmt,
-                      sessionId: provider.current!.id,
-                    );
-                    if (result == null) return;
-                    final funding = await collectRequiredFunding(
-                      context,
-                      chipType: TransactionType.buyIn,
-                      amount: result.amount,
-                      currency: provider.current!.currency,
-                    );
-                    if (!funding.shouldCommit || !context.mounted) return;
-                    // Chip composition is optional. Skip / dismiss does
-                    // not abort the already-confirmed buy-in + funding.
-                    final openingDist = await ChipFlow.ask(
-                      context,
-                      amount: result.amount,
-                      currency: provider.current!.currency,
-                    );
-                    if (!context.mounted) return;
-                    try {
-                      final created = await provider.addPlayerWithBuyIn(
-                        name: name,
-                        seatNumber: seat,
-                        tags: tagList,
-                        buyInAmount: result.amount,
-                        hostSignatureBase64: result.signature,
-                        sampleSignatureBase64: sample,
-                        sampleSignature2Base64: sample2,
-                        tableId: presetTableId,
-                        personId: personId,
-                      );
-                      if (context.mounted) {
-                        // The opening buy-in is the last transaction the
-                        // provider wrote for this player.
-                        final tx = SessionService.transactionsFor(
-                                provider.current!.id)
-                            .where((t) => t.playerId == created.id)
-                            .toList();
-                        if (tx.isNotEmpty) {
-                          await ChipFlow.apply(
-                            context,
-                            distribution: openingDist,
-                            type: TransactionType.buyIn,
-                            sessionId: provider.current!.id,
-                            transactionId: tx.last.id,
-                            // Phase 2a: chips enter the person's holding.
-                            holderRefId: ChipTrackingService.holderRef(
-                                playerId: created.id,
-                                personId: created.personId),
-                          );
-                          if (context.mounted) {
-                            await applyCollectedFunding(
-                              context,
-                              player: created,
-                              chipType: TransactionType.buyIn,
-                              amount: result.amount,
-                              currency: provider.current!.currency,
-                              sessionId: provider.current!.id,
-                              transactionId: tx.last.id,
-                              funding: funding,
-                            );
-                          }
-                        }
-                      }
-                      AppSounds.play(SoundEffect.buyIn);
-                    } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
-                      }
-                    }
+                    // updatePlayer persists and notifies; refresh() makes
+                    // the rename/reseat visible on every open tab in the
+                    // same frame rather than a microtask later.
+                    await provider.updatePlayer(player);
+                    provider.refresh();
+                    if (ctx.mounted) Navigator.pop(ctx);
                   },
-                  child: Text(isEdit ? 'Save Changes' : 'Continue'),
+                  child: Text(tr('save')),
+
                 ),
                 // Remove from seat: frees the seat, keeps the
                 // registration, the records and the person. Confirm
                 // first — it changes who the seat points at, and the
                 // confirmation says exactly what survives.
-                if (isEdit && existing != null && existing.seated) ...[
+                if (player.seated) ...[
                   const SizedBox(height: 8),
                   TextButton(
                     onPressed: () async {
                       final ok = await confirmUnseat(ctx);
                       if (!ok) return;
                       try {
-                        await provider.unseatPlayer(existing);
+                        await provider.unseatPlayer(player);
                         if (ctx.mounted) Navigator.pop(ctx);
                       } catch (e) {
                         if (ctx.mounted) {
@@ -685,12 +515,10 @@ class PlayersTab extends StatelessWidget {
                   }
                   return;
                 }
-                if (personId == null &&
-                    PlayerIdentityService.suggest(name).isNotEmpty) {
-                  // Suggestions existed and the banker cancelled.
+                if (personId == null) {
+                  // ICR-03: cancel is a zero-write path.
                   return;
                 }
-                if (personId == null) return;
                 final alreadyRegistered =
                     SessionService.registeredForSession(session.id, personId) !=
                         null;
