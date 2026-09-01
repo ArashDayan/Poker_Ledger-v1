@@ -1046,6 +1046,9 @@ class AppLocalizations {
       'link_to_existing_player': 'Link to existing player',
       'unlinked_seat_hint':
           'This seat has no Player Identity link yet.',
+      'money_actions': 'Money Actions',
+      'table_actions': 'Table Actions',
+      'player_actions': 'Player Actions',
       'seat_no_money_note':
           'Seating only. No buy-in, chips, cash-out or discount is created.',
       'seat_blocked': 'This seat cannot be used.',
@@ -2099,6 +2102,9 @@ class AppLocalizations {
       'link_to_existing_player': 'پیوند به بازیکن موجود',
       'unlinked_seat_hint':
           'این صندلی هنوز به هویت بازیکن پیوند ندارد.',
+      'money_actions': 'عملیات پول',
+      'table_actions': 'عملیات میز',
+      'player_actions': 'عملیات بازیکن',
       'seat_no_money_note':
           'فقط نشاندن. هیچ خرید ورود، ژتون، تسویه یا تخفیفی ایجاد نمی‌شود.',
       'seat_blocked': 'این صندلی قابل استفاده نیست.',

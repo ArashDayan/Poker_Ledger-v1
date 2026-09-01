@@ -150,113 +150,143 @@ class TableViewTab extends StatelessWidget {
     showModalBottomSheet(
       context: context,
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text('${tr('seat')} ${player.seatNumber} · ${player.name}',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-            ),
-            // ICR-03: an occupied seat with no valid identity link must
-            // not be left silently nameless. Linking is explicit and
-            // never creates an identity.
-            if (unlinked)
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text('${tr('seat')} ${player.seatNumber} · ${player.name}',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ),
+              // ICR-03: an occupied seat with no valid identity link must
+              // not be left silently nameless. Linking is explicit and
+              // never creates an identity.
+              if (unlinked) ...[
+                Container(
+                  margin: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppColors.gold.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.gold),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.person_off_outlined,
+                          color: AppColors.gold, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          tr('unlinked_seat_hint'),
+                          style: const TextStyle(
+                              fontSize: 11.5, color: AppColors.gold),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.link, color: AppColors.gold),
+                  title: Text(tr('link_to_existing_player')),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    showLinkExistingPlayerSheet(context, player: player);
+                  },
+                ),
+                const Divider(height: 1),
+              ],
+              const _SheetSectionHeader(label: 'money_actions'),
               ListTile(
-                leading: const Icon(Icons.link, color: AppColors.gold),
-                title: Text(tr('link_to_existing_player')),
-                subtitle: Text(tr('unlinked_seat_hint'),
+                leading: const Icon(Icons.add_card, color: AppColors.accentGreen),
+                title: Text(tr('buy_in')),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _quickAction(context, provider, player, TransactionType.buyIn);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.refresh, color: AppColors.accentGreen),
+                title: Text(tr('rebuy')),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _quickAction(context, provider, player, TransactionType.rebuy);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.logout, color: AppColors.danger),
+                title: Text(tr('table_cash_out')),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _quickAction(context, provider, player, TransactionType.cashOut);
+                },
+              ),
+              // Mode 1 — rake taken from THIS player's pot. Recorded
+              // against them so it shows in their history, while the money
+              // still counts as house income in the session total.
+              ListTile(
+                leading: const Icon(Icons.percent, color: AppColors.gold),
+                title: Text(tr('quick_rake')),
+                subtitle: Text(tr('rake_from_this_player'),
                     style: const TextStyle(fontSize: 11)),
                 onTap: () {
                   Navigator.pop(ctx);
-                  showLinkExistingPlayerSheet(context, player: player);
+                  showQuickRakeSheet(context, player: player);
                 },
               ),
-            ListTile(
-              leading: const Icon(Icons.add_card, color: AppColors.accentGreen),
-              title: Text(tr('buy_in')),
-              onTap: () {
-                Navigator.pop(ctx);
-                _quickAction(context, provider, player, TransactionType.buyIn);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.refresh, color: AppColors.accentGreen),
-              title: Text(tr('rebuy')),
-              onTap: () {
-                Navigator.pop(ctx);
-                _quickAction(context, provider, player, TransactionType.rebuy);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.logout, color: AppColors.danger),
-              title: Text(tr('table_cash_out')),
-              onTap: () {
-                Navigator.pop(ctx);
-                _quickAction(context, provider, player, TransactionType.cashOut);
-              },
-            ),
-            // Mode 1 — rake taken from THIS player's pot. Recorded
-            // against them so it shows in their history, while the money
-            // still counts as house income in the session total.
-            ListTile(
-              leading: const Icon(Icons.percent, color: AppColors.gold),
-              title: Text(tr('quick_rake')),
-              subtitle: Text(tr('rake_from_this_player'),
-                  style: const TextStyle(fontSize: 11)),
-              onTap: () {
-                Navigator.pop(ctx);
-                showQuickRakeSheet(context, player: player);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.savings_outlined, color: AppColors.gold),
-              title: Text(tr('review_discount')),
-              subtitle: Text(tr('discount_from_seat_hint'),
-                  style: const TextStyle(fontSize: 11)),
-              onTap: () {
-                Navigator.pop(ctx);
-                openDiscountReview(
-                  context,
-                  sessionId: provider.current!.id,
-                  currency: provider.current!.currency,
-                  player: player,
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.style_outlined, color: AppColors.gold),
-              title: Text(tr('record_hand')),
-              onTap: () {
-                Navigator.pop(ctx);
-                _recordHand(context, provider);
-              },
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.edit_outlined, color: AppColors.textSecondary),
-              title: Text(tr('edit_player')),
-              onTap: () {
-                Navigator.pop(ctx);
-                PlayersTab.showAddPlayerSheet(context, existing: player);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.receipt_long_outlined, color: AppColors.textSecondary),
-              title: Text(tr('full_details')),
-              subtitle: Text(tr('every_action'),
-                  style: const TextStyle(fontSize: 11)),
-              onTap: () {
-                Navigator.pop(ctx);
-                // "Full Details" now opens the player's COMPLETE ledger —
-                // every buy-in, rebuy, cash-out, edit, signature and note
-                // in order — rather than just their running totals.
-                Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => PlayerLedgerScreen(player: player)));
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
+              ListTile(
+                leading: const Icon(Icons.savings_outlined, color: AppColors.gold),
+                title: Text(tr('review_discount')),
+                subtitle: Text(tr('discount_from_seat_hint'),
+                    style: const TextStyle(fontSize: 11)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  openDiscountReview(
+                    context,
+                    sessionId: provider.current!.id,
+                    currency: provider.current!.currency,
+                    player: player,
+                  );
+                },
+              ),
+              const Divider(height: 1),
+              const _SheetSectionHeader(label: 'table_actions'),
+              ListTile(
+                leading: const Icon(Icons.style_outlined, color: AppColors.gold),
+                title: Text(tr('record_hand')),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _recordHand(context, provider);
+                },
+              ),
+              const Divider(height: 1),
+              const _SheetSectionHeader(label: 'player_actions'),
+              ListTile(
+                leading: const Icon(Icons.edit_outlined, color: AppColors.textSecondary),
+                title: Text(tr('edit_player')),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  PlayersTab.showAddPlayerSheet(context, existing: player);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.receipt_long_outlined, color: AppColors.textSecondary),
+                title: Text(tr('full_details')),
+                subtitle: Text(tr('every_action'),
+                    style: const TextStyle(fontSize: 11)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  // "Full Details" now opens the player's COMPLETE ledger —
+                  // every buy-in, rebuy, cash-out, edit, signature and note
+                  // in order — rather than just their running totals.
+                  Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => PlayerLedgerScreen(player: player)));
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+        ),
         ),
       ),
     );
@@ -405,5 +435,36 @@ class TableViewTab extends StatelessWidget {
         initialTableId: tableId,
       ),
     ));
+  }
+}
+
+/// Small labelled divider used by the seat action sheet so an operator
+/// scanning a dense sheet can see at a glance whether the next tap is a
+/// money action, a table action or a player/identity action.
+class _SheetSectionHeader extends StatelessWidget {
+  const _SheetSectionHeader({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              tr(label).toUpperCase(),
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.8,
+                color: AppColors.gold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

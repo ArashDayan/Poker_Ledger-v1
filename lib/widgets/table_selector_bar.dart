@@ -44,6 +44,14 @@ class TableSelectorBar extends StatelessWidget {
         itemBuilder: (ctx, i) {
           final s = summaries[i];
           final selected = s.table.id == activeId;
+          final statusColour = s.table.status.isClosed
+              ? AppColors.danger
+              : (s.table.status.isPaused
+                  ? AppColors.warning
+                  : AppColors.accentGreen);
+          final statusLabel = s.table.status.isClosed
+              ? tr('closed')
+              : (s.table.status.isPaused ? tr('paused') : tr('active'));
           return Padding(
             padding: const EdgeInsetsDirectional.only(end: 8),
             child: Material(
@@ -78,23 +86,32 @@ class TableSelectorBar extends StatelessWidget {
                           margin: const EdgeInsetsDirectional.only(end: 5),
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: s.table.status.isClosed
-                                ? AppColors.danger
-                                : (s.table.status.isPaused
-                                    ? AppColors.warning
-                                    : AppColors.accentGreen),
+                            color: statusColour,
                           ),
                         ),
-                      Text(
-                        s.table.name,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: selected
-                              ? AppColors.accentGreen
-                              : AppColors.textPrimary,
+                        Text(
+                          s.table.name,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: selected
+                                ? AppColors.accentGreen
+                                : AppColors.textPrimary,
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 4),
+                        // Explicit label beside the dot. Colour alone is
+                        // ambiguous/colour-blind-hostile when an operator
+                        // scans a multi-table floor for "which table is
+                        // paused?".
+                        Text(
+                          statusLabel,
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            color: statusColour,
+                          ),
+                        ),
                       ]),
                       const SizedBox(height: 2),
                       Text(
