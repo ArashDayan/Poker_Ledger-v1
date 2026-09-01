@@ -13,6 +13,7 @@ import '../models/table_participation.dart';
 import '../models/transaction.dart';
 import 'hive_service.dart';
 import 'player_history_service.dart';
+import 'player_identity_service.dart';
 import 'player_registry_service.dart';
 
 /// Why a restored identity cannot be applied automatically.
@@ -450,6 +451,18 @@ class BackupService {
       );
     }
 
+    // ICR-01: identities restored from a pre-ICR-01 backup carry no
+    // player numbers / split names / specimens. Backfill them now so a
+    // restore lands in the same state as an upgraded install. The pass
+    // is idempotent and must never fail the restore itself.
+    if (imported > 0) {
+      try {
+        await PlayerIdentityService.migrateMasterFields();
+      } catch (_) {
+        // Startup backfill (HiveService.init) will retry on next launch.
+      }
+    }
+
     return _IdentityImport(
       imported: imported,
       skipped: skipped,
@@ -538,6 +551,16 @@ class BackupService {
           await HiveService.playerIdentities.put(incoming.id, incoming);
           applied++;
           break;
+      }
+    }
+    // ICR-01: resolved conflicts may have restored legacy-shaped
+    // identities; backfill numbers/names/specimens exactly like the
+    // plain import path. Never fails the caller's resolution flow.
+    if (applied > 0) {
+      try {
+        await PlayerIdentityService.migrateMasterFields();
+      } catch (_) {
+        // Startup backfill (HiveService.init) will retry on next launch.
       }
     }
     return applied;

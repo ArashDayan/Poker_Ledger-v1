@@ -13,6 +13,7 @@ import '../models/table_participation.dart';
 import '../models/transaction.dart';
 import 'chip_migration.dart';
 import 'chip_tracking_service.dart';
+import 'player_identity_service.dart';
 
 /// Thrown when local storage genuinely cannot be initialized even after
 /// attempting per-box recovery — surfaced to the UI as a clear, honest
@@ -155,6 +156,18 @@ class HiveService {
     } catch (e) {
       // Surfaced through the stored report (chip audit screen).
       debugPrint('ChipMigration.run() failed: $e');
+    }
+
+    // ICR-01 — Player Master backfill (player numbers, split names,
+    // person-level specimens). Idempotent, and deliberately after the
+    // chip migration so a failure there cannot starve it. Like that
+    // pass, a failure must never block launch: no field written by it
+    // is read by any accounting path yet, and the pass re-runs on the
+    // next start.
+    try {
+      await PlayerIdentityService.migrateMasterFields();
+    } catch (e) {
+      debugPrint('PlayerIdentityService.migrateMasterFields() failed: $e');
     }
   }
 

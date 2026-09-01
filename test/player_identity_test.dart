@@ -281,4 +281,26 @@ void main() {
       expect(HiveService.players.get(player.id)!.personId, isNull);
     });
   });
+
+  group('ICR-01 additive fields — JSON tolerance', () {
+    test('a pre-ICR-01 backup identity JSON loads with safe defaults', () {
+      final identity = PlayerIdentity.fromJson(const {
+        'id': 'legacy-9',
+        'displayName': 'From Old Backup',
+        'createdAt': '2024-05-01T12:00:00.000',
+        'updatedAt': '2024-05-01T12:00:00.000',
+      });
+      expect(identity.playerNumber, 0);
+      expect(identity.firstName, '');
+      expect(identity.lastName, '');
+      expect(identity.idNumber, isNull);
+      expect(identity.sampleSignatureBase64, isNull);
+      expect(identity.sampleSignature2Base64, isNull);
+      expect(identity.creditLimitMinor, 0);
+      // ...and re-export carries the ICR-01 keys without data loss.
+      expect(identity.toJson()['playerNumber'], 0);
+      expect(identity.toJson()['creditLimitMinor'], 0);
+    });
+  });
+
 }
