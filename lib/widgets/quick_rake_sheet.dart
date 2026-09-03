@@ -5,6 +5,7 @@ import '../core/house_rules.dart';
 import '../core/localization/app_localizations.dart';
 import 'chip_flow.dart';
 import '../core/rake_calculator.dart';
+import 'dual_verification_sheet.dart';
 import '../models/chip_movement.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/currency_formatter.dart';
@@ -220,11 +221,29 @@ Future<void> showQuickRakeSheet(
   );
   if (!context.mounted) return;
 
+  // J8: attributed player rake is a player chip operation and can be
+  // sensitive. Table-level rake has no player identity, so it is left
+  // to the table-level signature rules.
+  String? secondVerifierSignature;
+  if (player != null) {
+    secondVerifierSignature = await collectSecondVerifierIfRequired(
+      context,
+      amount: amount,
+      currency: session.currency,
+      operationLabel: tr('rake_collected'),
+    );
+    if (secondVerifierSignature == null) return;
+  }
+
   final tx = await provider.recordTransaction(
     playerId: player?.id,
     type: TransactionType.rakeCollection,
     amount: amount,
     hostSignatureBase64: '',
+    secondVerifierSignature:
+        (secondVerifierSignature ?? '').isEmpty
+            ? null
+            : secondVerifierSignature,
   );
   if (context.mounted) {
     // Player -> Bank when the rake came from a named player, otherwise

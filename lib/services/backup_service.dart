@@ -9,8 +9,10 @@ import '../models/hand.dart';
 import '../models/player.dart';
 import '../models/player_identity.dart';
 import '../models/session.dart';
+import '../models/table_operation_event.dart';
 import '../models/table_participation.dart';
 import '../models/transaction.dart';
+import 'dual_verification_service.dart';
 import 'hive_service.dart';
 import 'player_history_service.dart';
 import 'player_identity_service.dart';
@@ -77,13 +79,13 @@ class IdentityResolution {
 /// as stored" backup, meant to move data between devices or recover from
 /// an accidental data-clear.
 class BackupService {
-  /// Bumped to 8 (Phase 8) when completed hands (`hands`) were added
-  /// to the portable payload. As with every earlier bump: older
-  /// backups restore correctly — a missing block is simply skipped
-  /// and the current data for it is left alone; a newer backup
-  /// restored into an older app is likewise safe because the unknown
-  /// block is ignored.
-  static const formatVersion = 8;
+  /// Bumped to 9 (approved J3/backup-v9) when the immutable table
+  /// operation events (`transferEvents`) were added to the portable
+  /// payload. As with every earlier bump: older backups restore
+  /// correctly — a missing block is simply skipped and the current
+  /// data for it is left alone; a newer backup restored into an older
+  /// app is likewise safe because the unknown block is ignored.
+  static const formatVersion = 9;
 
   /// Kept so existing call sites that read the private-looking name
   /// still compile if any were copied; the public name is [formatVersion].
@@ -105,6 +107,8 @@ class BackupService {
     PlayerRegistryService.blacklistKey,
     PlayerRegistryService.tagKey,
     PlayerRegistryService.noteKey,
+    DualVerificationService.enabledKey,
+    DualVerificationService.thresholdKey,
   ];
 
   static const _portableSettingKeys = portableSettingKeys;
@@ -139,6 +143,10 @@ class BackupService {
       'participations': _exportParticipations(),
       // Completed hands (v8+): pot facts only. Merges by id.
       'hands': _exportHands(),
+      // Immutable table-operation / transfer audit events (v9+, J3).
+      // Stored as plain JSON maps, exactly as the append-only service
+      // keeps them; restored per-event id so re-import is idempotent.
+      'transferEvents': _exportTransferEvents(),
       // Session JSON already carries tables, house rules, quick-rake
       // slots and timer state; player JSON carries seat, table id and
       // the sample signature; transaction JSON carries the captured
@@ -321,6 +329,37 @@ class BackupService {
       // restore still applies.
     }
 
+    // Immutable table-operation events (v9+, J3). A v8 backup has no
+    // `transferEvents` block, so this is skipped and existing events
+    // are left exactly as they are (v8 backups remain restorable).
+    // Malformed rows are counted, not dropped silently.
+    var transferEventsImported = 0;
+    var transferEventsSkipped = 0;
+    try {
+      final rawEvents = data['transferEvents'] as List? ?? [];
+      for (final item in rawEvents) {
+        try {
+          if (item is! Map) {
+            transferEventsSkipped++;
+            continue;
+          }
+          final event = TableOperationEvent.fromJson(
+              Map<String, dynamic>.from(item));
+          if (event.id.isEmpty) {
+            transferEventsSkipped++;
+            continue;
+          }
+          await HiveService.transferEvents.put(event.id, event.toJson());
+          transferEventsImported++;
+        } catch (_) {
+          transferEventsSkipped++;
+        }
+      }
+    } catch (_) {
+      // Transfer-event box unavailable (degraded mode): the rest of
+      // the restore still applies.
+    }
+
     // Preferences (v2+ backups only). Restoring an older backup leaves
     // the current settings untouched rather than resetting them.
     var settingsImported = 0;
@@ -359,12 +398,28 @@ class BackupService {
       participationsImported: participationsImported,
       handsImported: handsImported,
       handsSkipped: handsSkipped,
+      transferEventsImported: transferEventsImported,
+      transferEventsSkipped: transferEventsSkipped,
     );
   }
 
   static List<Map<String, dynamic>> _exportHands() {
     try {
       return HiveService.hands.values.map((h) => h.toJson()).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  static List<Map<String, dynamic>> _exportTransferEvents() {
+    try {
+      final raw = HiveService.transferEvents.values
+          .whereType<Map>()
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
+      // Normalise through the model so exports always carry the
+      // current field set even when on-device maps predate a field.
+      return raw.map((m) => TableOperationEvent.fromJson(m).toJson()).toList();
     } catch (_) {
       return const [];
     }
@@ -608,8 +663,15 @@ class BackupImportResult {
   final int handsImported;
 
   /// Hands present in the payload that could not be parsed. The
-  /// rest of the restore is kept. Format stays v8.
+  /// rest of the restore is kept. Format stays v9.
   final int handsSkipped;
+
+  /// Immutable table-operation events merged (v9+ payloads; 0 on
+  /// older backups).
+  final int transferEventsImported;
+
+  /// Malformed transfer events in the payload that were not applied.
+  final int transferEventsSkipped;
 
   const BackupImportResult({
     this.formatVersion = 0,
@@ -629,6 +691,8 @@ class BackupImportResult {
     this.participationsImported = 0,
     this.handsImported = 0,
     this.handsSkipped = 0,
+    this.transferEventsImported = 0,
+    this.transferEventsSkipped = 0,
   });
 
   bool get requiresIdentityResolution => identityConflicts.isNotEmpty;

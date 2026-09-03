@@ -7,6 +7,7 @@ import '../models/player.dart';
 import '../models/transaction.dart';
 import 'chip_tracking_service.dart';
 import 'hive_service.dart';
+import 'player_operation_guard.dart';
 import 'session_service.dart';
 import 'table_service.dart';
 
@@ -233,6 +234,8 @@ class HandService {
 
       if (houseWinAmount > _eps) {
         final loser = _primaryLoser(built);
+        PlayerOperationGuard.requireRegistered(
+            loser, 'a hand house win');
         houseTx = await SessionService.recordTransaction(
           sessionId: sessionId,
           playerId: loser?.seatPlayerId,

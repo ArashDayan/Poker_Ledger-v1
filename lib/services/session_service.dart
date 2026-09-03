@@ -3,6 +3,7 @@ import '../core/house_rules.dart';
 import '../models/player.dart';
 import '../models/session.dart';
 import '../models/transaction.dart';
+import 'dual_verification_service.dart';
 import 'hive_service.dart';
 import 'participation_service.dart';
 
@@ -520,6 +521,9 @@ class SessionService {
     String? note,
     String? voiceNotePath,
     String? tableId,
+    String? operatorName,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     assertSessionActive(sessionId);
     if (amount < 0) {
@@ -559,11 +563,40 @@ class SessionService {
         'A host signature is required for ${type.label} transactions.',
       );
     }
+    // J8: configurable second-authorisation gate. This is not a numeric
+    // constant — the House Rules/settings can enable it only after a
+    // threshold has been configured; without it, ordinary transactions
+    // are unchanged. The second signature is required BEFORE the leg is
+    // written, and the check is recorded in the immutable audit event
+    // stream below.
+    final dual = DualVerificationService.requiresSecond(amount);
+    if (dual &&
+        (secondVerifierSignature == null ||
+            secondVerifierSignature.isEmpty)) {
+      throw StateError(
+        'A second authorisation is required for this ${type.label} '
+        '(sensitive operation).',
+      );
+    }
     // Phase 6: stamp player money legs onto their table participation
     // (opens on the first leg). Tracking never breaks money — any
     // failure here leaves the leg unstamped, which settles as before.
     ParticipationService.stampTransaction(tx);
     await HiveService.transactions.put(tx.id, tx);
+    if (dual) {
+      await DualVerificationService.recordVerification(
+        operation: '${type.name}_transaction',
+        playerId: playerId,
+        personId: player?.personId,
+        sourceTableId: resolvedTableId,
+        amount: amount,
+        operatorName: operatorName ?? '',
+        secondVerifierName: secondVerifierName ?? '',
+        hostSignatureBase64: hostSignatureBase64 ?? '',
+        secondVerifierSignature: secondVerifierSignature ?? '',
+        relatedTransactionId: tx.id,
+      );
+    }
     return tx;
   }
 
@@ -579,6 +612,9 @@ class SessionService {
     required double amount,
     String? note,
     String? hostSignatureBase64,
+    String? operatorName,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     final tx = HiveService.transactions.get(transactionId);
     if (tx == null) {
@@ -601,6 +637,17 @@ class SessionService {
         'A host signature is required to confirm this edit.',
       );
     }
+    // J8: an edit to a sensitive/high-value leg is itself a sensitive
+    // operation and must carry the second authorisation before the
+    // record is changed.
+    final dual = DualVerificationService.requiresSecond(amount);
+    if (dual &&
+        (secondVerifierSignature == null ||
+            secondVerifierSignature.isEmpty)) {
+      throw StateError(
+        'A second authorisation is required to edit this ${tx.type.label}.',
+      );
+    }
     final player = tx.playerId == null ? null : HiveService.players.get(tx.playerId);
     tx.amount = amount;
     tx.note = note;
@@ -613,6 +660,20 @@ class SessionService {
       tx.signedWhileAbsent = true;
     }
     await tx.save();
+    if (dual) {
+      await DualVerificationService.recordVerification(
+        operation: '${tx.type.name}_edit',
+        playerId: tx.playerId,
+        personId: player?.personId,
+        sourceTableId: tx.tableId,
+        amount: amount,
+        operatorName: operatorName ?? '',
+        secondVerifierName: secondVerifierName ?? '',
+        hostSignatureBase64: hostSignatureBase64 ?? '',
+        secondVerifierSignature: secondVerifierSignature ?? '',
+        relatedTransactionId: tx.id,
+      );
+    }
     return tx;
   }
 

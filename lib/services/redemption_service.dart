@@ -7,10 +7,12 @@ import '../models/player.dart';
 import '../models/table_participation.dart';
 import '../models/transaction.dart';
 import 'chip_tracking_service.dart';
+import 'dual_verification_service.dart';
 import 'financial_capture.dart';
 import 'financial_ledger_service.dart';
 import 'hive_service.dart';
 import 'participation_service.dart';
+import 'player_operation_guard.dart';
 import 'session_service.dart';
 import 'table_service.dart';
 
@@ -109,6 +111,9 @@ class RedemptionService {
     required double amount,
     required String hostSignatureBase64,
     String? note,
+    String? operatorName,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     if (amount < 0) {
       throw RedemptionException('A table cash-out count cannot be negative.');
@@ -117,6 +122,24 @@ class RedemptionService {
       throw RedemptionException(
           'A table cash-out requires the host signature.');
     }
+    // J8: the configurable second-authorisation gate runs before any
+    // write so a sensitive table cash-out is not even partially
+    // recorded without the second signature.
+    if (DualVerificationService.requiresSecond(amount) &&
+        (secondVerifierSignature == null ||
+            secondVerifierSignature.isEmpty)) {
+      throw RedemptionException(
+          'A second authorisation is required for this table cash-out.');
+    }
+
+    // Identity gate (J5) before any write: a table cash-out releases the
+    // person's chips and closes their participation, so the seat must
+    // resolve to a registered Player Master identity.
+    Player? seat;
+    try {
+      seat = HiveService.players.get(seatPlayerId);
+    } catch (_) {}
+    PlayerOperationGuard.requireRegistered(seat, 'a table cash-out');
 
     // 1. The money leg. recordTransaction stamps it to the open
     // participation (if any) — a legacy seat without a tracked
@@ -127,16 +150,14 @@ class RedemptionService {
       type: TransactionType.tableCashOut,
       amount: amount,
       hostSignatureBase64: hostSignatureBase64,
+      operatorName: operatorName,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
       note: note ?? 'Table cash-out (counted)',
     );
 
     // 2. Close the participation, if one is open for this seat. A
-    // legacy seat stores tableId null = the first table.
-    Player? seat;
-    try {
-      seat = HiveService.players.get(seatPlayerId);
-    } catch (_) {}
-    // A legacy seat stores tableId null = the session's first table.
+    // legacy seat stores tableId null = the session's first table.
     String? tableId;
     final seatTableId = seat?.tableId;
     if (seatTableId != null && seatTableId.isNotEmpty) {
@@ -187,12 +208,29 @@ class RedemptionService {
     Map<String, int>? composition,
     String? sessionId,
     String? hostSignatureBase64,
+    String? operatorName,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     if (personId.isEmpty) {
       throw RedemptionException('A redemption needs a person.');
     }
     if (amount < 0) {
       throw RedemptionException('A redemption amount cannot be negative.');
+    }
+    // J8: configurable second-authorisation gate. A cage redemption of a
+    // sensitive amount requires two authorisations before the bank
+    // movement / financial leg is written.
+    // J5: a cage redemption is a person-level financial-chip operation;
+    // the person must be a registered Player Master identity.
+    PlayerOperationGuard.requireRegisteredPerson(personId, 'a redemption');
+
+    final dual = DualVerificationService.requiresSecond(amount);
+    if (dual &&
+        (secondVerifierSignature == null ||
+            secondVerifierSignature.isEmpty)) {
+      throw RedemptionException(
+          'A second authorisation is required for this redemption.');
     }
 
     // MARKER GATE (E2): no redemption while a marker is outstanding,
@@ -256,6 +294,19 @@ class RedemptionService {
         sessionId: sessionId,
         signatureBase64: hostSignatureBase64,
         note: 'Marker settled in redemption',
+      );
+    }
+
+    if (dual) {
+      await DualVerificationService.recordVerification(
+        operation: 'cage_redemption',
+        personId: personId,
+        amount: amount,
+        operatorName: operatorName ?? '',
+        secondVerifierName: secondVerifierName ?? '',
+        hostSignatureBase64: hostSignatureBase64 ?? '',
+        secondVerifierSignature: secondVerifierSignature ?? '',
+        relatedTransactionId: financial?.id ?? markerRepaid?.id,
       );
     }
 

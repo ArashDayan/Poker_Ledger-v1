@@ -150,7 +150,7 @@ class PlayerCard extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 5),
                   icon: const Icon(Icons.swap_horiz,
                       size: 18, color: AppColors.textSecondary),
-                  tooltip: tr('move_to_table'),
+                  tooltip: tr('player_table_operations'),
                 ),
               IconButton(
                 onPressed: onEdit,

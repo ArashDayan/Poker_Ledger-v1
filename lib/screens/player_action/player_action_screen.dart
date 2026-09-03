@@ -19,6 +19,7 @@ import '../../services/chip_tracking_service.dart';
 import '../../widgets/cashout_flow.dart';
 import '../../widgets/chip_distribution_sheet.dart';
 import '../../widgets/discount_review_entry.dart';
+import '../../widgets/dual_verification_sheet.dart';
 import '../../widgets/player_chip_holdings.dart';
 import '../../widgets/signature_compare_sheet.dart';
 import '../../widgets/signature_pad.dart';
@@ -171,6 +172,16 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
     );
     if (!funding.shouldCommit || !mounted) return;
 
+    // J8: collect the second authorisation for sensitive amounts before
+    // any write. Null means the second signer cancelled -> abort.
+    final secondVerifierSignature = await collectSecondVerifierIfRequired(
+      context,
+      amount: amount,
+      currency: session.currency,
+      operationLabel: _type.localizedLabel,
+    );
+    if (secondVerifierSignature == null) return;
+
     // OPTIONAL physical chip step. Skip / dismiss records no chips.
     Map<String, int>? distribution;
     if (_chipTrackingApplies && context.read<ChipBankProvider>().chips.isNotEmpty) {
@@ -187,6 +198,10 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
         amount: amount,
         hostSignatureBase64: _signature,
         note: _note.text.trim().isEmpty ? null : _note.text.trim(),
+        secondVerifierName: null,
+        secondVerifierSignature: secondVerifierSignature.isEmpty
+            ? null
+            : secondVerifierSignature,
       );
 
       // Physical chips are recorded SEPARATELY, after the money is safely

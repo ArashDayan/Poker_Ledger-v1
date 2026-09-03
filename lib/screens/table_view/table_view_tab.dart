@@ -20,6 +20,7 @@ import '../../widgets/last_hand_summary.dart';
 import '../../widgets/poker_table_view.dart';
 import '../../widgets/quick_rake_sheet.dart';
 import '../../widgets/discount_review_entry.dart';
+import '../../widgets/dual_verification_sheet.dart';
 import '../../widgets/select_player_sheet.dart';
 import '../../widgets/record_hand_sheet.dart';
 import '../../widgets/table_selector_bar.dart';
@@ -99,6 +100,14 @@ class TableViewTab extends StatelessWidget {
       currency: session.currency,
     );
     if (!funding.shouldCommit || !context.mounted) return;
+    // J8: sensitive player money ops need a second authorisation.
+    final secondVerifierSignature = await collectSecondVerifierIfRequired(
+      context,
+      amount: result.amount,
+      currency: session.currency,
+      operationLabel: type.localizedLabel,
+    );
+    if (secondVerifierSignature == null) return;
     // Optional chip composition. Skip / dismiss does not abort.
     final dist = ChipFlow.appliesTo(type)
         ? await ChipFlow.ask(context,
@@ -111,6 +120,9 @@ class TableViewTab extends StatelessWidget {
         type: type,
         amount: result.amount,
         hostSignatureBase64: result.signature ?? '',
+        secondVerifierSignature: secondVerifierSignature.isEmpty
+            ? null
+            : secondVerifierSignature,
       );
       if (context.mounted) {
         // Phase 2a: person-scoped chip holding.

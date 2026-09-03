@@ -9,10 +9,13 @@ import '../models/hand.dart';
 import '../services/box_watch_hub.dart';
 import '../services/hand_service.dart';
 import '../services/hive_service.dart';
+import '../services/dual_verification_service.dart';
 import '../services/participation_service.dart';
 import '../services/player_identity_service.dart';
+import '../services/player_operation_guard.dart';
 import '../services/session_service.dart';
 import '../services/chip_tracking_service.dart';
+import '../services/table_movement_service.dart';
 import '../services/table_service.dart';
 import '../services/tournament_service.dart';
 
@@ -226,11 +229,23 @@ class SessionProvider extends ChangeNotifier {
   List<TableSummary> get tableSummaries =>
       _current == null ? const [] : TableSummary.forSession(_current!);
 
-  Future<void> addTable({String? name, int seatCount = 9}) async {
+  Future<void> addTable({
+    String? name,
+    int seatCount = 9,
+    String? game,
+    String? format,
+    double? smallStake,
+    double? bigStake,
+  }) async {
     if (_current == null) return;
     await TableService.materialise(_current!);
     final id = await TableService.addTable(_current!,
-        name: name, seatCount: seatCount);
+        name: name,
+        seatCount: seatCount,
+        game: game,
+        format: format,
+        smallStake: smallStake,
+        bigStake: bigStake);
     _activeTableId = id;
     notifyListeners();
   }
@@ -369,16 +384,94 @@ class SessionProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Moves a player between tables. Seating only — their transactions and
-  /// the session balance are untouched.
-  /// Moves a player to another table, carrying [amount] of money with
-  /// them. See [TableService.movePlayer] for the accounting model.
+  /// Moves a player between tables. This is the locked operational
+  /// transfer path. [amount] + [dryMove] are explicit, a funded transfer
+  /// requires [hostSignatureBase64], and the audit event is appended by
+  /// [TableService.movePlayer].
   Future<void> movePlayerToTable(Player player, String tableId,
-      {int? seat, double? amount}) async {
+      {int? seat,
+      double? amount,
+      bool dryMove = false,
+      String? reason,
+      String? operatorName,
+      String? hostSignatureBase64,
+      String? secondVerifierName,
+      String? secondVerifierSignature}) async {
     if (_current == null) return;
     await TableService.materialise(_current!);
     await TableService.movePlayer(_current!, player, tableId,
-        seat: seat, amount: amount);
+        seat: seat,
+        amount: amount,
+        dryMove: dryMove,
+        reason: reason,
+        operatorName: operatorName,
+        hostSignatureBase64: hostSignatureBase64,
+        secondVerifierName: secondVerifierName,
+        secondVerifierSignature: secondVerifierSignature);
+    notifyListeners();
+  }
+
+  /// Non-financial same-table seat change.
+  Future<void> changeSeat(Player player, int destinationSeat,
+      {String? operatorName, String? reason}) async {
+    if (_current == null) return;
+    await TableMovementService.changeSeat(_current!, player, destinationSeat,
+        operatorName: operatorName, reason: reason);
+    notifyListeners();
+  }
+
+  Future<void> startTemporaryAbsence(Player player,
+      {String? operatorName, String? reason}) async {
+    if (_current == null) return;
+    await TableMovementService.startTemporaryAbsence(_current!, player,
+        operatorName: operatorName, reason: reason);
+    notifyListeners();
+  }
+
+  Future<void> endTemporaryAbsence(Player player,
+      {String? operatorName, String? reason}) async {
+    if (_current == null) return;
+    await TableMovementService.endTemporaryAbsence(_current!, player,
+        operatorName: operatorName, reason: reason);
+    notifyListeners();
+  }
+
+  /// Unseat/leave WITHOUT cash-out, writing the held/leave audit event
+  /// (locked J6). Distinct from the legacy [unseatPlayer] which only
+  /// releases the seat pointer.
+  Future<void> unseatWithAudit(Player player,
+      {bool heldByFloor = true,
+      double? heldAmount,
+      String? operatorName,
+      String? reason}) async {
+    if (_current == null) return;
+    await TableMovementService.unseat(
+      session: _current!,
+      player: player,
+      heldByFloor: heldByFloor,
+      heldAmount: heldAmount,
+      operatorName: operatorName,
+      reason: reason,
+    );
+    notifyListeners();
+  }
+
+  Future<void> setTableMetadata(String tableId,
+      {String? game, String? format, double? smallStake, double? bigStake}) async {
+    if (_current == null) return;
+    await TableService.materialise(_current!);
+    await TableService.setTableMetadata(_current!, tableId,
+        game: game,
+        format: format,
+        smallStake: smallStake,
+        bigStake: bigStake);
+    notifyListeners();
+  }
+
+  Future<void> configureDualVerification(
+      {bool? enabled, double? threshold}) async {
+    await DualVerificationService.configure(
+        enabled: enabled, threshold: threshold);
     notifyListeners();
   }
 
@@ -1069,8 +1162,18 @@ class SessionProvider extends ChangeNotifier {
     String? note,
     String? voiceNotePath,
     String? tableId,
+    String? operatorName,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     if (_current == null) throw StateError('No active session.');
+    // J5 Hard Gate at the provider/API boundary: every player-related
+    // financial operation from the app UI must be backed by a registered
+    // Player Master identity.
+    if (playerId != null) {
+      PlayerOperationGuard.requireRegistered(
+          playerById(playerId), type.label);
+    }
     final tx = await SessionService.recordTransaction(
       sessionId: _current!.id,
       playerId: playerId,
@@ -1079,6 +1182,9 @@ class SessionProvider extends ChangeNotifier {
       hostSignatureBase64: hostSignatureBase64,
       note: note,
       voiceNotePath: voiceNotePath,
+      operatorName: operatorName,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
       // Table-level rows (rake, cash drop) are attributed to the table
       // the banker is currently working at. Player rows resolve their own
       // table inside the service, from the player record.

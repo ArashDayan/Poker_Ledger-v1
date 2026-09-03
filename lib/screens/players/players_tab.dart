@@ -25,6 +25,7 @@ import '../../widgets/signature_pad.dart';
 import '../../widgets/table_selector_bar.dart';
 import '../../widgets/chip_flow.dart';
 import '../../widgets/discount_review_entry.dart';
+import '../../widgets/dual_verification_sheet.dart';
 import '../../widgets/quick_transaction_sheet.dart';
 import '../player_action/player_action_screen.dart';
 import '../player_action/player_ledger_screen.dart';
@@ -312,7 +313,8 @@ class PlayersTab extends StatelessWidget {
                       final ok = await confirmUnseat(ctx);
                       if (!ok) return;
                       try {
-                        await provider.unseatPlayer(player);
+                        await provider.unseatWithAudit(player,
+                            heldByFloor: true);
                         if (ctx.mounted) Navigator.pop(ctx);
                       } catch (e) {
                         if (ctx.mounted) {
@@ -399,6 +401,15 @@ class PlayersTab extends StatelessWidget {
     );
     if (!funding.shouldCommit || !context.mounted) return;
 
+    // J8: sensitive player money ops need a second authorisation.
+    final secondVerifierSignature = await collectSecondVerifierIfRequired(
+      context,
+      amount: result.amount,
+      currency: session.currency,
+      operationLabel: type.localizedLabel,
+    );
+    if (secondVerifierSignature == null) return;
+
     final dist = ChipFlow.appliesTo(type)
         ? await ChipFlow.ask(
             context,
@@ -413,6 +424,9 @@ class PlayersTab extends StatelessWidget {
         type: type,
         amount: result.amount,
         hostSignatureBase64: result.signature ?? '',
+        secondVerifierSignature: secondVerifierSignature.isEmpty
+            ? null
+            : secondVerifierSignature,
       );
       if (context.mounted) {
         await ChipFlow.apply(context,
@@ -1051,9 +1065,7 @@ class PlayersTab extends StatelessWidget {
                 formatter: fmt,
                 onToggleSettled: () => provider.toggleSettled(p),
                 onEdit: () => showAddPlayerSheet(context, existing: p),
-                onMoveTable: provider.isMultiTable
-                    ? () => showMovePlayerSheet(context, p)
-                    : null,
+                onMoveTable: () => showPlayerTableOperationsSheet(context, p),
                 onTap: () => Navigator.of(context)
                     .push(MaterialPageRoute(builder: (_) => PlayerActionScreen(player: p))),
                 onLedger: () => Navigator.of(context).push(MaterialPageRoute(

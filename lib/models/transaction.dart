@@ -108,11 +108,16 @@ class LedgerTransaction extends HiveObject {
   /// it carries a signature like the other player money legs. So do
   /// re-entries (a counted amount of carried chips is committed) and
   /// house wins (a counted amount the house banked from the player).
+  /// Transfer legs are included deliberately (locked J2): a table
+  /// transfer is a controlled chip movement, not an edit that may pass
+  /// without confirmation. Both legs carry the same host confirmation.
   bool get requiresSignature =>
       type == TransactionType.buyIn ||
       type == TransactionType.rebuy ||
       type == TransactionType.cashOut ||
       type == TransactionType.tableCashOut ||
+      type == TransactionType.transferOut ||
+      type == TransactionType.transferIn ||
       type == TransactionType.reentry ||
       type == TransactionType.houseWin;
 

@@ -38,6 +38,7 @@ Future<void> _open() async {
   await Hive.openBox(HiveService.settingsBox);
   await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
   await Hive.openBox<TableParticipation>(HiveService.participationsBox);
+  await Hive.openBox(HiveService.transferEventsBox);
 }
 
 /// No participations box: the degraded mode must not break money.
@@ -50,6 +51,7 @@ Future<void> _openNoPartBox() async {
   await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
   await Hive.openBox(HiveService.settingsBox);
   await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
+  await Hive.openBox(HiveService.transferEventsBox);
 }
 
 Future<void> _close() async {
@@ -260,7 +262,8 @@ void main() {
     );
     expect(ParticipationService.forSession(s.id), hasLength(1));
 
-    await TableService.movePlayer(s, seat, tables[1].id, amount: 500);
+    await TableService.movePlayer(s, seat, tables[1].id,
+        amount: 500, hostSignatureBase64: 'sig');
 
     final parts = ParticipationService.forSession(s.id);
     expect(parts, hasLength(2));
@@ -298,7 +301,8 @@ void main() {
     final openId =
         ParticipationService.forSession(s.id).single.id;
 
-    await TableService.movePlayer(s, seat, tables[1].id); // no amount
+    await TableService.movePlayer(s, seat, tables[1].id,
+        amount: 0, dryMove: true, hostSignatureBase64: 'sig'); // explicit dry
 
     final parts = ParticipationService.forSession(s.id);
     expect(parts, hasLength(1)); // the same participation...

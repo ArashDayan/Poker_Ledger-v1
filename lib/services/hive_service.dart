@@ -67,16 +67,21 @@ class HiveService {
   /// wipe would erase pot history. typeIds 20–22 live here.
   static const handsBox = 'hands_box';
 
+  /// Append-only table movement/transfer/absence/seat audit (J3).
+  /// Stored as JSON maps so NO new Hive typeId is consumed.
+  static const transferEventsBox = 'transfer_events_box';
+
   /// Boxes that must never be deleted to "recover". A corrupted identity,
-  /// financial, count-sheet, participation or hand-history file is
-  /// surfaced to the banker; the bytes stay on disk so a backup can
-  /// still be taken off the device.
+  /// financial, count-sheet, participation, hand-history or transfer
+  /// audit file is surfaced to the banker; the bytes stay on disk so a
+  /// backup can still be taken off the device.
   static const Set<String> failLoudBoxes = {
     playerIdentitiesBox,
     financialEventsBox,
     bankCountsBox,
     participationsBox,
     handsBox,
+    transferEventsBox,
   };
 
   static Future<void> init() async {
@@ -134,6 +139,10 @@ class HiveService {
     await openBoxFailLoud<BankCount>(bankCountsBox, typed: true);
     await openBoxFailLoud<TableParticipation>(participationsBox, typed: true);
     await openBoxFailLoud<Hand>(handsBox, typed: true);
+    // Transfer/operation audit is recoverable from backup but must not be
+    // wiped silently: it is the record that links money legs to the
+    // operational movement.
+    await openBoxFailLoud<dynamic>(transferEventsBox, typed: false);
 
     // The Chip Bank screen must show what is LEFT in the case, not the
     // starting count. This teaches ChipBankService to fold the movement
@@ -236,4 +245,5 @@ class HiveService {
   static Box<TableParticipation> get participations =>
       Hive.box<TableParticipation>(participationsBox);
   static Box<Hand> get hands => Hive.box<Hand>(handsBox);
+  static Box<dynamic> get transferEvents => Hive.box<dynamic>(transferEventsBox);
 }

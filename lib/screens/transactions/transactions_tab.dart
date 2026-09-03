@@ -13,6 +13,7 @@ import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/table_service.dart';
 import '../../widgets/chip_flow.dart';
+import '../../widgets/dual_verification_sheet.dart';
 import '../../widgets/quick_rake_sheet.dart';
 import '../../widgets/quick_transaction_sheet.dart';
 import '../../widgets/record_hand_sheet.dart';
@@ -126,6 +127,15 @@ class TransactionsTab extends StatelessWidget {
     );
     if (!funding.shouldCommit || !context.mounted) return;
 
+    // J8: sensitive player money ops need a second authorisation.
+    final secondVerifierSignature = await collectSecondVerifierIfRequired(
+      context,
+      amount: result.amount,
+      currency: session.currency,
+      operationLabel: type.localizedLabel,
+    );
+    if (secondVerifierSignature == null) return;
+
     final dist = ChipFlow.appliesTo(type)
         ? await ChipFlow.ask(context,
             amount: result.amount, currency: session.currency)
@@ -137,6 +147,9 @@ class TransactionsTab extends StatelessWidget {
         type: type,
         amount: result.amount,
         hostSignatureBase64: result.signature ?? '',
+        secondVerifierSignature: secondVerifierSignature.isEmpty
+            ? null
+            : secondVerifierSignature,
       );
       if (context.mounted) {
         // Phase 2a: person-scoped chip holding.

@@ -10,7 +10,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:poker_ledger/core/utils/currency_formatter.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
+import 'package:poker_ledger/models/table_participation.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/hive_service.dart';
 import 'package:poker_ledger/services/player_history_service.dart';
@@ -30,6 +32,9 @@ Future<void> _openTestBoxes() async {
   await Hive.openBox<Player>(HiveService.playersBox);
   await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
   await Hive.openBox(HiveService.settingsBox);
+  await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
+  await Hive.openBox<TableParticipation>(HiveService.participationsBox);
+  await Hive.openBox(HiveService.transferEventsBox);
 }
 
 Future<void> _closeTestBoxes() async {
@@ -68,6 +73,16 @@ Player _player(String sessionId, String name,
     tableId: tableId,
   );
   HiveService.players.put(p.id, p);
+  return p;
+}
+
+/// Attaches a valid Player Master identity (J5 fixture).
+Player _reg(Player p) {
+  final personId = _uuid.v4();
+  HiveService.playerIdentities.put(
+      personId, PlayerIdentity(id: personId, displayName: p.name));
+  p.personId = personId;
+  p.save();
   return p;
 }
 
@@ -238,11 +253,12 @@ void main() {
       final s = _session();
       await TableService.addTable(s, name: 'Table 2');
       final t1 = TableService.tablesFor(s).first.id;
-      final p = _player(s.id, 'Mover', seat: 2, tableId: t1);
+      final p = _reg(_player(s.id, 'Mover', seat: 2, tableId: t1));
       await _tx(s.id, p.id, TransactionType.buyIn, 400);
       await _tx(s.id, p.id, TransactionType.rebuy, 200);
 
-      await TableService.movePlayer(s, p, 'table-2');
+      await TableService.movePlayer(s, p, 'table-2',
+          amount: 1, hostSignatureBase64: 'sig');
 
       expect(p.tableId, 'table-2');
       expect(SessionService.playerTotalIn(s.id, p.id), 600,

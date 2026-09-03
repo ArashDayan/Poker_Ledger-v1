@@ -6,6 +6,8 @@ import '../models/transaction.dart';
 import 'chip_tracking_service.dart';
 import 'financial_capture.dart';
 import 'financial_ledger_service.dart';
+import 'hive_service.dart';
+import 'player_operation_guard.dart';
 import 'session_service.dart';
 
 /// One explicit banker action: convert Deposit into chips.
@@ -103,6 +105,11 @@ class DepositToChips {
     if (personId.isEmpty) {
       throw FinancialLedgerException('personId is required.');
     }
+    PlayerOperationGuard.requireRegisteredPerson(personId, 'converting deposit to chips');
+    PlayerOperationGuard.requireRegistered(
+      HiveService.players.get(playerId),
+      'converting deposit to chips',
+    );
     if (amount <= 0) {
       throw FinancialLedgerException('Amount must be positive.');
     }
@@ -167,6 +174,8 @@ class DepositToChips {
     if (personId.isEmpty) {
       throw FinancialLedgerException('personId is required.');
     }
+    PlayerOperationGuard.requireRegisteredPerson(
+        personId, 'issuing chips from a deposit');
     if (amount <= 0) {
       throw FinancialLedgerException('Amount must be positive.');
     }
@@ -259,6 +268,8 @@ class DepositToChips {
     if (personId.isEmpty) {
       throw FinancialLedgerException('personId is required.');
     }
+    PlayerOperationGuard.requireRegisteredPerson(
+        personId, 'issuing a marker');
     if (amount <= 0) {
       throw FinancialLedgerException('Amount must be positive.');
     }

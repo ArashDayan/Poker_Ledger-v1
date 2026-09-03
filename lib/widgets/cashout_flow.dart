@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/localization/app_localizations.dart';
+import '../core/utils/currency_formatter.dart';
 import '../models/enums.dart';
 import '../models/financial_event.dart';
 import '../models/player.dart';
 import '../providers/session_provider.dart';
+import '../services/dual_verification_service.dart';
 import '../services/financial_capture.dart';
 import '../services/financial_ledger_service.dart';
 import '../services/rebate_service.dart';
 import '../services/redemption_service.dart';
+import 'dual_verification_sheet.dart';
 import 'rebate_grant_sheet.dart';
 import 'rebate_realize_sheet.dart';
 
@@ -61,13 +65,34 @@ Future<bool> performTableCashOut(
   required String sessionId,
   required double amount,
   required String hostSignatureBase64,
+  String? operatorName,
+  String? secondVerifierName,
+  String? secondVerifierSignature,
 }) async {
   try {
+    // J8: a sensitive table cash-out needs the second authorisation
+    // before the service writes anything.
+    if (DualVerificationService.requiresSecond(amount) &&
+        (secondVerifierSignature == null ||
+            secondVerifierSignature.isEmpty)) {
+      final second = await showDualVerificationSheet(
+        context,
+        amount: amount,
+        formatter: CurrencyFormatter(_sessionCurrency(context)),
+        operationLabel: tr('cash_out'),
+      );
+      if (second == null) return false;
+      secondVerifierSignature = second;
+    }
+
     final tx = await RedemptionService.tableCashOut(
       sessionId: sessionId,
       seatPlayerId: player.id,
       amount: amount,
       hostSignatureBase64: hostSignatureBase64,
+      operatorName: operatorName,
+      secondVerifierName: secondVerifierName ?? operatorName,
+      secondVerifierSignature: secondVerifierSignature,
     );
 
     // A $0 table cash-out is a bust: the open Discount cycle closes
@@ -135,6 +160,9 @@ Future<bool> performCageRedemption(
   required ChipCashOutFunding funding,
   required String hostSignatureBase64,
   Map<String, int>? composition,
+  String? operatorName,
+  String? secondVerifierName,
+  String? secondVerifierSignature,
 }) async {
   try {
     // The marker gate is a physical/business rule (E2): it applies to
@@ -150,6 +178,21 @@ Future<bool> performCageRedemption(
       return false;
     }
 
+    // J8: a sensitive cage redemption needs the second authorisation
+    // before the bank movement / financial leg is written.
+    if (DualVerificationService.requiresSecond(amount) &&
+        (secondVerifierSignature == null ||
+            secondVerifierSignature.isEmpty)) {
+      final second = await showDualVerificationSheet(
+        context,
+        amount: amount,
+        formatter: CurrencyFormatter(currency),
+        operationLabel: tr('cash_out'),
+      );
+      if (second == null) return false;
+      secondVerifierSignature = second;
+    }
+
     final result = await RedemptionService.redeem(
       personId: personId,
       currency: currency,
@@ -158,6 +201,9 @@ Future<bool> performCageRedemption(
       composition: composition,
       sessionId: sessionId,
       hostSignatureBase64: hostSignatureBase64,
+      operatorName: operatorName,
+      secondVerifierName: secondVerifierName ?? operatorName,
+      secondVerifierSignature: secondVerifierSignature,
     );
 
     // The Discount cycle closes at the redemption — the existing

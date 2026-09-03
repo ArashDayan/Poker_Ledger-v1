@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/enums.dart';
 import '../../providers/settings_provider.dart';
+import '../../services/dual_verification_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/backup_service.dart';
 import '../../widgets/identity_link_sheet.dart';
@@ -22,6 +23,23 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _working = false;
+  final _dualThreshold = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _syncDualVerification();
+  }
+
+  @override
+  void dispose() {
+    _dualThreshold.dispose();
+    super.dispose();
+  }
+
+  void _syncDualVerification() {
+    _dualThreshold.text = DualVerificationService.threshold?.toStringAsFixed(0) ?? '';
+  }
 
   Future<void> _setPinDialog(SettingsProvider settings) async {
     final ctrl = TextEditingController();
@@ -304,6 +322,72 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: (v) => settings.setPrivacyMode(v),
           ),
           const SizedBox(height: 8),
+          const Divider(),
+          const SizedBox(height: 8),
+          Text(tr('dual_verification_title'),
+              style:
+                  TextStyle(color: AppColors.textSecondary)),
+          const SizedBox(height: 4),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: DualVerificationService.isEnabled,
+            activeThumbColor: AppColors.gold,
+            title: Text(tr('dual_verification_enabled')),
+            subtitle: Text(tr('dual_verification_hint')),
+            onChanged: (v) async {
+              await DualVerificationService.configure(enabled: v);
+              if (mounted) setState(() {});
+            },
+          ),
+          if (DualVerificationService.isEnabled) ...[
+            Text(tr('dual_verification_threshold'),
+                style:
+                    TextStyle(color: AppColors.textSecondary)),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _dualThreshold,
+                    keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true),
+                    decoration: InputDecoration(
+                      hintText: '0',
+                      helperText: tr('dual_verification_threshold_hint'),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () async {
+                    final v = double.tryParse(
+                        _dualThreshold.text.trim().replaceAll(',', ''));
+                    if (v == null || v < 0) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                              content:
+                                  Text(tr('enter_valid_amount'))));
+                      return;
+                    }
+                    await DualVerificationService.configure(threshold: v);
+                    if (mounted) {
+                      setState(() => _syncDualVerification());
+                    }
+                  },
+                  child: Text(tr('save')),
+                ),
+              ],
+            ),
+            if (DualVerificationService.threshold == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  tr('dual_verification_not_configured'),
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.warning),
+                ),
+              ),
+          ],
           const Divider(),
           ListTile(
             contentPadding: EdgeInsets.zero,

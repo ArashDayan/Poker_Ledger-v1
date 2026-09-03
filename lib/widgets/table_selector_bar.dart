@@ -4,12 +4,26 @@ import 'package:provider/provider.dart';
 
 import '../core/theme/app_theme.dart';
 import '../core/utils/currency_formatter.dart';
+import '../models/enums.dart';
 import '../models/player.dart';
 import '../models/session.dart';
 import '../providers/session_provider.dart';
+import '../services/dual_verification_service.dart';
+import '../services/player_operation_guard.dart';
 import '../services/table_service.dart';
+import 'dual_verification_sheet.dart';
+import 'signature_pad.dart';
 import 'table_float_sheet.dart';
 import 'table_timer_display.dart';
+
+/// J4: per-table Game/Stakes/Limit shown wherever the banker chooses or
+/// reads a table. Legacy tables resolve their stakes from the session in
+/// [TableService.tablesFor], so this is always honest about current play.
+String _tableMetaText(PokerTable table, CurrencyFormatter fmt) {
+  final limit = table.format.replaceAll('_', ' ');
+  return '${table.game.toUpperCase()} · $limit · '
+      '${fmt.format(table.smallStake)}/${fmt.format(table.bigStake)}';
+}
 
 /// Horizontal table switcher shown above the seating screens.
 ///
@@ -116,6 +130,7 @@ class TableSelectorBar extends StatelessWidget {
                       const SizedBox(height: 2),
                       Text(
                         '${s.playerCount}/${s.table.seatCount} seated · '
+                        '${_tableMetaText(s.table, fmt)} · '
                         '${fmt.format(s.moneyInPlay)}',
                         style: const TextStyle(
                             fontSize: 10, color: AppColors.textSecondary),
@@ -224,6 +239,13 @@ class _TableManagerSheet extends StatelessWidget {
                 onPressed: () => _renameDialog(context, provider, s),
               ),
               IconButton(
+                tooltip: tr('table_metadata'),
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.tune,
+                    size: 17, color: AppColors.textSecondary),
+                onPressed: () => _editMetadataDialog(context, provider, s),
+              ),
+              IconButton(
                 tooltip: blocker ?? 'Remove table',
                 visualDensity: VisualDensity.compact,
                 icon: Icon(Icons.delete_outline,
@@ -243,6 +265,14 @@ class _TableManagerSheet extends StatelessWidget {
             '${s.playerCount} of ${s.table.seatCount} seats · '
             'in play ${fmt.format(s.moneyInPlay)}',
             style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            _tableMetaText(s.table, fmt),
+            style: const TextStyle(
+                fontSize: 11,
+                color: AppColors.textSecondary,
+                fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           Row(
@@ -350,109 +380,281 @@ class _TableManagerSheet extends StatelessWidget {
       await provider.renameTable(s.table.id, ctrl.text);
     }
   }
+
+  /// J4 additive per-table Game/Stakes/Limit metadata. Game + limit are
+  /// fixed to NLHE / No Limit (the only supported scope); the operator
+  /// can set the table's own blinds. Same-stake transfers are evaluated
+  /// against this metadata, so it is visible and editable here.
+  Future<void> _editMetadataDialog(
+      BuildContext context, SessionProvider provider, TableSummary s) async {
+    final smallCtrl = TextEditingController(
+        text: s.table.smallStake.toStringAsFixed(0));
+    final bigCtrl = TextEditingController(
+        text: s.table.bigStake.toStringAsFixed(0));
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('table_metadata')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${tr('game_label')}: ${s.table.game.toUpperCase()} · '
+              '${tr('format_label')}: ${s.table.format.replaceAll('_', ' ')}',
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: smallCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(labelText: tr('small_blind')),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: bigCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(labelText: tr('big_blind')),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr('cancel'))),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(tr('save'))),
+        ],
+      ),
+    );
+    if (ok == true) {
+      final small = double.tryParse(
+          smallCtrl.text.trim().replaceAll(',', ''));
+      final big = double.tryParse(bigCtrl.text.trim().replaceAll(',', ''));
+      try {
+        await provider.setTableMetadata(
+          s.table.id,
+          smallStake: small,
+          bigStake: big,
+        );
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('$e')));
+        }
+      }
+    }
+  }
 }
 
-/// Asks how much money the player physically carries to the new table.
+/// What the banker selected in the transfer sheet.
+class _TransferSelection {
+  final double amount;
+  final bool dryMove;
+  final String? reason;
+  final String? operatorName;
+  final String hostSignatureBase64;
+
+  const _TransferSelection({
+    required this.amount,
+    required this.dryMove,
+    this.reason,
+    this.operatorName,
+    required this.hostSignatureBase64,
+  });
+}
+
+/// Asks how the player physically moves to the new table.
 ///
-/// Returns the amount, or null if the banker cancelled — which aborts the
-/// move entirely, so seating and accounting can never disagree.
+/// * Every move is classified EXPLICITLY as either Dry Move / 0 Chips or
+///   a funded carry. The banker cannot leave it blank and have it become
+///   zero (J1).
+/// * A funded carry must be a positive, counted amount.
+/// * Every move needs the host/floor confirmation before it is final
+///   (J2) — including a dry reseat.
 ///
-/// DELIBERATELY EMPTY, WITH NO SUGGESTION AND NO LIMIT.
-/// The app does not track how many chips are in front of a player, and
-/// must not pretend to. Buy-ins, rebuys and the chip log all describe
-/// money that passed through the house — none of them can see chips won
-/// from or lost to another player. Prefilling any of those figures would
-/// invite the banker to accept a number that is simply wrong.
-///
-/// So the field starts blank, the banker counts the stack, and whatever
-/// they type is recorded verbatim.
-Future<double?> _askTransferAmount(
+/// Returns null if the banker cancelled, which aborts the whole move.
+Future<_TransferSelection?> _askTransferAmount(
   BuildContext context, {
   required Player player,
   required PokerTable from,
   required PokerTable to,
 }) async {
   final ctrl = TextEditingController();
+  final reasonCtrl = TextEditingController();
+  final operatorCtrl = TextEditingController();
+  var dryMove = false;
+  var hostSignatureBase64 = '';
 
-  return showModalBottomSheet<double>(
+  return showModalBottomSheet<_TransferSelection>(
     context: context,
     isScrollControlled: true,
-    builder: (ctx) => Padding(
-      padding: EdgeInsets.only(
-        left: 18,
-        right: 18,
-        top: 18,
-        bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('${tr('money_moving_with')} ${player.name}',
-              style: const TextStyle(
-                  fontSize: 16, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
-          Text(
-            '${from.name} → ${to.name}. ${tr('transfer_table_note')}',
-            style: const TextStyle(
-                fontSize: 11, color: AppColors.textSecondary),
-          ),
-          const SizedBox(height: 14),
-          TextField(
-            controller: ctrl,
-            autofocus: true,
-            keyboardType:
-                const TextInputType.numberWithOptions(decimal: true),
-            decoration: InputDecoration(
-              labelText: tr('transfer_amount_label'),
-              helperText: tr('transfer_amount_helper'),
-              prefixIcon: const Icon(Icons.swap_horiz),
-            ),
-          ),
-          const SizedBox(height: 14),
-          Row(
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setLocal) => Padding(
+        padding: EdgeInsets.only(
+          left: 18,
+          right: 18,
+          top: 18,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: Text(tr('cancel')),
+              Text('${tr('money_moving_with')} ${player.name}',
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              Text(
+                '${from.name} → ${to.name}. ${tr('transfer_table_note')}',
+                style: const TextStyle(
+                    fontSize: 11, color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: Text(tr('dry_move')),
+                    selected: dryMove,
+                    onSelected: (_) => setLocal(() => dryMove = true),
+                  ),
+                  ChoiceChip(
+                    label: Text(tr('carry_chips')),
+                    selected: !dryMove,
+                    onSelected: (_) => setLocal(() => dryMove = false),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (!dryMove) ...[
+                TextField(
+                  controller: ctrl,
+                  autofocus: true,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    labelText: tr('transfer_amount_label'),
+                    helperText: tr('carry_chips_hint'),
+                    prefixIcon: const Icon(Icons.swap_horiz),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              TextField(
+                controller: reasonCtrl,
+                decoration: InputDecoration(
+                  labelText: tr('reason_optional'),
+                  prefixIcon: const Icon(Icons.notes),
                 ),
               ),
-              const SizedBox(width: 10),
-              // A dry seat change is legitimate — a player who has
-              // already cashed out, or is simply being reseated.
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => Navigator.pop(ctx, 0.0),
-                  child: Text(tr('no_money')),
+              const SizedBox(height: 12),
+              TextField(
+                controller: operatorCtrl,
+                decoration: InputDecoration(
+                  labelText: tr('operator_name'),
+                  prefixIcon: const Icon(Icons.person_outline),
                 ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                flex: 2,
-                child: ElevatedButton(
-                  onPressed: () {
-                    // The ONLY validation: it must be a real,
-                    // non-negative number. No cap, no comparison against
-                    // any derived balance — whatever the banker counted
-                    // is what gets recorded.
-                    final v =
-                        double.tryParse(ctrl.text.trim().replaceAll(',', ''));
-                    if (v == null || v < 0) {
-                      ScaffoldMessenger.of(ctx).showSnackBar(
-                        SnackBar(
-                            content: Text(tr('enter_valid_amount'))),
-                      );
-                      return;
-                    }
-                    Navigator.pop(ctx, v);
-                  },
-                  child: Text(tr('confirm')),
-                ),
+              const SizedBox(height: 12),
+              Text(
+                tr('host_confirmation_hint'),
+                style: const TextStyle(
+                    fontSize: 11.5, color: AppColors.warning),
+              ),
+              const SizedBox(height: 4),
+              SignaturePad(
+                requireConfirm: false,
+                caption: tr('sign_here'),
+                onChanged: (sig) =>
+                    setLocal(() => hostSignatureBase64 = sig),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: Text(tr('cancel')),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        if (hostSignatureBase64.trim().isEmpty) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            SnackBar(
+                                content: Text(tr('sign_here'))),
+                          );
+                          return;
+                        }
+                        if (dryMove) {
+                          Navigator.pop(
+                            ctx,
+                            _TransferSelection(
+                              amount: 0,
+                              dryMove: true,
+                              reason: reasonCtrl.text.trim().isEmpty
+                                  ? null
+                                  : reasonCtrl.text.trim(),
+                              operatorName:
+                                  operatorCtrl.text.trim().isEmpty
+                                      ? null
+                                      : operatorCtrl.text.trim(),
+                              hostSignatureBase64: hostSignatureBase64,
+                            ),
+                          );
+                          return;
+                        }
+                        // The ONLY validation for a funded carry: a real,
+                        // POSITIVE number. The empty field must never
+                        // silently become zero, and zero-carry must be
+                        // explicitly Dry Move (J1).
+                        final v = double.tryParse(
+                            ctrl.text.trim().replaceAll(',', ''));
+                        if (v == null || v < 0) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            SnackBar(
+                                content: Text(tr('enter_valid_amount'))),
+                          );
+                          return;
+                        }
+                        if (v == 0) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            SnackBar(content: Text(tr('dry_move'))),
+                          );
+                          return;
+                        }
+                        Navigator.pop(
+                          ctx,
+                          _TransferSelection(
+                            amount: v,
+                            dryMove: false,
+                            reason: reasonCtrl.text.trim().isEmpty
+                                ? null
+                                : reasonCtrl.text.trim(),
+                            operatorName: operatorCtrl.text.trim().isEmpty
+                                ? null
+                                : operatorCtrl.text.trim(),
+                            hostSignatureBase64: hostSignatureBase64,
+                          ),
+                        );
+                      },
+                      child: Text(tr('confirm')),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
-        ],
+        ),
       ),
     ),
   );
@@ -467,6 +669,7 @@ Future<void> showMovePlayerSheet(BuildContext context, Player player) {
       final session = provider.current!;
       final tables = provider.tables;
       final currentTable = TableService.tableForPlayer(session, player);
+      final fmt = CurrencyFormatter(session.currency);
 
       return SafeArea(
         child: Padding(
@@ -493,27 +696,62 @@ Future<void> showMovePlayerSheet(BuildContext context, Player player) {
                   leading: const Icon(Icons.table_bar_outlined,
                       color: AppColors.accentGreen),
                   title: Text(t.name),
-                  subtitle: Text(free == null
-                      ? '${tr('full')} ($count/${t.seatCount})'
-                      : '${tr('seat')} $free ${tr('free')} · $count/${t.seatCount} ${tr('seated')}'),
+                  subtitle: Text(
+                    '${free == null ? tr('full') : '${tr('seat')} $free ${tr('free')}'} · '
+                    '$count/${t.seatCount} ${tr('seated')} · '
+                    '${_tableMetaText(t, fmt)}',
+                  ),
                   enabled: free != null,
                   onTap: free == null
                       ? null
                       : () async {
+                          if (!PlayerOperationGuard.hasRegisteredIdentity(
+                              player)) {
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                              SnackBar(
+                                  content: Text(tr('registered_person_required'))),
+                            );
+                            return;
+                          }
                           // Ask how much money travels with the player
                           // BEFORE moving them. Cancelling here aborts
                           // the whole move, so a banker can never move a
                           // player and then abandon the accounting.
-                          final amount = await _askTransferAmount(
+                          final selection = await _askTransferAmount(
                             ctx,
                             player: player,
                             from: currentTable,
                             to: t,
                           );
-                          if (amount == null) return;
+                          if (selection == null) return;
+                          String? secondVerifierSignature;
+                          if (DualVerificationService.requiresSecond(
+                              selection.amount)) {
+                            final second =
+                                await showDualVerificationSheet(
+                              ctx,
+                              amount: selection.amount,
+                              formatter: CurrencyFormatter(session.currency),
+                              operationLabel: tr('money_moving_with'),
+                            );
+                            if (second == null) return;
+                            secondVerifierSignature = second;
+                          }
                           try {
-                            await provider.movePlayerToTable(player, t.id,
-                                seat: free, amount: amount);
+                            await provider.movePlayerToTable(
+                              player,
+                              t.id,
+                              seat: free,
+                              amount: selection.amount,
+                              dryMove: selection.dryMove,
+                              reason: selection.reason,
+                              operatorName: selection.operatorName,
+                              hostSignatureBase64:
+                                  selection.hostSignatureBase64,
+                              secondVerifierName: selection.operatorName,
+                              secondVerifierSignature:
+                                  secondVerifierSignature,
+                            );
                             if (ctx.mounted) Navigator.pop(ctx);
                           } catch (e) {
                             if (ctx.mounted) {
@@ -541,6 +779,178 @@ Future<void> showMovePlayerSheet(BuildContext context, Player player) {
   );
 }
 
+/// Combined operational sheet for a seated player: transfer, same-table
+/// seat change, temporary absence / return, and unseat/leave without
+/// cash-out. All of these are non-financial (or financial only in the
+/// transfer case) and are recorded in the immutable table-operation
+/// audit stream.
+Future<void> showPlayerTableOperationsSheet(
+  BuildContext context,
+  Player player,
+) {
+  return showModalBottomSheet(
+    context: context,
+    builder: (ctx) {
+      final provider = ctx.watch<SessionProvider>();
+      final session = provider.current!;
+      final table = TableService.tableForPlayer(session, player);
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(tr('player_table_operations'),
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 2),
+              Text(
+                '${player.name} · ${table.name} · ${tr('seat')} ${player.seatNumber}',
+                style: const TextStyle(
+                    fontSize: 11, color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.swap_horiz,
+                    color: AppColors.accentGreen),
+                title: Text(tr('transfer_to_table')),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  showMovePlayerSheet(context, player);
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.wifi_tethering,
+                    color: AppColors.accentGreen),
+                title: Text(tr('change_seat')),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await _chooseSeatChange(context, provider, player, table);
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.hourglass_empty,
+                    color: AppColors.warning),
+                title: Text(tr('temporary_absence')),
+                onTap: () async {
+                  try {
+                    await provider.startTemporaryAbsence(player);
+                    if (ctx.mounted) Navigator.pop(ctx);
+                  } catch (e) {
+                    if (ctx.mounted) {
+                      ScaffoldMessenger.of(ctx)
+                          .showSnackBar(SnackBar(content: Text('$e')));
+                    }
+                  }
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.hourglass_full,
+                    color: AppColors.accentGreen),
+                title: Text(tr('return_from_absence')),
+                onTap: () async {
+                  try {
+                    await provider.endTemporaryAbsence(player);
+                    if (ctx.mounted) Navigator.pop(ctx);
+                  } catch (e) {
+                    if (ctx.mounted) {
+                      ScaffoldMessenger.of(ctx)
+                          .showSnackBar(SnackBar(content: Text('$e')));
+                    }
+                  }
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading:
+                    const Icon(Icons.chair_alt_outlined, color: AppColors.danger),
+                title: Text(tr('unseat_leave')),
+                onTap: () async {
+                  final ok = await showDialog<bool>(
+                    context: ctx,
+                    builder: (d) => AlertDialog(
+                      title: Text(tr('unseat_leave')),
+                      content: Text(tr('confirm_unseat')),
+                      actions: [
+                        TextButton(
+                            onPressed: () => Navigator.pop(d, false),
+                            child: Text(tr('cancel'))),
+                        ElevatedButton(
+                            onPressed: () => Navigator.pop(d, true),
+                            child: Text(tr('confirm'))),
+                      ],
+                    ),
+                  );
+                  if (ok != true) return;
+                  try {
+                    await provider.unseatWithAudit(player,
+                        heldByFloor: true,
+                        reason: tr('chips_held_by_floor'));
+                    if (ctx.mounted) Navigator.pop(ctx);
+                  } catch (e) {
+                    if (ctx.mounted) {
+                      ScaffoldMessenger.of(ctx)
+                          .showSnackBar(SnackBar(content: Text('$e')));
+                    }
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+Future<void> _chooseSeatChange(
+  BuildContext context,
+  SessionProvider provider,
+  Player player,
+  PokerTable table,
+) async {
+  final occupied = TableService.occupiedSeats(
+    provider.current!,
+    table.id,
+    excludePlayerId: player.id,
+  );
+  final free = [
+    for (var i = 1; i <= table.seatCount; i++)
+      if (!occupied.contains(i)) i,
+  ];
+  if (free.isEmpty) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(tr('no_free_seat'))));
+    return;
+  }
+  final seat = await showDialog<int>(
+    context: context,
+    builder: (d) => SimpleDialog(
+      title: Text(tr('choose_free_seat')),
+      children: free
+          .map((s) => SimpleDialogOption(
+                onPressed: () => Navigator.pop(d, s),
+                child: Text('${tr('seat')} $s'),
+              ))
+          .toList(),
+    ),
+  );
+  if (seat == null) return;
+  try {
+    await provider.changeSeat(player, seat);
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+}
+
 /// Per-table status strip: shows whether the table is active, paused or
 /// closed, and gives the banker the controls to change it.
 ///
@@ -554,6 +964,7 @@ class TableStatusBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final provider = context.watch<SessionProvider>();
     final status = table.status;
+    final fmt = CurrencyFormatter(provider.current?.currency ?? AppCurrency.usd);
 
     final Color colour = status.isClosed
         ? AppColors.danger
@@ -581,6 +992,15 @@ class TableStatusBar extends StatelessWidget {
               fontSize: 12.5,
               fontWeight: FontWeight.bold,
               color: colour,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              _tableMetaText(table, fmt),
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontSize: 11, color: AppColors.textSecondary),
             ),
           ),
           const SizedBox(width: 10),

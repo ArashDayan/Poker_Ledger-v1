@@ -16,7 +16,9 @@ import 'package:hive/hive.dart';
 import 'package:poker_ledger/models/financial_event.dart';
 import 'package:poker_ledger/models/hand.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
+import 'package:poker_ledger/models/table_participation.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/hive_service.dart';
 import 'package:poker_ledger/services/session_service.dart';
@@ -37,6 +39,9 @@ Future<void> _open() async {
   await Hive.openBox(HiveService.settingsBox);
   await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
   await Hive.openBox<Hand>(HiveService.handsBox);
+  await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
+  await Hive.openBox<TableParticipation>(HiveService.participationsBox);
+  await Hive.openBox(HiveService.transferEventsBox);
 }
 
 Future<void> _close() async {
@@ -66,6 +71,16 @@ Player _p(String sid, String name, {int seat = 1, String? tableId}) {
       seatNumber: seat,
       tableId: tableId);
   HiveService.players.put(p.id, p);
+  return p;
+}
+
+/// Attaches a valid Player Master identity (J5 fixture).
+Player _reg(Player p) {
+  final personId = _uuid.v4();
+  HiveService.playerIdentities.put(
+      personId, PlayerIdentity(id: personId, displayName: p.name));
+  p.personId = personId;
+  p.save();
   return p;
 }
 
@@ -153,10 +168,11 @@ void main() {
       final s = _session();
       await TableService.addTable(s, name: 'Table 2');
       final t1 = TableService.tablesFor(s).first.id;
-      final p = _p(s.id, 'Mover', seat: 1, tableId: t1);
+      final p = _reg(_p(s.id, 'Mover', seat: 1, tableId: t1));
       final before = await _tx(s.id, p.id, TransactionType.buyIn, 100);
 
-      await TableService.movePlayer(s, p, 'table-2');
+      await TableService.movePlayer(
+          s, p, 'table-2', amount: 1, hostSignatureBase64: 'sig');
       final after = await _tx(s.id, p.id, TransactionType.rebuy, 50);
 
       expect(before.tableId, t1,
@@ -187,11 +203,12 @@ void main() {
       final s = _session();
       await TableService.addTable(s, name: 'Table 2');
       final t1 = TableService.tablesFor(s).first.id;
-      final p = _p(s.id, 'Mover', seat: 2, tableId: t1);
+      final p = _reg(_p(s.id, 'Mover', seat: 2, tableId: t1));
       await _tx(s.id, p.id, TransactionType.buyIn, 400);
       await _tx(s.id, p.id, TransactionType.rebuy, 200);
 
-      await TableService.movePlayer(s, p, 'table-2');
+      await TableService.movePlayer(
+          s, p, 'table-2', amount: 1, hostSignatureBase64: 'sig');
 
       expect(SessionService.playerTotalIn(s.id, p.id), 600);
       expect(SessionService.checkBalance(s.id).moneyIn, 600);
@@ -219,11 +236,12 @@ void main() {
         () async {
       final s = _session();
       await TableService.addTable(s, name: 'Table 2');
-      final p = _p(s.id, 'Mover', seat: 1);
+      final p = _reg(_p(s.id, 'Mover', seat: 1));
       final events = <BoxEvent>[];
       final sub = HiveService.players.watch().listen(events.add);
 
-      await TableService.movePlayer(s, p, 'table-2');
+      await TableService.movePlayer(
+          s, p, 'table-2', amount: 1, hostSignatureBase64: 'sig');
       await Future<void>.delayed(Duration.zero);
       await sub.cancel();
 

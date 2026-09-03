@@ -311,7 +311,7 @@ void main() {
     });
 
     test('backup remains v8', () {
-      expect(BackupService.formatVersion, 8);
+      expect(BackupService.formatVersion, 9);
       expect(BackupService.exportPayload()['formatVersion'], 8);
     });
   });

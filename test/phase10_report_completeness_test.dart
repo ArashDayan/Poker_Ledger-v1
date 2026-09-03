@@ -419,10 +419,10 @@ void main() {
 
   group('backup / l10n / ChipFlow', () {
     test('backup remains v8 and surfaces malformed hands', () async {
-      expect(BackupService.formatVersion, 8);
+      expect(BackupService.formatVersion, 9);
       expect(BackupService.exportPayload()['formatVersion'], 8);
       final result = await BackupService.importPayload({
-        'formatVersion': 8,
+        'formatVersion': 9,
         'sessions': const [],
         'players': const [],
         'transactions': const [],
@@ -431,7 +431,7 @@ void main() {
           'bad',
         ],
       });
-      expect(result.formatVersion, 8);
+      expect(result.formatVersion, 9);
       expect(result.handsImported, 0);
       expect(result.handsSkipped, 2);
     });

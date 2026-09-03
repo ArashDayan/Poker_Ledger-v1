@@ -5,7 +5,9 @@ import '../models/table_participation.dart';
 import '../models/transaction.dart';
 import 'hive_service.dart';
 import 'participation_service.dart';
+import 'player_operation_guard.dart';
 import 'session_service.dart';
+import 'table_operation_event_service.dart';
 
 /// Lifecycle of one table inside a session.
 ///
@@ -42,10 +44,27 @@ extension TableStatusX on TableStatus {
 
 /// One physical table inside a session.
 class PokerTable {
+  /// Current supported game code. Other games (Omaha, Blackjack, etc.)
+  /// are deliberately NOT implemented; the code is future-ready metadata
+  /// only.
+  static const String gameNoLimitHoldem = 'nlhe';
+
+  /// Current supported limit/format code.
+  static const String formatNoLimit = 'no_limit';
+
   final String id;
   final String name;
   final int seatCount;
   final int dealerSeat;
+
+  /// Additive per-table metadata (locked J4). Stored in the same table
+  /// map as the rest of the table, so no Hive adapter, typeId or
+  /// migration is involved. Absent values on legacy tables are resolved
+  /// from the session's own blinds in [tablesFor].
+  final String game;
+  final String format;
+  final double smallStake;
+  final double bigStake;
 
   /// Per-table lifecycle. Stored inside the same map as the rest of the
   /// table so no new Hive adapter or typeId is needed and every
@@ -88,6 +107,10 @@ class PokerTable {
     required this.name,
     required this.seatCount,
     required this.dealerSeat,
+    this.game = gameNoLimitHoldem,
+    this.format = formatNoLimit,
+    this.smallStake = 0,
+    this.bigStake = 0,
     this.status = TableStatus.active,
     this.closedAt,
     this.runningSince,
@@ -106,6 +129,21 @@ class PokerTable {
   }
 
   bool get timerRunning => runningSince != null;
+
+  bool get hasStakes => smallStake > 0 && bigStake > 0;
+
+  /// True when this table's game, limit format and stakes are identical
+  /// to [other]. This is the J4 compatibility rule: an incompatible
+  /// table must be connected via Table Cash-out + new Buy-in, never a
+  /// direct transfer.
+  bool compatibleWith(PokerTable other) =>
+      game == other.game &&
+      format == other.format &&
+      smallStake == other.smallStake &&
+      bigStake == other.bigStake;
+
+  String get gameCode => game;
+  String get formatCode => format;
 
   /// Whether a countdown target has been chosen for this table.
   bool get hasTimer => plannedMinutes != null && plannedMinutes! > 0;
@@ -129,6 +167,10 @@ class PokerTable {
         'name': name,
         'seatCount': seatCount,
         'dealerSeat': dealerSeat,
+        'game': game,
+        'format': format,
+        'smallStake': smallStake,
+        'bigStake': bigStake,
         'status': status.key,
         'closedAt': closedAt?.toIso8601String(),
         'runningSince': runningSince?.toIso8601String(),
@@ -142,6 +184,10 @@ class PokerTable {
         name: (m['name'] as String?) ?? 'Table',
         seatCount: (m['seatCount'] as num?)?.toInt() ?? 9,
         dealerSeat: (m['dealerSeat'] as num?)?.toInt() ?? 1,
+        game: (m['game'] as String?) ?? gameNoLimitHoldem,
+        format: (m['format'] as String?) ?? formatNoLimit,
+        smallStake: (m['smallStake'] as num?)?.toDouble() ?? 0,
+        bigStake: (m['bigStake'] as num?)?.toDouble() ?? 0,
         status: TableStatusX.fromKey(m['status'] as String?),
         closedAt: m['closedAt'] == null
             ? null
@@ -160,6 +206,10 @@ class PokerTable {
     String? name,
     int? seatCount,
     int? dealerSeat,
+    String? game,
+    String? format,
+    double? smallStake,
+    double? bigStake,
     TableStatus? status,
     DateTime? closedAt,
     bool clearClosedAt = false,
@@ -175,6 +225,10 @@ class PokerTable {
         name: name ?? this.name,
         seatCount: seatCount ?? this.seatCount,
         dealerSeat: dealerSeat ?? this.dealerSeat,
+        game: game ?? this.game,
+        format: format ?? this.format,
+        smallStake: smallStake ?? this.smallStake,
+        bigStake: bigStake ?? this.bigStake,
         status: status ?? this.status,
         closedAt: clearClosedAt ? null : (closedAt ?? this.closedAt),
         runningSince:
@@ -224,10 +278,18 @@ class TableService {
               : 'Table ${session.tableNumber.trim()}',
           seatCount: session.tableSeatCount,
           dealerSeat: session.dealerSeatIndex,
+          smallStake: session.smallBlind,
+          bigStake: session.bigBlind,
         ),
       ];
     }
-    return raw.map(PokerTable.fromMap).toList();
+    // Legacy tables saved before per-table metadata existed read a zero
+    // stake; resolve those from the session's blinds so the Floor has an
+    // honest "NLHE 1/2" label and compatibility can be evaluated.
+    return raw.map(PokerTable.fromMap).map((t) {
+      if (t.smallStake > 0 || t.bigStake > 0) return t;
+      return t.copyWith(smallStake: session.smallBlind, bigStake: session.bigBlind);
+    }).toList();
   }
 
   static bool isMultiTable(PokerSession session) => tablesFor(session).length > 1;
@@ -322,6 +384,23 @@ class TableService {
 
   // ---------------------------------------------------------------- writes
 
+  /// NLHE / No Limit only (locked J4, additive model). Any other game or
+  /// limit format is refused at the service boundary rather than accepted
+  /// through the UI and silently breaking compatibility later.
+  static void validateGameMetadata({
+    required String game,
+    required String format,
+  }) {
+    if (game != PokerTable.gameNoLimitHoldem) {
+      throw StateError(
+          'Only $PokerTable.gameNoLimitHoldem is supported on this table.');
+    }
+    if (format != PokerTable.formatNoLimit) {
+      throw StateError(
+          'Only $PokerTable.formatNoLimit is supported on this table.');
+    }
+  }
+
   static Future<void> _persist(PokerSession session, List<PokerTable> tables) async {
     session.tables = tables.map((t) => t.toMap()).toList();
     // Keep the legacy single-table fields pointing at a live table so any
@@ -338,12 +417,24 @@ class TableService {
   }
 
   /// Adds a table. Returns its id.
+  ///
+  /// [game]/[format]/[smallStake]/[bigStake] default to the session's
+  /// current game metadata (NLHE / No Limit + session blinds), so a
+  /// newly opened table is compatible with the legacy single-table game
+  /// until the operator changes it.
   static Future<String> addTable(
     PokerSession session, {
     String? name,
     int seatCount = 9,
+    String? game,
+    String? format,
+    double? smallStake,
+    double? bigStake,
   }) async {
     SessionService.assertSessionActive(session.id);
+    final gameCode = game ?? PokerTable.gameNoLimitHoldem;
+    final formatCode = format ?? PokerTable.formatNoLimit;
+    validateGameMetadata(game: gameCode, format: formatCode);
     final tables = tablesFor(session);
     // Ids are never reused, even after a delete, so a stale tableId on a
     // player can never silently re-point at a different table.
@@ -356,9 +447,40 @@ class TableService {
       name: (name == null || name.trim().isEmpty) ? 'Table $n' : name.trim(),
       seatCount: seatCount,
       dealerSeat: 1,
+      game: gameCode,
+      format: formatCode,
+      smallStake: smallStake ?? session.smallBlind,
+      bigStake: bigStake ?? session.bigBlind,
     );
     await _persist(session, [...tables, table]);
     return table.id;
+  }
+
+  /// Updates per-table game/format/stakes metadata. Purely additive —
+  /// no seating, money or history is touched.
+  static Future<void> setTableMetadata(
+    PokerSession session,
+    String tableId, {
+    String? game,
+    String? format,
+    double? smallStake,
+    double? bigStake,
+  }) async {
+    SessionService.assertSessionActive(session.id);
+    final current = tableById(session, tableId);
+    final gameCode = game ?? current.game;
+    final formatCode = format ?? current.format;
+    validateGameMetadata(game: gameCode, format: formatCode);
+    final tables = tablesFor(session).map((t) {
+      if (t.id != tableId) return t;
+      return t.copyWith(
+        game: game,
+        format: format,
+        smallStake: smallStake,
+        bigStake: bigStake,
+      );
+    }).toList();
+    await _persist(session, tables);
   }
 
   static Future<void> renameTable(
@@ -620,51 +742,64 @@ class TableService {
   /// Moves a player to another table, accounting for the money they
   /// physically carry with them.
   ///
-  /// THE AMOUNT IS ALWAYS MANUAL, BY DESIGN.
+  /// THE AMOUNT IS ALWAYS MANUAL AND MUST BE EXPLICIT (locked J1).
   /// The app deliberately does not model how many chips sit in front of
-  /// a player. Chips change hands between players on every hand and none
-  /// of that touches the ledger, so any figure derived from buy-ins,
-  /// rebuys, cash-outs or the chip log would be a guess dressed up as a
-  /// fact. The banker physically counts the stack the player carries
-  /// away; that count is the only authority, and [amount] is recorded
-  /// exactly as entered — never adjusted, capped or second-guessed.
+  /// a player. The banker physically counts the stack the player carries
+  /// away; that count is the only authority.
   ///
-  /// THE ACCOUNTING MODEL
-  /// A table move is an internal transfer, so it is recorded as two
-  /// mirrored legs of the SAME amount:
+  /// FUNDED vs DRY
+  ///   * A funded transfer MUST pass a positive [amount] and a host
+  ///     [hostSignatureBase64] (J2). A missing amount is refused — it is
+  ///     never interpreted as zero.
+  ///   * A transfer with no chips MUST set [dryMove] = true. This writes
+  ///     no ledger leg and carries the explicit dry state into the
+  ///     immutable Transfer Event; it still requires the host/floor
+  ///     confirmation (J2) before the seat is moved.
   ///
-  ///   transferOut  @ source table       transferIn  @ destination table
+  /// THE ACCOUNTING MODEL (reused)
+  ///   transferOut @ source table == transferIn @ destination table.
+  /// Session totals are neutral. No ChipMovement, no cash-out, no buy-in.
   ///
-  /// Source: Money Out +X, Current Pot −X.
-  /// Destination: Money In +X, Current Pot +X.
-  /// Session: unchanged — see [TransactionType.transferOut] for why these
-  /// are their own types rather than a cash-out plus a buy-in.
-  ///
-  /// LEG ORDER MATTERS AND IS DELIBERATE.
-  /// `SessionService.recordTransaction` attributes a player transaction
-  /// to `player.tableId` — where the player is sitting *at that moment*.
-  /// So the OUT leg is written while they are still at the source table,
-  /// and the IN leg only after the seat has been reassigned. That is what
-  /// lands each leg on the correct table without touching the protected
-  /// recording logic.
-  ///
-  /// [amount] null means "no money carried" (a dry seat change), which
-  /// writes no transactions at all.
+  /// J4 COMPATIBILITY
+  ///   A direct transfer is refused unless the source and destination
+  ///   table share the same game, format and stakes.
   static Future<void> movePlayer(
     PokerSession session,
     Player player,
     String targetTableId, {
     int? seat,
     double? amount,
+    bool dryMove = false,
+    String? reason,
+    String? operatorName,
+    String? hostSignatureBase64,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     SessionService.assertSessionActive(session.id);
+    PlayerOperationGuard.requireRegistered(player, 'a table transfer');
+
     if (!player.seated) {
       throw StateError(
           'This player is not seated. Seat them before moving tables.');
     }
+
+    // J4: source/destination compatibility before any write.
+    final source = tableForPlayer(session, player);
+    final target = tableById(session, targetTableId);
+    if (source.id == targetTableId) {
+      throw StateError(
+          'Use the same-table seat change action instead of a table transfer.');
+    }
+    if (!source.compatibleWith(target)) {
+      throw StateError(
+          'Direct transfer blocked: ${target.name} has different game, '
+          'stakes or format. Use Table Cash-out on ${source.name} then '
+          'Buy-in at ${target.name}.');
+    }
+
     final blocked = seatingBlocker(session, targetTableId);
     if (blocked != null) throw StateError(blocked);
-    final target = tableById(session, targetTableId);
     final taken = occupiedSeats(session, targetTableId, excludePlayerId: player.id);
 
     int? chosen = seat;
@@ -683,26 +818,46 @@ class TableService {
       throw StateError('Seat $chosen at ${target.name} is already taken.');
     }
 
+    // J1: carried amount is explicit, never inferred from null.
     if (amount != null && amount < 0) {
       throw ArgumentError('Transfer amount cannot be negative.');
     }
-    final carried = (amount ?? 0) > 0 ? amount! : 0.0;
-
-    // Where they are RIGHT NOW — captured before the seat is reassigned,
-    // because that is the table losing the money.
-    final sourceTableId = tableForPlayer(session, player).id;
-    if (carried > 0 && sourceTableId == targetTableId) {
-      throw StateError('Cannot transfer money to the same table.');
+    final funded = !dryMove;
+    if (funded && amount == null) {
+      throw StateError(
+          'A carried amount is required for a funded transfer, or use Dry Move / 0 Chips.');
     }
+    if (funded && amount == 0) {
+      throw StateError(
+          'Use Dry Move / 0 Chips for a zero-carry seat change.');
+    }
+    final carried = funded ? amount! : 0.0;
+
+    // J2: a table transfer is not final without host confirmation on the
+    // move itself and on every ledger leg it writes. This applies to a
+    // Dry Move too — it is still a player-table operation authorised by
+    // the host/floor, never an unconfirmed seat shuffle.
+    if (hostSignatureBase64 == null || hostSignatureBase64.isEmpty) {
+      throw StateError('A host confirmation is required for a table transfer.');
+    }
+
+    final sourceTableId = source.id;
+    final sourceSeat = player.seatNumber;
+    LedgerTransaction? outTx;
+    LedgerTransaction? inTx;
 
     // LEG 1 — out of the source table, written while the player is still
     // seated there so recordTransaction files it against that table.
     if (carried > 0) {
-      await SessionService.recordTransaction(
+      outTx = await SessionService.recordTransaction(
         sessionId: session.id,
         playerId: player.id,
         type: TransactionType.transferOut,
         amount: carried,
+        hostSignatureBase64: hostSignatureBase64,
+        operatorName: operatorName,
+        secondVerifierName: secondVerifierName,
+        secondVerifierSignature: secondVerifierSignature,
         tableId: sourceTableId,
         note: 'Moved to ${target.name}',
       );
@@ -716,36 +871,33 @@ class TableService {
 
     // LEG 2 — into the destination table, written only after the seat
     // has moved, so it is attributed to the new table.
-    //
-    // Both legs carry the identical amount, so no money can be created
-    // or destroyed by a move.
     if (carried > 0) {
-      await SessionService.recordTransaction(
+      inTx = await SessionService.recordTransaction(
         sessionId: session.id,
         playerId: player.id,
         type: TransactionType.transferIn,
         amount: carried,
+        hostSignatureBase64: hostSignatureBase64,
+        operatorName: operatorName,
+        secondVerifierName: secondVerifierName,
+        secondVerifierSignature: secondVerifierSignature,
         tableId: targetTableId,
-        note: 'Moved from ${tableById(session, sourceTableId).name}',
+        note: 'Moved from ${source.name}',
       );
     }
 
-    // Phase 6 — participation lifecycle on a move:
-    //  * FUNDED move: the source participation closes with the
-    //    transfer-out (its closing leg, already stamped by
-    //    recordTransaction); the destination participation was opened
-    //    by the transfer-in stamp.
-    //  * DRY move (no money carried): the commitment follows the seat
-    //    — the open participation's table moves, no legs involved.
-    // The participation still sits at the source table here in both
-    // cases (a funded move has stamped but not yet closed it; a dry
-    // move has written no legs at all).
+    // Phase 6 — participation lifecycle (locked J7):
+    //  * FUNDED move: source closes, destination opens.
+    //  * DRY move: the open participation follows the seat.
+    String? sourceParticipationId;
+    String? destinationParticipationId;
     final openP = ParticipationService.openFor(
       sessionId: session.id,
       seatPlayerId: player.id,
       tableId: sourceTableId,
     );
     if (openP != null) {
+      sourceParticipationId = openP.id;
       if (carried > 0) {
         ParticipationService.close(
             openP.id,
@@ -754,25 +906,41 @@ class TableService {
         ParticipationService.moveTable(openP.id, targetTableId);
       }
     }
+    if (outTx?.participationId != null) {
+      sourceParticipationId = outTx!.participationId;
+    }
+    if (inTx?.participationId != null) {
+      destinationParticipationId = inTx!.participationId;
+    }
+
+    // J3 — immutable audit event linking both legs and participations.
+    await TableOperationEventService.appendTransfer(
+      playerId: player.id,
+      personId: player.personId,
+      sourceTableId: sourceTableId,
+      sourceSeat: sourceSeat,
+      destinationTableId: targetTableId,
+      destinationSeat: chosen,
+      carriedAmount: funded ? carried : 0,
+      dryMove: !funded,
+      reason: reason ?? 'voluntary',
+      operatorName: operatorName,
+      hostSignatureBase64: hostSignatureBase64 ?? '',
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+      transferOutTransactionId: outTx?.id ?? '',
+      transferInTransactionId: inTx?.id ?? '',
+      sourceParticipationId: sourceParticipationId,
+      destinationParticipationId: destinationParticipationId,
+    );
 
     // NOTE ON HISTORY: the player's existing transactions deliberately
-    // keep the tableId they were recorded with. A buy-in taken at Table 1
-    // happened at Table 1 — rewriting it to Table 2 because the player
-    // later moved would falsify the audit trail and make a per-table
-    // timeline lie about where money actually changed hands. Only future
-    // transactions follow them to the new table.
+    // keep the tableId they were recorded with. Historical buy-ins/
+    // rebuys/cash-outs are not rewritten.
     //
     // NOTE ON CHIPS: deliberately no ChipMovement is written here.
     // Physical chips are tracked against ChipLocation.player(id), not
-    // against a table — a buy-in moves chips bank -> player, a cash-out
-    // player -> bank. The player's holding is therefore already correct
-    // the instant they stand up, and it travels with them.
-    //
-    // Writing a chip movement for a table change would be wrong twice
-    // over: it would invent a player -> table leg that never happens
-    // anywhere else in the chip model, and it would make the same chips
-    // appear to exist in two locations. The invariant "no chips are
-    // created or destroyed by a transfer" is satisfied by doing nothing.
+    // against a table — the player's holding travels with them.
   }
 
   /// RE-ENTRY (Phase 7): seats the (unseated) player at
@@ -808,6 +976,7 @@ class TableService {
     String? note,
   }) async {
     SessionService.assertSessionActive(session.id);
+    PlayerOperationGuard.requireRegistered(player, 'a re-entry');
     if (player.seated) {
       throw StateError(
           'This player is already seated. Cash them out of the table (or '

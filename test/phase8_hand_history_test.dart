@@ -595,8 +595,8 @@ void main() {
         rakeAmount: 40,
       );
       final payload = BackupService.exportPayload();
-      expect(payload['formatVersion'], 8);
-      expect(BackupService.formatVersion, 8);
+      expect(payload['formatVersion'], 9);
+      expect(BackupService.formatVersion, 9);
       expect((payload['hands'] as List), hasLength(1));
 
       await HiveService.hands.clear();

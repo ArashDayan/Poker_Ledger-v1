@@ -50,8 +50,8 @@ void main() {
   group('format and whitelist', () {
     test('export is format version 8 (Phase 8: hands)', () {
       final payload = BackupService.exportPayload();
-      expect(payload['formatVersion'], 8);
-      expect(BackupService.formatVersion, 8);
+      expect(payload['formatVersion'], 9);
+      expect(BackupService.formatVersion, 9);
       // Count sheets ride along for restore on a new device.
       expect(payload.containsKey('bankCounts'), isTrue);
       // Table participations ride along too (v7+).
@@ -366,7 +366,7 @@ void main() {
       await PlayerIdentityService.createNew('Sara');
       final encoded = jsonEncode(BackupService.exportPayload());
       final decoded = jsonDecode(encoded) as Map<String, dynamic>;
-      expect(decoded['formatVersion'], 8);
+      expect(decoded['formatVersion'], 9);
       expect((decoded['playerIdentities'] as List), hasLength(1));
     });
   });
