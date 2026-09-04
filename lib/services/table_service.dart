@@ -863,76 +863,147 @@ class TableService {
       );
     }
 
-    // Normalise: a player at the first table stores that table's id
-    // explicitly from now on, so seating is unambiguous going forward.
-    player.tableId = targetTableId;
-    player.seatNumber = chosen;
-    await player.save();
-
-    // LEG 2 — into the destination table, written only after the seat
-    // has moved, so it is attributed to the new table.
-    if (carried > 0) {
-      inTx = await SessionService.recordTransaction(
-        sessionId: session.id,
-        playerId: player.id,
-        type: TransactionType.transferIn,
-        amount: carried,
-        hostSignatureBase64: hostSignatureBase64,
-        operatorName: operatorName,
-        secondVerifierName: secondVerifierName,
-        secondVerifierSignature: secondVerifierSignature,
-        tableId: targetTableId,
-        note: 'Moved from ${source.name}',
-      );
-    }
-
-    // Phase 6 — participation lifecycle (locked J7):
-    //  * FUNDED move: source closes, destination opens.
-    //  * DRY move: the open participation follows the seat.
-    String? sourceParticipationId;
-    String? destinationParticipationId;
-    final openP = ParticipationService.openFor(
+    // COMPENSATION SNAPSHOT: the seat and (below) the source
+    // participation state as they are BEFORE this operation mutates
+    // them, so a failure of any later write can restore exactly this.
+    // (The seat snapshot keeps the RAW field values — a first-table
+    // seat legitimately stores tableId == null, which must be restored
+    // as null, not materialised to the resolved table id.)
+    final prevTableId = player.tableId;
+    final prevSeat = player.seatNumber;
+    TableParticipation? participationToRestore;
+    final preExistingOpen = ParticipationService.openFor(
       sessionId: session.id,
       seatPlayerId: player.id,
       tableId: sourceTableId,
     );
-    if (openP != null) {
-      sourceParticipationId = openP.id;
-      if (carried > 0) {
-        ParticipationService.close(
-            openP.id,
-            reason: ParticipationCloseReason.transferOut);
-      } else {
-        ParticipationService.moveTable(openP.id, targetTableId);
-      }
-    }
-    if (outTx?.participationId != null) {
-      sourceParticipationId = outTx!.participationId;
-    }
-    if (inTx?.participationId != null) {
-      destinationParticipationId = inTx!.participationId;
+    if (preExistingOpen != null) {
+      participationToRestore = TableParticipation(
+        id: preExistingOpen.id,
+        sessionId: preExistingOpen.sessionId,
+        personId: preExistingOpen.personId,
+        tableId: preExistingOpen.tableId,
+        seatPlayerId: preExistingOpen.seatPlayerId,
+      );
+      participationToRestore.status = preExistingOpen.status;
+      participationToRestore.openedAt = preExistingOpen.openedAt;
+      participationToRestore.closedAt = preExistingOpen.closedAt;
+      participationToRestore.closeReason = preExistingOpen.closeReason;
     }
 
-    // J3 — immutable audit event linking both legs and participations.
-    await TableOperationEventService.appendTransfer(
-      playerId: player.id,
-      personId: player.personId,
-      sourceTableId: sourceTableId,
-      sourceSeat: sourceSeat,
-      destinationTableId: targetTableId,
-      destinationSeat: chosen,
-      carriedAmount: funded ? carried : 0,
-      dryMove: !funded,
-      reason: reason ?? 'voluntary',
-      operatorName: operatorName,
-      hostSignatureBase64: hostSignatureBase64 ?? '',
-      secondVerifierName: secondVerifierName,
-      secondVerifierSignature: secondVerifierSignature,
-      transferOutTransactionId: outTx?.id ?? '',
-      transferInTransactionId: inTx?.id ?? '',
-      sourceParticipationId: sourceParticipationId,
-      destinationParticipationId: destinationParticipationId,
-    );
+    try {
+      // Normalise: a player at the first table stores that table's id
+      // explicitly from now on, so seating is unambiguous going forward.
+      player.tableId = targetTableId;
+      player.seatNumber = chosen;
+      await player.save();
+
+      // LEG 2 — into the destination table, written only after the seat
+      // has moved, so it is attributed to the new table.
+      if (carried > 0) {
+        inTx = await SessionService.recordTransaction(
+          sessionId: session.id,
+          playerId: player.id,
+          type: TransactionType.transferIn,
+          amount: carried,
+          hostSignatureBase64: hostSignatureBase64,
+          operatorName: operatorName,
+          secondVerifierName: secondVerifierName,
+          secondVerifierSignature: secondVerifierSignature,
+          tableId: targetTableId,
+          note: 'Moved from ${source.name}',
+        );
+      }
+
+      // Phase 6 — participation lifecycle (locked J7):
+      //  * FUNDED move: source closes, destination opens.
+      //  * DRY move: the open participation follows the seat.
+      String? sourceParticipationId;
+      String? destinationParticipationId;
+      final openP = ParticipationService.openFor(
+        sessionId: session.id,
+        seatPlayerId: player.id,
+        tableId: sourceTableId,
+      );
+      if (openP != null) {
+        sourceParticipationId = openP.id;
+        if (carried > 0) {
+          ParticipationService.close(
+              openP.id,
+              reason: ParticipationCloseReason.transferOut);
+        } else {
+          ParticipationService.moveTable(openP.id, targetTableId);
+        }
+      }
+      if (outTx?.participationId != null) {
+        sourceParticipationId = outTx!.participationId;
+      }
+      if (inTx?.participationId != null) {
+        destinationParticipationId = inTx!.participationId;
+      }
+
+      // J3 — immutable audit event linking both legs and participations.
+      await TableOperationEventService.appendTransfer(
+        playerId: player.id,
+        personId: player.personId,
+        sourceTableId: sourceTableId,
+        sourceSeat: sourceSeat,
+        destinationTableId: targetTableId,
+        destinationSeat: chosen,
+        carriedAmount: funded ? carried : 0,
+        dryMove: !funded,
+        reason: reason ?? 'voluntary',
+        operatorName: operatorName,
+        hostSignatureBase64: hostSignatureBase64 ?? '',
+        secondVerifierName: secondVerifierName,
+        secondVerifierSignature: secondVerifierSignature,
+        transferOutTransactionId: outTx?.id ?? '',
+        transferInTransactionId: inTx?.id ?? '',
+        sourceParticipationId: sourceParticipationId,
+        destinationParticipationId: destinationParticipationId,
+      );
+    } on Object {
+      // COMPENSATION (no Hive transaction available). LEG 1 (and the
+      // seat move) already happened; a failure of LEG 2 / the
+      // participation writes / the audit append must not leave the
+      // books showing chips out of one table and never into the next.
+      // Best-effort, append-only unwind:
+      //   1. the transfer-out leg is VOIDED (never deleted), carrying
+      //      the same second authorisation this operation collected;
+      //   2. the seat is restored to the source table/seat;
+      //   3. the source participation is restored to its exact prior
+      //      state (snapshot above).
+      // If a compensating step itself fails, the original error still
+      // propagates and the reconciliation surfaces the break loudly.
+      if (outTx != null) {
+        try {
+          await SessionService.voidTransaction(
+            outTx.id,
+            secondVerifierName: secondVerifierName,
+            secondVerifierSignature: secondVerifierSignature,
+          );
+        } catch (_) {}
+      }
+      try {
+        player.tableId = prevTableId;
+        player.seatNumber = prevSeat;
+        await player.save();
+      } catch (_) {}
+      if (participationToRestore != null) {
+        try {
+          final current = HiveService.participations
+              .get(participationToRestore.id);
+          if (current != null) {
+            current.tableId = participationToRestore.tableId;
+            current.status = participationToRestore.status;
+            current.closedAt = participationToRestore.closedAt;
+            current.closeReason = participationToRestore.closeReason;
+            await current.save();
+          }
+        } catch (_) {}
+      }
+      rethrow;
+    }
 
     // NOTE ON HISTORY: the player's existing transactions deliberately
     // keep the tableId they were recorded with. Historical buy-ins/
@@ -1019,31 +1090,71 @@ class TableService {
 
     // The commitment moves: close any stale still-open participation at
     // ANOTHER table (the normal path closed it at the table cash-out).
+    // Each closure is snapshotted first so a failure of the re-entry leg
+    // below can restore exactly the prior lifecycle state.
+    final staleSnapshots = <TableParticipation>[];
     for (final p in ParticipationService.forSession(session.id)) {
       if (p.seatPlayerId != player.id || !p.isOpen) continue;
       if (p.tableId == targetTableId) continue;
+      final snapshot = TableParticipation(
+        id: p.id,
+        sessionId: p.sessionId,
+        personId: p.personId,
+        tableId: p.tableId,
+        seatPlayerId: p.seatPlayerId,
+      );
+      snapshot.status = p.status;
+      snapshot.openedAt = p.openedAt;
+      snapshot.closedAt = p.closedAt;
+      snapshot.closeReason = p.closeReason;
+      staleSnapshots.add(snapshot);
       ParticipationService.close(p.id,
           reason: ParticipationCloseReason.tableCashOut);
     }
 
     // Seat first, then write the leg: recordTransaction attributes a
     // player leg to the table the player is sitting at, and the re-entry
-    // stamp opens the new participation there.
+    // stamp opens the new participation there. If the leg fails, the
+    // seat move is compensated (the player was never committed) and the
+    // stale closures above are restored — never left half-applied.
+    final prevTableId = player.tableId;
+    final prevSeat = player.seatNumber;
     player.tableId = targetTableId;
     player.seatNumber = chosen;
     player.seated = true;
     await player.save();
 
-    return SessionService.recordTransaction(
-      sessionId: session.id,
-      playerId: player.id,
-      type: TransactionType.reentry,
-      amount: amount,
-      hostSignatureBase64: hostSignatureBase64,
-      note: note ?? 'Re-entry with held chips',
-      secondVerifierName: secondVerifierName,
-      secondVerifierSignature: secondVerifierSignature,
-    );
+    try {
+      return await SessionService.recordTransaction(
+        sessionId: session.id,
+        playerId: player.id,
+        type: TransactionType.reentry,
+        amount: amount,
+        hostSignatureBase64: hostSignatureBase64,
+        note: note ?? 'Re-entry with held chips',
+        secondVerifierName: secondVerifierName,
+        secondVerifierSignature: secondVerifierSignature,
+      );
+    } on Object {
+      try {
+        player.tableId = prevTableId;
+        player.seatNumber = prevSeat;
+        player.seated = false;
+        await player.save();
+      } catch (_) {}
+      for (final snap in staleSnapshots) {
+        try {
+          final current = HiveService.participations.get(snap.id);
+          if (current != null) {
+            current.status = snap.status;
+            current.closedAt = snap.closedAt;
+            current.closeReason = snap.closeReason;
+            await current.save();
+          }
+        } catch (_) {}
+      }
+      rethrow;
+    }
   }
 
   /// Ensures the session has an explicit table list. Called before the

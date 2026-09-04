@@ -89,7 +89,9 @@ class DepositToChips {
   /// J8 shared gate for the seat-free wallet/marker paths that write
   /// financial and chip rows without a [LedgerTransaction] of their own.
   ///
-  /// The checks run before any write; the audit event is appended by the
+  /// Delegates to [DualVerificationService.requireForAmount] so every
+  /// service boundary applies the identical two-step contract. The
+  /// checks run before any write; the audit event is appended by the
   /// caller once the writes are complete so the event can link the actual
   /// created rows.
   static void requireDualIfApplicable({
@@ -98,17 +100,12 @@ class DepositToChips {
     required String? secondVerifierName,
     required String? secondVerifierSignature,
   }) {
-    if (!DualVerificationService.requiresSecond(amount)) return;
-    if (secondVerifierSignature == null || secondVerifierSignature.isEmpty) {
-      throw FinancialLedgerException(
-        'A second authorisation is required for this $operation.',
-      );
-    }
-    if (secondVerifierName == null || secondVerifierName.trim().isEmpty) {
-      throw FinancialLedgerException(
-        'The second verifier name is required for this $operation.',
-      );
-    }
+    DualVerificationService.requireForAmount(
+      amount: amount,
+      operation: 'this $operation',
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+    );
   }
 
   /// Records the J8 dual-authorisation event after a seat-free write set.
@@ -120,16 +117,14 @@ class DepositToChips {
     required String? secondVerifierSignature,
     String? hostSignatureBase64,
     String? relatedTransactionId,
-  }) async {
-    if (!DualVerificationService.requiresSecond(amount)) return;
-    await DualVerificationService.recordVerification(
+  }) {
+    return DualVerificationService.recordForAmount(
       operation: operation,
-      personId: personId,
       amount: amount,
-      operatorName: '',
-      secondVerifierName: secondVerifierName ?? '',
-      hostSignatureBase64: hostSignatureBase64 ?? '',
-      secondVerifierSignature: secondVerifierSignature ?? '',
+      personId: personId,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+      hostSignatureBase64: hostSignatureBase64,
       relatedTransactionId: relatedTransactionId,
     );
   }
@@ -187,13 +182,31 @@ class DepositToChips {
       secondVerifierSignature: secondVerifierSignature,
     );
 
-    final pair = await FinancialCapture.useDepositForChips(
-      personId: personId,
-      currency: currency,
-      amount: amount,
-      sessionId: sessionId,
-      linkedTransactionId: tx.id,
-    );
+    final pair = await (() async {
+      try {
+        return await FinancialCapture.useDepositForChips(
+          personId: personId,
+          currency: currency,
+          amount: amount,
+          sessionId: sessionId,
+          linkedTransactionId: tx.id,
+          secondVerifierName: secondVerifierName,
+          secondVerifierSignature: secondVerifierSignature,
+        );
+      } catch (e) {
+        // Compensation: the buy-in leg was already written, but its
+        // funding (the deposit draw) failed. Void the buy-in (append-
+        // only, carrying the same second authorisation this operation
+        // already collected) so the ledger is not left showing chips
+        // bought with a deposit that was never drawn.
+        await SessionService.voidTransaction(
+          tx.id,
+          secondVerifierName: secondVerifierName,
+          secondVerifierSignature: secondVerifierSignature,
+        );
+        rethrow;
+      }
+    })();
     if (pair == null) {
       throw FinancialLedgerException(
         'Chip buy-in was saved. The deposit conversion failed.',
@@ -264,7 +277,10 @@ class DepositToChips {
     // 1+2: the approved financial pair, session-optional, with the
     // audit signature on both events. The deposit cap
     // ("Cannot use more deposit than is held") is enforced inside
-    // FinancialCapture BEFORE any write.
+    // FinancialCapture BEFORE any write. The already-collected second
+    // authorisation is forwarded so the per-event J8 require passes;
+    // the single two-actor audit event below speaks for the whole
+    // write set.
     final pair = await FinancialCapture.useDepositForChips(
       personId: personId,
       currency: currency,
@@ -272,6 +288,8 @@ class DepositToChips {
       sessionId: sessionId,
       linkedTransactionId: null, // no transaction: no seat, no table
       signatureBase64: hostSignatureBase64,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
     );
     if (pair == null) {
       throw FinancialLedgerException('Deposit draw could not be recorded.');
@@ -379,7 +397,10 @@ class DepositToChips {
 
     // 1: the wallet draw. The AVAILABLE-DEPOSIT CAP is enforced here
     // (depositHeld guard) BEFORE anything is written — the marker can
-    // never exceed the available deposit (E2/W-2).
+    // never exceed the available deposit (E2/W-2). The already-collected
+    // second authorisation is forwarded (the J8 require inside the
+    // ledger re-checks it); the single two-actor audit event below
+    // speaks for the whole marker write set.
     final draw = await FinancialCapture.recordFrontMoneyOut(
       personId: personId,
       currency: currency,
@@ -387,6 +408,9 @@ class DepositToChips {
       sessionId: sessionId,
       note: 'Marker draw',
       signatureBase64: playerSignatureBase64,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+      dualAuditRecordedByCaller: true,
     );
     if (draw == null) {
       throw FinancialLedgerException('Marker draw could not be recorded.');

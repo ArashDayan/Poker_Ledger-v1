@@ -1380,9 +1380,36 @@ class SessionProvider extends ChangeNotifier {
   /// banker will revisit, so the chip records go with it rather than
   /// leaving orphaned movements pointing at a transaction that no
   /// longer exists.
-  Future<void> deleteTransaction(String transactionId) async {
-    await SessionService.deleteTransactionPermanently(transactionId);
-    await ChipTrackingService.deleteForTransaction(transactionId);
+  ///
+  /// J8: an at/above-threshold transaction needs the second verifier's
+  /// name + signature (gated inside [SessionService] BEFORE anything is
+  /// destroyed). If the chip-record deletion fails after the ledger row
+  /// is gone, the ledger row is restored from the held reference so the
+  /// books never show a transaction whose chip records were destroyed
+  /// by a half-failed call.
+  Future<void> deleteTransaction(
+    String transactionId, {
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+  }) async {
+    final tx = HiveService.transactions.get(transactionId);
+    await SessionService.deleteTransactionPermanently(
+      transactionId,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+    );
+    try {
+      await ChipTrackingService.deleteForTransaction(transactionId);
+    } catch (_) {
+      // Compensate: put the ledger row back rather than leaving its
+      // chip records deleted and the money row gone.
+      if (tx != null) {
+        try {
+          await HiveService.transactions.put(tx.id, tx);
+        } catch (_) {}
+      }
+      rethrow;
+    }
     notifyListeners();
   }
 

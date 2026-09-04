@@ -749,12 +749,29 @@ class SessionService {
   /// cannot be undone — callers MUST confirm with the banker first (and
   /// PIN-gate it if a PIN is set). Used for genuine mistakes that
   /// shouldn't linger even as a voided record.
-  static Future<void> deleteTransactionPermanently(String transactionId) async {
+  ///
+  /// J8: a permanent delete is strictly more destructive than a void
+  /// (which is already dual-gated), so an at/above-threshold transaction
+  /// cannot be deleted without the second verifier's name + signature.
+  /// The gate runs BEFORE anything is destroyed; because the deleted
+  /// row leaves no voided trace behind, the two-actor audit event is
+  /// the ONLY durable record that the deletion was authorised, so it is
+  /// appended immediately after the delete from the held reference.
+  static Future<void> deleteTransactionPermanently(
+    String transactionId, {
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+  }) async {
     final tx = HiveService.transactions.get(transactionId);
     if (tx == null) return;
     assertSessionActive(tx.sessionId);
     _requireRegisteredTxPlayer(tx, 'permanent delete of');
+    _requireDualForCorrection(
+        tx, 'permanently delete', secondVerifierName, secondVerifierSignature);
     await HiveService.transactions.delete(transactionId);
+    await _recordDualForCorrection(
+      tx, 'permanent_delete', secondVerifierName, secondVerifierSignature,
+    );
   }
 
   static void _requireRegisteredTxPlayer(

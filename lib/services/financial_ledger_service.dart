@@ -2,6 +2,7 @@ import 'package:uuid/uuid.dart';
 
 import '../models/enums.dart';
 import '../models/financial_event.dart';
+import 'dual_verification_service.dart';
 import 'hive_service.dart';
 import 'player_identity_service.dart';
 
@@ -118,6 +119,25 @@ class FinancialLedgerService {
   }
 
   /// Records a new financial event. Does not look at session status.
+  ///
+  /// J8 (dual authorisation): the STANDALONE money movements of this
+  /// ledger — deposits in/out, credit repayment, adjustments and
+  /// Discount grants — are sensitive operations with their own amount,
+  /// so an amount at/above the configured threshold requires the second
+  /// verifier's name + signature BEFORE the event is written, and is
+  /// recorded in the two-actor audit stream after it. The companion
+  /// events of an already-authorised operation (cashInForChips /
+  /// cashOutForChips / creditIssued / cashOutUnbacked funding rows of a
+  /// dual-gated ledger transaction, a marker draw inside a dual-gated
+  /// marker issuance, the marker settlement inside a dual-gated cage
+  /// redemption) are deliberately NOT re-gated here — their primary
+  /// operation already carried the authorisation at the same amount.
+  ///
+  /// [dualAuditRecordedByCaller] is set by composite operations (wallet
+  /// issuance, marker issuance, cage redemption) that already append ONE
+  /// two-actor audit event covering their whole write set: the
+  /// fail-closed require still runs for every leg, but this event does
+  /// not add a second, noisier row for the same authorisation.
   static Future<FinancialEvent> record({
     required String personId,
     required AppCurrency currency,
@@ -135,10 +155,23 @@ class FinancialLedgerService {
     bool? grantedAsChips,
     double? grantPercent,
     int? cycleIndex,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+    bool dualAuditRecordedByCaller = false,
   }) async {
     _assertBoxOpen();
     _assertKnownPerson(personId);
     final amountMinor = MoneyUnits.toMinor(currency, amount);
+    final amountMajor = MoneyUnits.toMajor(currency, amountMinor);
+    final dualOperation = _standaloneDualOperation(type);
+    if (dualOperation != null) {
+      DualVerificationService.requireForAmount(
+        amount: amountMajor,
+        operation: dualOperation,
+        secondVerifierName: secondVerifierName,
+        secondVerifierSignature: secondVerifierSignature,
+      );
+    }
 
     if (type == FinancialEventType.adjustment) {
       final trimmed = reason?.trim() ?? '';
@@ -185,7 +218,42 @@ class FinancialLedgerService {
       cycleIndex: cycleIndex,
     );
     await HiveService.financialEvents.put(event.id, event);
+    if (dualOperation != null && !dualAuditRecordedByCaller) {
+      await DualVerificationService.recordForAmount(
+        operation: dualOperation,
+        amount: amountMajor,
+        personId: personId,
+        secondVerifierName: secondVerifierName,
+        secondVerifierSignature: secondVerifierSignature,
+        hostSignatureBase64: signatureBase64,
+        relatedTransactionId: event.id,
+      );
+    }
     return event;
+  }
+
+  /// The J8 audit-stream operation name for a standalone sensitive
+  /// [FinancialEventType], or null when the type is a companion of an
+  /// operation that carries its own dual gate (see [record]).
+  static String? _standaloneDualOperation(FinancialEventType type) {
+    switch (type) {
+      case FinancialEventType.frontMoneyIn:
+        return 'accept_deposit';
+      case FinancialEventType.frontMoneyOut:
+        return 'return_deposit';
+      case FinancialEventType.creditRepaid:
+        return 'credit_repayment';
+      case FinancialEventType.adjustment:
+        return 'financial_adjustment';
+      case FinancialEventType.rebateGranted:
+        return 'discount_grant';
+      case FinancialEventType.cashInForChips:
+      case FinancialEventType.cashOutForChips:
+      case FinancialEventType.creditIssued:
+      case FinancialEventType.cashOutUnbacked:
+      case FinancialEventType.rebateRecovered:
+        return null;
+    }
   }
 
   /// Appends a reversal. The original event is left exactly as stored.

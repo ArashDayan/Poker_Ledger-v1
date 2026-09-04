@@ -72,6 +72,64 @@ class DualVerificationService {
     await HiveService.settings.delete(thresholdKey);
   }
 
+  /// Fail-closed J8 gate for service boundaries that are not
+  /// [LedgerTransaction]-based (financial events, chip exchanges, …).
+  ///
+  /// Throws when [amount] is at/above the configured threshold and the
+  /// second authorisation is missing (signature first, then the
+  /// verifier's name — the same two-step contract the ledger services
+  /// use). No-ops below the threshold or when the policy is off, so
+  /// existing callers below the threshold are unchanged.
+  static void requireForAmount({
+    required double amount,
+    required String operation,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+  }) {
+    if (!requiresSecond(amount)) return;
+    if (secondVerifierSignature == null || secondVerifierSignature.isEmpty) {
+      throw StateError(
+        'A second authorisation is required for $operation.',
+      );
+    }
+    if (secondVerifierName == null || secondVerifierName.trim().isEmpty) {
+      throw StateError(
+        'The second verifier name is required for $operation.',
+      );
+    }
+  }
+
+  /// Appends the J8 two-actor audit event for a service-level write.
+  ///
+  /// Only records when the amount is actually at/above the threshold —
+  /// the audit stream then carries exactly the authorisations that were
+  /// required, never noise. [operatorName] and [hostSignatureBase64]
+  /// may be empty where the caller's own record already carries the
+  /// primary actor's signature.
+  static Future<void> recordForAmount({
+    required String operation,
+    required double amount,
+    String? playerId,
+    String? personId,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+    String? hostSignatureBase64,
+    String? relatedTransactionId,
+  }) async {
+    if (!requiresSecond(amount)) return;
+    await recordVerification(
+      operation: operation,
+      playerId: playerId,
+      personId: personId,
+      amount: amount,
+      operatorName: '',
+      secondVerifierName: secondVerifierName ?? '',
+      hostSignatureBase64: hostSignatureBase64 ?? '',
+      secondVerifierSignature: secondVerifierSignature ?? '',
+      relatedTransactionId: relatedTransactionId,
+    );
+  }
+
   /// Appends an audit event recording the second-authorisation check.
   ///
   /// [operation] should be descriptive (e.g. "table_transfer",

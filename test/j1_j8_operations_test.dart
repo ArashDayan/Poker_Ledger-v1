@@ -22,10 +22,13 @@ import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/backup_service.dart';
 import 'package:poker_ledger/services/chip_bank_service.dart';
 import 'package:poker_ledger/services/chip_tracking_service.dart';
+import 'package:poker_ledger/services/deposit_to_chips.dart';
 import 'package:poker_ledger/services/dual_verification_service.dart';
+import 'package:poker_ledger/services/financial_capture.dart';
 import 'package:poker_ledger/services/financial_ledger_service.dart';
 import 'package:poker_ledger/services/hive_service.dart';
 import 'package:poker_ledger/services/participation_service.dart';
+import 'package:poker_ledger/services/rebate_service.dart';
 import 'package:poker_ledger/services/session_service.dart';
 import 'package:poker_ledger/services/table_movement_service.dart';
 import 'package:poker_ledger/services/table_operation_event_service.dart';
@@ -461,6 +464,237 @@ void main() {
       ),
       throwsA(isA<StateError>()),
     );
+    await DualVerificationService.clearThreshold();
+    await DualVerificationService.configure(enabled: false);
+  });
+
+  test('J8 standalone cage deposit above threshold is refused without a '
+      'second verifier and audited with both actors', () async {
+    final s = _session();
+    final p = await _registeredSeat(s);
+    // A registered PERSON (the financial ledger is person-scoped).
+    final personId = p.personId!;
+    await DualVerificationService.configure(enabled: true, threshold: 1000);
+
+    // Refused: no second verifier.
+    expect(
+      () => FinancialCapture.recordFrontMoneyIn(
+        personId: personId,
+        currency: AppCurrency.toman,
+        amount: 5000,
+        sessionId: s.id,
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    // Refused: signature but no name.
+    expect(
+      () => FinancialCapture.recordFrontMoneyIn(
+        personId: personId,
+        currency: AppCurrency.toman,
+        amount: 5000,
+        sessionId: s.id,
+        secondVerifierSignature: 'second',
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    // Accepted with both, and the two-actor audit row names the verifier.
+    await FinancialCapture.recordFrontMoneyIn(
+      personId: personId,
+      currency: AppCurrency.toman,
+      amount: 5000,
+      sessionId: s.id,
+      secondVerifierName: 'CFO',
+      secondVerifierSignature: 'second',
+    );
+    final dual = TableOperationEventService.all()
+        .where((e) => e.operation == TableOperationType.dualVerification)
+        .toList();
+    expect(dual, hasLength(1));
+    expect(dual.single.reason, 'accept_deposit');
+    expect(dual.single.secondVerifierName, 'CFO');
+    expect(dual.single.personId, personId);
+
+    await DualVerificationService.clearThreshold();
+    await DualVerificationService.configure(enabled: false);
+  });
+
+  test('J8 credit repayment and financial adjustment above threshold '
+      'require a second verifier', () async {
+    final s = _session();
+    final p = await _registeredSeat(s);
+    final personId = p.personId!;
+    await DualVerificationService.configure(enabled: true, threshold: 1000);
+
+    expect(
+      () => FinancialLedgerService.record(
+        personId: personId,
+        currency: AppCurrency.toman,
+        type: FinancialEventType.creditRepaid,
+        amount: 1200,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      () => FinancialLedgerService.record(
+        personId: personId,
+        currency: AppCurrency.toman,
+        type: FinancialEventType.adjustment,
+        amount: 1200,
+        adjustmentSign: 1,
+        reason: 'correction',
+      ),
+      throwsA(isA<StateError>()),
+    );
+    // No event and no audit row was written by the refusals.
+    expect(FinancialLedgerService.eventsFor(personId), isEmpty);
+    expect(
+      TableOperationEventService.all()
+          .where((e) => e.operation == TableOperationType.dualVerification)
+          .isEmpty,
+      isTrue,
+    );
+
+    await DualVerificationService.clearThreshold();
+    await DualVerificationService.configure(enabled: false);
+  });
+
+  test('J8 Discount grant and its reversal above threshold require a '
+      'second verifier', () async {
+    final s = _session();
+    final p = await _registeredSeat(s);
+    final personId = p.personId!;
+    s.rebateEnabled = true;
+    s.rebatePercent = 10;
+    s.rebateMinLoss = 5;
+    await s.save();
+    await DualVerificationService.configure(enabled: true, threshold: 1);
+
+    // Qualifying own-cash loss: 1000 in, 900 out.
+    await FinancialLedgerService.record(
+      personId: personId,
+      currency: AppCurrency.toman,
+      type: FinancialEventType.cashInForChips,
+      amount: 1000,
+      sessionId: s.id,
+    );
+    await FinancialLedgerService.record(
+      personId: personId,
+      currency: AppCurrency.toman,
+      type: FinancialEventType.cashOutForChips,
+      amount: 900,
+      sessionId: s.id,
+    );
+
+    // The grant (10% of 100 = 10, above threshold 1) is refused without
+    // the second verifier, then recorded and audited with both actors.
+    expect(
+      () => RebateService.grant(
+        sessionId: s.id,
+        personId: personId,
+        currency: AppCurrency.toman,
+        asChips: false,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    final granted = await RebateService.grant(
+      sessionId: s.id,
+      personId: personId,
+      currency: AppCurrency.toman,
+      asChips: false,
+      secondVerifierName: 'CFO',
+      secondVerifierSignature: 'second',
+    );
+    final dual = TableOperationEventService.all()
+        .where((e) => e.operation == TableOperationType.dualVerification)
+        .toList();
+    expect(dual, hasLength(1));
+    expect(dual.single.reason, 'discount_grant');
+    expect(dual.single.secondVerifierName, 'CFO');
+
+    // Reversing the same (above-threshold) grant needs the verifier too.
+    expect(
+      () => RebateService.reverseGrant(granted.id),
+      throwsA(isA<StateError>()),
+    );
+
+    await DualVerificationService.clearThreshold();
+    await DualVerificationService.configure(enabled: false);
+  });
+
+  test('J8 permanent delete above threshold requires a second verifier',
+      () async {
+    final s = _session();
+    final p = await _registeredSeat(s);
+    await DualVerificationService.configure(enabled: true, threshold: 1000);
+    final tx = await SessionService.recordTransaction(
+      sessionId: s.id,
+      playerId: p.id,
+      type: TransactionType.buyIn,
+      amount: 1500,
+      hostSignatureBase64: 'host',
+      secondVerifierName: 'CFO',
+      secondVerifierSignature: 'second',
+    );
+
+    expect(
+      () => SessionService.deleteTransactionPermanently(tx.id),
+      throwsA(isA<StateError>()),
+    );
+    expect(HiveService.transactions.get(tx.id), isNotNull);
+
+    await SessionService.deleteTransactionPermanently(
+      tx.id,
+      secondVerifierName: 'CFO',
+      secondVerifierSignature: 'second',
+    );
+    expect(HiveService.transactions.get(tx.id), isNull);
+    final deletes = TableOperationEventService.all()
+        .where((e) =>
+            e.operation == TableOperationType.dualVerification &&
+            e.reason == 'buyIn_permanent_delete')
+        .toList();
+    expect(deletes, hasLength(1));
+    expect(deletes.single.secondVerifierName, 'CFO');
+
+    await DualVerificationService.clearThreshold();
+    await DualVerificationService.configure(enabled: false);
+  });
+
+  test('J8 player chip exchange above threshold requires a second verifier',
+      () async {
+    final s = _session();
+    final p = await _registeredSeat(s);
+    await DualVerificationService.configure(enabled: true, threshold: 1000);
+    final chip = await ChipBankService.addChip(value: 1000, quantity: 10);
+
+    expect(
+      () => ChipTrackingService.recordExchange(
+        counterparty: ChipLocation.player(p.personId!),
+        chipsIn: {chip.id: 2},
+        chipsOut: {chip.id: 2},
+        sessionId: s.id,
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    final made = await ChipTrackingService.recordExchange(
+      counterparty: ChipLocation.player(p.personId!),
+      chipsIn: {chip.id: 2},
+      chipsOut: {chip.id: 2},
+      sessionId: s.id,
+      secondVerifierName: 'CFO',
+      secondVerifierSignature: 'second',
+    );
+    expect(made, hasLength(2));
+    final dual = TableOperationEventService.all()
+        .where((e) => e.operation == TableOperationType.dualVerification)
+        .toList();
+    expect(dual, hasLength(1));
+    expect(dual.single.reason, 'chip_exchange');
+    expect(dual.single.secondVerifierName, 'CFO');
+
     await DualVerificationService.clearThreshold();
     await DualVerificationService.configure(enabled: false);
   });

@@ -7,6 +7,7 @@ import '../models/enums.dart';
 import '../models/financial_event.dart';
 import '../services/rebate_service.dart';
 import 'chip_flow.dart';
+import 'dual_verification_sheet.dart';
 
 /// Suggest + confirm a Discount grant. Never writes until Confirm.
 ///
@@ -121,6 +122,22 @@ Future<FinancialEvent?> askRebateGrant(
   );
   if (confirmed != true || !context.mounted) return null;
 
+  // J8: a grant at/above the configured threshold is a sensitive money
+  // operation — collect the second authorisation before any write (the
+  // service boundary re-checks and fails closed).
+  final grantMajor = MoneyUnits.toMajor(currency, suggestion.grantMinor);
+  final secondVerifier = await collectSecondVerifierIfRequired(
+    context,
+    amount: grantMajor,
+    currency: currency,
+    operationLabel: tr('review_discount'),
+  );
+  if (secondVerifier == null || !context.mounted) return null;
+  final secondVerifierName =
+      secondVerifier.isRequired ? secondVerifier.name : null;
+  final secondVerifierSignature =
+      secondVerifier.isRequired ? secondVerifier.signature : null;
+
   if (asChips) {
     if (playerId == null || playerId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -130,7 +147,7 @@ Future<FinancialEvent?> askRebateGrant(
     }
     final dist = await ChipFlow.ask(
       context,
-      amount: MoneyUnits.toMajor(currency, suggestion.grantMinor),
+      amount: grantMajor,
       currency: currency,
     );
     if (!context.mounted) return null;
@@ -148,6 +165,8 @@ Future<FinancialEvent?> askRebateGrant(
       distribution: dist!,
       bustRealized: bustRealized,
       chipCashOutWithoutFunding: chipCashOutWithoutFunding,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
     );
   }
 
@@ -158,6 +177,8 @@ Future<FinancialEvent?> askRebateGrant(
     asChips: false,
     bustRealized: bustRealized,
     chipCashOutWithoutFunding: chipCashOutWithoutFunding,
+    secondVerifierName: secondVerifierName,
+    secondVerifierSignature: secondVerifierSignature,
   );
 }
 

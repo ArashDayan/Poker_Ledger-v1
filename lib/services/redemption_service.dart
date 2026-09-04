@@ -268,56 +268,92 @@ class RedemptionService {
       for (final e in (composition ?? const <String, int>{}).entries)
         if (e.value > 0) e.key: e.value,
     };
-    if (cleaned.isNotEmpty) {
-      movements.addAll(await ChipTrackingService.recordDistribution(
-        distribution: cleaned,
-        from: ChipLocation.player(personId),
-        to: ChipLocation.bank,
-        reason: ChipMovementReason.cashOut,
-        sessionId: sessionId,
-        note: 'cage redemption',
-      ));
-    }
-
-    // The person's own cash returns to them as cash.
     FinancialEvent? financial;
-    if (amount > 0) {
-      financial = await FinancialCapture.recordCashOutFunding(
-        personId: personId,
-        currency: currency,
-        funding: funding,
-        amount: amount,
-        sessionId: sessionId,
-        signatureBase64: hostSignatureBase64,
-        note: 'Cage redemption',
-      );
-    }
-
-    // Marker settled in the same redemption (the E2 netting).
     FinancialEvent? markerRepaid;
-    if (settleMarker) {
-      markerRepaid = await FinancialLedgerService.record(
-        personId: personId,
-        currency: currency,
-        type: FinancialEventType.creditRepaid,
-        amount: markerSettled,
-        sessionId: sessionId,
-        signatureBase64: hostSignatureBase64,
-        note: 'Marker settled in redemption',
-      );
-    }
+    try {
+      if (cleaned.isNotEmpty) {
+        movements.addAll(await ChipTrackingService.recordDistribution(
+          distribution: cleaned,
+          from: ChipLocation.player(personId),
+          to: ChipLocation.bank,
+          reason: ChipMovementReason.cashOut,
+          sessionId: sessionId,
+          note: 'cage redemption',
+        ));
+      }
 
-    if (dual) {
-      await DualVerificationService.recordVerification(
-        operation: 'cage_redemption',
-        personId: personId,
-        amount: amount,
-        operatorName: operatorName ?? '',
-        secondVerifierName: secondVerifierName ?? '',
-        hostSignatureBase64: hostSignatureBase64 ?? '',
-        secondVerifierSignature: secondVerifierSignature ?? '',
-        relatedTransactionId: financial?.id ?? markerRepaid?.id,
-      );
+      // The person's own cash returns to them as cash.
+      if (amount > 0) {
+        financial = await FinancialCapture.recordCashOutFunding(
+          personId: personId,
+          currency: currency,
+          funding: funding,
+          amount: amount,
+          sessionId: sessionId,
+          signatureBase64: hostSignatureBase64,
+          note: 'Cage redemption',
+        );
+      }
+
+      // Marker settled in the same redemption (the E2 netting). The
+      // settlement is part of the redemption the second verifier just
+      // authorised at the same amount, so the fail-closed require is
+      // satisfied by the forwarded authorisation and the single
+      // 'cage_redemption' two-actor event below speaks for the whole
+      // write set.
+      if (settleMarker) {
+        markerRepaid = await FinancialLedgerService.record(
+          personId: personId,
+          currency: currency,
+          type: FinancialEventType.creditRepaid,
+          amount: markerSettled,
+          sessionId: sessionId,
+          signatureBase64: hostSignatureBase64,
+          note: 'Marker settled in redemption',
+          secondVerifierName: secondVerifierName,
+          secondVerifierSignature: secondVerifierSignature,
+          dualAuditRecordedByCaller: true,
+        );
+      }
+
+      if (dual) {
+        await DualVerificationService.recordVerification(
+          operation: 'cage_redemption',
+          personId: personId,
+          amount: amount,
+          operatorName: operatorName ?? '',
+          secondVerifierName: secondVerifierName ?? '',
+          hostSignatureBase64: hostSignatureBase64 ?? '',
+          secondVerifierSignature: secondVerifierSignature ?? '',
+          relatedTransactionId: financial?.id ?? markerRepaid?.id,
+        );
+      }
+    } on Object {
+      // COMPENSATION (no Hive transaction available): a failure in the
+      // financial / settlement legs after the chips were already taken
+      // into the case would leave the case holding chips the ledger
+      // still assigns to the person. Append the mirror movements back
+      // (append-only reversal legs — the same compensation primitive
+      // the hand service uses) so the physical record matches the
+      // financial record that was NOT written, then rethrow. If even
+      // this compensation fails, the original error is rethrown — the
+      // reconciliation report surfaces the break loudly; nothing is
+      // ever silently absorbed.
+      for (final m in movements) {
+        try {
+          await ChipTrackingService.record(
+            chipTypeId: m.chipTypeId,
+            quantity: m.quantity,
+            from: m.to,
+            to: m.from,
+            reason: ChipMovementReason.reversal,
+            sessionId: m.sessionId,
+            note: 'cage redemption failed — chips returned',
+            chipValueOverride: m.chipValue,
+          );
+        } catch (_) {}
+      }
+      rethrow;
     }
 
     return RedemptionResult(

@@ -497,13 +497,27 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
       hint: tr('deposit_in_hint'),
       currency: currency,
     );
-    if (amount == null) return;
+    if (amount == null || !mounted) return;
+    // J8: accepting a deposit is a cage money movement — a sensitive
+    // amount needs the second authorisation before anything is written.
+    final secondVerifier = await collectSecondVerifierIfRequired(
+      context,
+      amount: amount,
+      currency: currency,
+      operationLabel: tr('accept_deposit'),
+    );
+    if (secondVerifier == null || !mounted) return;
     try {
       await FinancialCapture.recordFrontMoneyIn(
         personId: widget.personId,
         currency: currency,
         amount: amount,
         sessionId: widget.sessionId,
+        secondVerifierName:
+            secondVerifier.isRequired ? secondVerifier.name : null,
+        secondVerifierSignature: secondVerifier.isRequired
+            ? secondVerifier.signature
+            : null,
       );
       if (mounted) setState(() {});
     } catch (e) {
@@ -524,13 +538,27 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
       currency: currency,
       initial: held,
     );
-    if (amount == null) return;
+    if (amount == null || !mounted) return;
+    // J8: returning a deposit is cash physically leaving the cage — a
+    // sensitive amount needs the second authorisation first.
+    final secondVerifier = await collectSecondVerifierIfRequired(
+      context,
+      amount: amount,
+      currency: currency,
+      operationLabel: tr('return_deposit'),
+    );
+    if (secondVerifier == null || !mounted) return;
     try {
       await FinancialCapture.recordFrontMoneyOut(
         personId: widget.personId,
         currency: currency,
         amount: amount,
         sessionId: widget.sessionId,
+        secondVerifierName:
+            secondVerifier.isRequired ? secondVerifier.name : null,
+        secondVerifierSignature: secondVerifier.isRequired
+            ? secondVerifier.signature
+            : null,
       );
       if (mounted) setState(() {});
     } catch (e) {
@@ -967,6 +995,16 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
     if (confirmed != true || !mounted) return;
     final amount = double.tryParse(ctrl.text.replaceAll(',', ''));
     if (amount == null || amount <= 0) return;
+    // J8: a credit/marker repayment is a cage money movement — a
+    // sensitive amount needs the second authorisation before the event
+    // is written (the service re-checks and fails closed).
+    final secondVerifier = await collectSecondVerifierIfRequired(
+      context,
+      amount: amount,
+      currency: currency,
+      operationLabel: tr('record_credit_repaid'),
+    );
+    if (secondVerifier == null || !mounted) return;
     try {
       await FinancialLedgerService.record(
         personId: widget.personId,
@@ -974,12 +1012,62 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
         type: FinancialEventType.creditRepaid,
         amount: amount,
         sessionId: widget.sessionId,
+        secondVerifierName:
+            secondVerifier.isRequired ? secondVerifier.name : null,
+        secondVerifierSignature: secondVerifier.isRequired
+            ? secondVerifier.signature
+            : null,
       );
       if (mounted) setState(() {});
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
+  /// Reverses a Discount grant: explicit confirm, then the J8 second
+  /// authorisation when the grant amount is at/above the configured
+  /// threshold (the service re-checks and fails closed).
+  Future<void> _reverseGrant(FinancialEvent e) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr('reverse_rebate_grant')),
+        content: Text(tr('reverse_rebate_grant_confirm')),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(tr('cancel'))),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(tr('confirm'))),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final secondVerifier = await collectSecondVerifierIfRequired(
+      context,
+      amount: e.amountMajor,
+      currency: e.currency,
+      operationLabel: tr('reverse_rebate_grant'),
+    );
+    if (secondVerifier == null || !mounted) return;
+    try {
+      await RebateService.reverseGrant(
+        e.id,
+        secondVerifierName:
+            secondVerifier.isRequired ? secondVerifier.name : null,
+        secondVerifierSignature: secondVerifier.isRequired
+            ? secondVerifier.signature
+            : null,
+      );
+      if (mounted) setState(() {});
+    } catch (err) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$err')));
       }
     }
   }
@@ -1314,10 +1402,7 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
                 if (e.type == FinancialEventType.rebateGranted &&
                     !e.isReversal)
                   TextButton(
-                    onPressed: () async {
-                      await RebateService.reverseGrant(e.id);
-                      if (mounted) setState(() {});
-                    },
+                    onPressed: () => _reverseGrant(e),
                     child: Text(tr('reverse_rebate_grant'),
                         style: const TextStyle(fontSize: 11)),
                   ),

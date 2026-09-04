@@ -173,8 +173,10 @@ class ChipBankService {
 
   static Future<void> removeChip(String id) => HiveService.chips.delete(id);
 
-  /// Removes every chip type. Only reachable behind a confirmation.
-  static Future<void> clearAll() => HiveService.chips.clear();
+  /// NOTE: a bulk "clear every chip type" primitive was removed as a
+  /// dead path with no caller — a silent wipe of the whole inventory is
+  /// exactly the kind of destructive operation that must not survive as
+  /// an unreachable-but-public API.
 
   /// Totals across the whole bank.
   /// Totals for the bank.

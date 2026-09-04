@@ -6,6 +6,7 @@ import '../core/utils/currency_formatter.dart';
 import '../models/enums.dart';
 import '../models/financial_event.dart';
 import '../services/rebate_service.dart';
+import 'dual_verification_sheet.dart';
 
 /// Realise an exposed grant against a cash-out.
 ///
@@ -131,6 +132,19 @@ Future<FinancialEvent?> askRebateRealize(
   );
 
   if (choice == _RealizeChoice.override) {
+    // J8: the override is a discretionary house-money waiver (pay the
+    // full cash-out and permanently waive the reconciliation). A waiver
+    // at/above the configured threshold needs the second authorisation
+    // before it is journalled; the service re-checks and fails closed.
+    final waivedMajor =
+        MoneyUnits.toMajor(currency, plan.waivedMinor);
+    final secondVerifier = await collectSecondVerifierIfRequired(
+      context,
+      amount: waivedMajor,
+      currency: currency,
+      operationLabel: tr('rebate_pay_full'),
+    );
+    if (secondVerifier == null || !context.mounted) return null;
     return RebateService.realizeCashOut(
       sessionId: sessionId,
       personId: personId,
@@ -138,6 +152,11 @@ Future<FinancialEvent?> askRebateRealize(
       cashOutMinor: cashOutMinor,
       linkedTransactionId: linkedTransactionId,
       override: true,
+      secondVerifierName:
+          secondVerifier.isRequired ? secondVerifier.name : null,
+      secondVerifierSignature: secondVerifier.isRequired
+          ? secondVerifier.signature
+          : null,
     );
   }
   return persist(confirmed: choice == _RealizeChoice.confirm);

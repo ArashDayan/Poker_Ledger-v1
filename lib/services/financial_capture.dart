@@ -133,6 +133,10 @@ class FinancialCapture {
   /// Player hands cash to the banker as a deposit. Not a chip buy-in
   /// and not a credit repayment. Does not write the Chip Ledger.
   /// Does not become cashInForChips until explicitly converted.
+  ///
+  /// J8: an accept-deposit at/above the configured threshold requires
+  /// the second authorisation (enforced in [FinancialLedgerService.record]
+  /// before any write; audited there after it).
   static Future<FinancialEvent?> recordFrontMoneyIn({
     required String? personId,
     required AppCurrency currency,
@@ -141,6 +145,8 @@ class FinancialCapture {
     PaymentMethod? paymentMethod,
     String? note,
     String? linkedTransactionId,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) {
     return _recordFrontMoney(
       personId: personId,
@@ -151,11 +157,21 @@ class FinancialCapture {
       paymentMethod: paymentMethod,
       note: note,
       linkedTransactionId: linkedTransactionId,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
     );
   }
 
   /// Banker returns deposited cash. Not a chip cash-out and not a
   /// conversion into play. Refuses more than the remaining deposit.
+  ///
+  /// J8: a return-deposit at/above the configured threshold requires
+  /// the second authorisation (enforced in [FinancialLedgerService.record]
+  /// before any write; audited there after it). Composite operations
+  /// (a deposit-to-chips draw inside a dual-gated issuance) forward
+  /// their already-collected authorisation and set
+  /// [dualAuditRecordedByCaller] so the audit stream keeps exactly one
+  /// two-actor event for the whole operation.
   static Future<FinancialEvent?> recordFrontMoneyOut({
     required String? personId,
     required AppCurrency currency,
@@ -169,6 +185,9 @@ class FinancialCapture {
     // it on its LedgerTransaction). Optional — existing callers are
     // unchanged.
     String? signatureBase64,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+    bool dualAuditRecordedByCaller = false,
   }) {
     return _recordFrontMoney(
       personId: personId,
@@ -180,6 +199,9 @@ class FinancialCapture {
       note: note,
       linkedTransactionId: linkedTransactionId,
       signatureBase64: signatureBase64,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+      dualAuditRecordedByCaller: dualAuditRecordedByCaller,
     );
   }
 
@@ -200,6 +222,8 @@ class FinancialCapture {
     String? sessionId,
     String? linkedTransactionId,
     String? signatureBase64,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     if (personId == null || personId.isEmpty) return null;
     if (amount <= 0) return null;
@@ -212,6 +236,12 @@ class FinancialCapture {
       linkedTransactionId: linkedTransactionId,
       note: 'Used for chips',
       signatureBase64: signatureBase64,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+      // The calling operation (seated convert / seat-free wallet
+      // issuance) already enforces the J8 gate and appends its own
+      // single two-actor audit event for the whole write set.
+      dualAuditRecordedByCaller: true,
     );
     if (out == null) return null;
 
@@ -249,6 +279,9 @@ class FinancialCapture {
     String? note,
     String? linkedTransactionId,
     String? signatureBase64,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+    bool dualAuditRecordedByCaller = false,
   }) async {
     if (type != FinancialEventType.frontMoneyIn &&
         type != FinancialEventType.frontMoneyOut) {
@@ -279,6 +312,9 @@ class FinancialCapture {
       note: note,
       linkedTransactionId: linkedTransactionId,
       signatureBase64: signatureBase64,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+      dualAuditRecordedByCaller: dualAuditRecordedByCaller,
     );
   }
 }

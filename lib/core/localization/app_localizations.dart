@@ -939,6 +939,8 @@ class AppLocalizations {
       'rebate_returned_now': 'Returned to house now',
       'confirm_rebate_realize': 'Record Discount realisation',
       'reverse_rebate_grant': 'Reverse this Discount grant',
+      'reverse_rebate_grant_confirm':
+          'This reverses the grant append-only: the grant event and any chips issued for it are reversed, and the cycle can be granted again. Continue?',
       'fin_rebate_granted': 'Discount granted',
       'fin_rebate_recovered': 'Discount returned to house',
       'reason_loss_rebate': 'Loss rebate',
@@ -2027,6 +2029,8 @@ class AppLocalizations {
       'rebate_returned_now': 'الان به خانه برگشت',
       'confirm_rebate_realize': 'ثبت تحقق تخفیف',
       'reverse_rebate_grant': 'برگشت این اعطای تخفیف',
+      'reverse_rebate_grant_confirm':
+          'این کار اعطا را به‌صورت فقط-افزوده برمی‌گرداند: رویداد اعطا و تراشه‌های صادرشده برای آن معکوس می‌شوند و چرخه می‌تواند دوباره اعطا شود. ادامه می‌دهید؟',
       'fin_rebate_granted': 'تخفیف اعطاشده',
       'fin_rebate_recovered': 'تخفیف برگشته به خانه',
       'reason_loss_rebate': 'تخفیف زیان',

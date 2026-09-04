@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 import '../models/bank_count.dart';
 import '../models/chip_movement.dart';
 import 'chip_bank_service.dart';
+import 'dual_verification_service.dart';
 import 'hive_service.dart';
 import 'player_operation_guard.dart';
 
@@ -393,11 +394,10 @@ class ChipTrackingService {
     return made;
   }
 
-  /// Removes a movement. Only for undoing a mistake made seconds ago —
-  /// the UI does not expose this for historical records, because an
-  /// audit log you can quietly rewrite is not an audit log.
-  static Future<void> deleteMovement(String id) =>
-      HiveService.chipMovements.delete(id);
+  /// NOTE: a hard "delete movement" primitive was removed as a dead
+  /// path. Corrections are append-only ([reverseForTransaction], the
+  /// reversal reason) — an audit log that can be quietly rewritten is
+  /// not an audit log, and no caller needed the destructive form.
 
   /// Deletes every movement tied to one money transaction. Used when a
   /// transaction is voided and the banker confirms the chips came back.
@@ -564,12 +564,24 @@ class ChipTrackingService {
   /// Throws if the two sides are not exactly equal in value — unlike a
   /// buy-in there is no money leg to fall back on, so an unbalanced
   /// exchange would silently create or destroy chips.
+  ///
+  /// J5 absolute gate: a denomination exchange against a player is a
+  /// player chip operation and requires a registered identity.
+  ///
+  /// J8: a player exchange is a player chip operation carrying a real
+  /// value — the same classification as a table transfer, which is
+  /// dual-gated at its carried amount. An exchange at/above the
+  /// configured threshold therefore requires the second verifier's
+  /// name + signature before the first leg is written, and both actors
+  /// are recorded in the two-actor audit event after the write set.
   static Future<List<ChipMovement>> recordExchange({
     required ChipLocation counterparty,
     required Map<String, int> chipsIn,
     required Map<String, int> chipsOut,
     String? sessionId,
     ChipLocation? bank,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     final valueIn = valueOf(chipsIn);
     final valueOut = valueOf(chipsOut);
@@ -586,6 +598,13 @@ class ChipTrackingService {
     if (counterparty.isPlayer) {
       PlayerOperationGuard.requireRegisteredPerson(
           counterparty.refId, 'a chip exchange');
+      // J8 fail-closed require before any leg is written.
+      DualVerificationService.requireForAmount(
+        amount: valueIn,
+        operation: 'this chip exchange',
+        secondVerifierName: secondVerifierName,
+        secondVerifierSignature: secondVerifierSignature,
+      );
     }
 
     final target = bank ?? ChipLocation.bank;
@@ -610,6 +629,16 @@ class ChipTrackingService {
       sessionId: sessionId,
       note: tag,
     ));
+    if (counterparty.isPlayer) {
+      await DualVerificationService.recordForAmount(
+        operation: 'chip_exchange',
+        amount: valueIn,
+        personId: counterparty.refId,
+        secondVerifierName: secondVerifierName,
+        secondVerifierSignature: secondVerifierSignature,
+        relatedTransactionId: tag,
+      );
+    }
     return made;
   }
 

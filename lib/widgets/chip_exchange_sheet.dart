@@ -13,6 +13,7 @@ import '../services/chip_exchange_rules.dart';
 import '../services/chip_tracking_service.dart';
 import 'chip_holding_adjustment_sheet.dart';
 import 'chip_picker_list.dart';
+import 'dual_verification_sheet.dart';
 
 /// Colouring up / breaking down: a player swaps denominations with the
 /// Bank at exactly equal value.
@@ -164,11 +165,30 @@ class _ChipExchangeSheetState extends State<_ChipExchangeSheet> {
     setState(() => _saving = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
+      // J8: a player exchange is a player chip operation carrying a
+      // real value (the same classification as a dual-gated table
+      // transfer). Collect the second authorisation before any leg is
+      // written; the service boundary re-checks and fails closed.
+      final secondVerifier = await collectSecondVerifierIfRequired(
+        context,
+        amount: _givenValue,
+        currency: widget.currency,
+        operationLabel: tr('chip_exchange'),
+      );
+      if (secondVerifier == null) {
+        if (mounted) setState(() => _saving = false);
+        return;
+      }
       await ChipTrackingService.recordExchange(
         counterparty: ChipLocation.player(_holderRef(p)),
         chipsIn: _given,
         chipsOut: _received,
         sessionId: widget.sessionId,
+        secondVerifierName:
+            secondVerifier.isRequired ? secondVerifier.name : null,
+        secondVerifierSignature: secondVerifier.isRequired
+            ? secondVerifier.signature
+            : null,
       );
       if (!mounted) return;
       context.read<ChipBankProvider>().refresh();

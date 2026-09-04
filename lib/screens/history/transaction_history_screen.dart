@@ -297,7 +297,33 @@ class _HistoryTabState extends State<HistoryTab> {
       confirmLabel: tr('delete'),
       isDestructive: true,
     );
-    if (confirmed) await provider.deleteTransaction(tx.id);
+    if (!confirmed || !mounted) return;
+    // J8: a permanent delete is strictly more destructive than a void
+    // (which is dual-gated) — an at/above-threshold transaction needs
+    // the second authorisation before anything is destroyed.
+    final currency = provider.current?.currency ?? AppCurrency.usd;
+    final secondVerifier = await collectSecondVerifierIfRequired(
+      context,
+      amount: tx.amount,
+      currency: currency,
+      operationLabel: tr('delete_permanently'),
+    );
+    if (secondVerifier == null || !mounted) return;
+    try {
+      await provider.deleteTransaction(
+        tx.id,
+        secondVerifierName:
+            secondVerifier.isRequired ? secondVerifier.name : null,
+        secondVerifierSignature: secondVerifier.isRequired
+            ? secondVerifier.signature
+            : null,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
   }
 
   @override

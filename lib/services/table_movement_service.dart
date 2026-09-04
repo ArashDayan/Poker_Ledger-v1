@@ -138,29 +138,46 @@ class TableMovementService {
     player.seatNumber = 0;
     await player.save();
 
-    await TableOperationEventService.append(TableOperationEvent(
-      id: TableOperationEventService.newId(),
-      operation: TableOperationType.unseat,
-      playerId: player.id,
-      personId: player.personId,
-      sourceTableId: sourceTableId,
-      sourceSeat: sourceSeat,
-      reason: reason ?? (heldByFloor ? 'unseat (held)' : 'unseat (leave)'),
-      operatorName: operatorName,
-    ));
-
-    if (heldByFloor) {
+    try {
       await TableOperationEventService.append(TableOperationEvent(
         id: TableOperationEventService.newId(),
-        operation: TableOperationType.heldChips,
+        operation: TableOperationType.unseat,
         playerId: player.id,
         personId: player.personId,
         sourceTableId: sourceTableId,
         sourceSeat: sourceSeat,
-        carriedAmount: heldAmount,
-        reason: reason ?? 'chips held by floor',
+        reason: reason ?? (heldByFloor ? 'unseat (held)' : 'unseat (leave)'),
         operatorName: operatorName,
       ));
+
+      if (heldByFloor) {
+        await TableOperationEventService.append(TableOperationEvent(
+          id: TableOperationEventService.newId(),
+          operation: TableOperationType.heldChips,
+          playerId: player.id,
+          personId: player.personId,
+          sourceTableId: sourceTableId,
+          sourceSeat: sourceSeat,
+          carriedAmount: heldAmount,
+          reason: reason ?? 'chips held by floor',
+          operatorName: operatorName,
+        ));
+      }
+    } on Object {
+      // COMPENSATION: the seat row was already freed. An unseat whose
+      // audit events cannot be written must not stand unaudited —
+      // restore the exact seat state so the operation can be retried,
+      // then surface the failure. (If the restore itself fails the
+      // original error still propagates; the seat/audit divergence is
+      // visible on the floor immediately rather than discovered in the
+      // audit log later.)
+      try {
+        player.seated = true;
+        player.tableId = sourceTableId;
+        player.seatNumber = sourceSeat;
+        await player.save();
+      } catch (_) {}
+      rethrow;
     }
   }
 }

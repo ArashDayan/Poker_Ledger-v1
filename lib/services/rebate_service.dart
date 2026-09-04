@@ -3,6 +3,7 @@ import '../models/enums.dart';
 import '../models/financial_event.dart';
 import '../models/session.dart';
 import 'chip_tracking_service.dart';
+import 'dual_verification_service.dart';
 import 'financial_ledger_service.dart';
 import 'hive_service.dart';
 import 'player_operation_guard.dart';
@@ -589,6 +590,11 @@ class RebateService {
   ///
   /// [asChips] only marks the event. The UI must call [grantAsChips]
   /// so `grantedAsChips = true` is never stored without a real issuance.
+  ///
+  /// J8: a grant at/above the configured threshold is a sensitive money
+  /// operation and requires the second authorisation (enforced in
+  /// [FinancialLedgerService.record] before the event is written and
+  /// audited there with both actors).
   static Future<FinancialEvent> grant({
     required String sessionId,
     required String personId,
@@ -597,6 +603,8 @@ class RebateService {
     String? note,
     bool bustRealized = false,
     bool chipCashOutWithoutFunding = false,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     final suggestion = suggest(
       sessionId: sessionId,
@@ -622,6 +630,8 @@ class RebateService {
       grantedAsChips: asChips,
       grantPercent: cfg.percent,
       cycleIndex: suggestion.cycleIndex,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
     );
   }
 
@@ -645,6 +655,8 @@ class RebateService {
     String? note,
     bool bustRealized = false,
     bool chipCashOutWithoutFunding = false,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     if (playerId.isEmpty || !hasChipCounts(distribution)) {
       throw FinancialLedgerException(
@@ -659,6 +671,8 @@ class RebateService {
       note: note,
       bustRealized: bustRealized,
       chipCashOutWithoutFunding: chipCashOutWithoutFunding,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
     );
     try {
       await issueGrantChips(
@@ -667,7 +681,19 @@ class RebateService {
         distribution: distribution,
       );
     } catch (_) {
-      await reverseGrant(grant.id);
+      // Compensation: undo the grant event so a chip-issuance failure
+      // cannot leave a granted-but-unissued cycle. The grant carried
+      // this operation's second authorisation at the same amount, so
+      // the reversal forwards it (above threshold, the reversal gate
+      // would otherwise refuse the very compensation that undoes the
+      // failed write).
+      try {
+        await reverseGrant(
+          grant.id,
+          secondVerifierName: secondVerifierName,
+          secondVerifierSignature: secondVerifierSignature,
+        );
+      } catch (_) {}
       rethrow;
     }
     return grant;
@@ -796,6 +822,17 @@ class RebateService {
   /// to the house, or journals a Banker override waiver.
   ///
   /// Idempotent: a second call after the type-9 row exists writes nothing.
+  ///
+  /// J8: the NORMAL realization is the mechanical settlement of a
+  /// cash-out that already carried its own dual gate at the same
+  /// amount — the clawback/lost-in-play figures are the frozen
+  /// formula's derived result, not a discretionary operation, so no
+  /// second authorisation is added there. The OVERRIDE is different:
+  /// it is a discretionary house-money waiver ("pay the full cash-out
+  /// and permanently waive the reconciliation"), so an override at/above
+  /// the configured threshold requires the second verifier's name +
+  /// signature before the waiver is journalled, audited with both
+  /// actors after it.
   static Future<FinancialEvent?> realizeCashOut({
     required String sessionId,
     required String personId,
@@ -803,6 +840,8 @@ class RebateService {
     required int cashOutMinor,
     String? linkedTransactionId,
     bool override = false,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     final normal = previewRealization(
       sessionId: sessionId,
@@ -814,11 +853,20 @@ class RebateService {
     if (!plan.hasJournalRow) return null;
     final amount = override ? plan.waivedMinor : plan.returnedMinor;
     if (amount <= 0) return null;
-    return FinancialLedgerService.record(
+    final amountMajor = MoneyUnits.toMajor(currency, amount);
+    if (override) {
+      DualVerificationService.requireForAmount(
+        amount: amountMajor,
+        operation: 'the Discount override waiver',
+        secondVerifierName: secondVerifierName,
+        secondVerifierSignature: secondVerifierSignature,
+      );
+    }
+    final event = await FinancialLedgerService.record(
       personId: personId,
       currency: currency,
       type: FinancialEventType.rebateRecovered,
-      amount: MoneyUnits.toMajor(currency, amount),
+      amount: amountMajor,
       sessionId: sessionId,
       linkedTransactionId: linkedTransactionId,
       reason: plan.recoveryKind,
@@ -831,14 +879,42 @@ class RebateService {
       baseLossMinor: plan.originalLossMinor > 0 ? plan.originalLossMinor : null,
       grantPercent: plan.grantPercent > 0 ? plan.grantPercent : null,
     );
+    if (override) {
+      await DualVerificationService.recordForAmount(
+        operation: 'discount_override_waiver',
+        amount: amountMajor,
+        personId: personId,
+        secondVerifierName: secondVerifierName,
+        secondVerifierSignature: secondVerifierSignature,
+        relatedTransactionId: event.id,
+      );
+    }
+    return event;
   }
 
   /// Append-only reverse of a grant, and of any chips issued for it.
-  static Future<FinancialEvent> reverseGrant(String eventId) async {
+  ///
+  /// J8: reversing a grant is a correction of a money record — an
+  /// at/above-threshold grant cannot be reversed without the second
+  /// verifier's name + signature, and the reversal is audited with
+  /// both actors.
+  static Future<FinancialEvent> reverseGrant(
+    String eventId, {
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+  }) async {
     final event = HiveService.financialEvents.get(eventId);
     if (event == null || event.type != FinancialEventType.rebateGranted) {
       throw FinancialLedgerException('Cannot reverse: grant not found.');
     }
+    final amountMajor =
+        MoneyUnits.toMajor(event.currency, event.amountMinor);
+    DualVerificationService.requireForAmount(
+      amount: amountMajor,
+      operation: 'reversing this Discount grant',
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+    );
     final reversal = await FinancialLedgerService.reverse(
       eventId,
       reason: 'Discount grant reversed',
@@ -847,14 +923,15 @@ class RebateService {
       eventId,
       note: 'Discount grant reversed',
     );
-    return reversal;
-  }
-
-  static Future<FinancialEvent> reverseRecovery(String eventId) {
-    return FinancialLedgerService.reverse(
-      eventId,
-      reason: 'Discount recovery reversed',
+    await DualVerificationService.recordForAmount(
+      operation: 'discount_grant_reversal',
+      amount: amountMajor,
+      personId: event.personId,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+      relatedTransactionId: eventId,
     );
+    return reversal;
   }
 
   /// Frozen poker books plus Discount chips as a reconciling item.
