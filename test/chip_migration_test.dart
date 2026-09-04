@@ -69,6 +69,32 @@ Future<String> _chip(double value, int quantity) async {
   return c.id;
 }
 
+/// Writes a legacy chip movement directly, bypassing the J5 identity
+/// gate. This is the ONLY honest way to seed pre-J5/unlinked seat rows:
+/// NEW operations must refuse them, but migration must still prove it
+/// preserves old data.
+Future<void> _rawMovement({
+  required String chipTypeId,
+  required int quantity,
+  required ChipLocation from,
+  required ChipLocation to,
+  required ChipMovementReason reason,
+  String? sessionId,
+}) async {
+  final chip = ChipBankService.byId(chipTypeId)!;
+  final m = ChipMovement(
+    id: 'legacy-${DateTime.now().microsecondsSinceEpoch}-${from.encoded}-$to',
+    sessionId: sessionId,
+    chipTypeId: chipTypeId,
+    chipValue: chip.value,
+    quantity: quantity,
+    fromLocation: from.encoded,
+    toLocation: to.encoded,
+    reason: reason.wire,
+  );
+  await HiveService.chipMovements.put(m.id, m);
+}
+
 Future<void> _session() async {
   final s = PokerSession(
     id: 's1',
@@ -150,7 +176,7 @@ void main() {
     await _session();
     final seat = await _seat(name: 'Reza'); // no personId
     final c100 = await _chip(100, 500);
-    await ChipTrackingService.record(
+    await _rawMovement(
       chipTypeId: c100,
       quantity: 5,
       from: ChipLocation.bank,
@@ -264,7 +290,7 @@ void main() {
     await _session();
     final c100 = await _chip(100, 500);
     // Already person-scoped (ref not in the players box): must stay.
-    await ChipTrackingService.record(
+    await _rawMovement(
       chipTypeId: c100,
       quantity: 1,
       from: ChipLocation.bank,
@@ -300,7 +326,7 @@ void main() {
       sessionId: 's1',
     );
     // seat → person-x: only the source is a seat (x unlinked elsewhere).
-    await ChipTrackingService.record(
+    await _rawMovement(
       chipTypeId: c100,
       quantity: 1,
       from: ChipLocation.player(seat),

@@ -9,6 +9,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/hive_service.dart';
@@ -28,6 +29,7 @@ Future<void> _open() async {
   await Hive.openBox<Player>(HiveService.playersBox);
   await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
   await Hive.openBox(HiveService.settingsBox);
+  await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
 }
 
 Future<void> _close() async {
@@ -49,11 +51,14 @@ PokerSession _session() {
   return s;
 }
 
-Player _p(String sid, String name, {int seat = 1, String? tableId}) {
+Future<Player> _p(String sid, String name, {int seat = 1, String? tableId}) async {
+  final personId = _uuid.v4();
   final p = Player(
       id: _uuid.v4(), sessionId: sid, name: name, seatNumber: seat,
-      tableId: tableId);
-  HiveService.players.put(p.id, p);
+      tableId: tableId, personId: personId);
+  await HiveService.playerIdentities.put(
+      personId, PlayerIdentity(id: personId, displayName: name));
+  await HiveService.players.put(p.id, p);
   return p;
 }
 
@@ -72,7 +77,7 @@ void main() {
     test('Mode 1: rake attributed to a player is stored against them',
         () async {
       final s = _session();
-      final p = _p(s.id, 'Ari');
+      final p = await _p(s.id, 'Ari');
       final rake = await _tx(s.id, p.id, TransactionType.rakeCollection, 50);
 
       expect(rake.playerId, p.id);
@@ -92,7 +97,7 @@ void main() {
 
     test('both modes feed the same session total', () async {
       final s = _session();
-      final p = _p(s.id, 'Ari');
+      final p = await _p(s.id, 'Ari');
       await _tx(s.id, p.id, TransactionType.rakeCollection, 30);
       await _tx(s.id, null, TransactionType.rakeCollection, 20);
 
@@ -105,7 +110,7 @@ void main() {
     test('attributed rake NEVER changes the player profit or loss',
         () async {
       final s = _session();
-      final p = _p(s.id, 'Ari');
+      final p = await _p(s.id, 'Ari');
       await _tx(s.id, p.id, TransactionType.buyIn, 500);
       await _tx(s.id, p.id, TransactionType.cashOut, 800);
       final plBefore = SessionService.playerProfitLoss(s.id, p.id);
@@ -122,7 +127,7 @@ void main() {
     test('attributed rake behaves identically in the balance check',
         () async {
       final s = _session();
-      final p = _p(s.id, 'Ari');
+      final p = await _p(s.id, 'Ari');
       await _tx(s.id, p.id, TransactionType.buyIn, 1000);
       await _tx(s.id, p.id, TransactionType.rakeCollection, 100);
       await _tx(s.id, p.id, TransactionType.cashOut, 900);
@@ -136,7 +141,7 @@ void main() {
     test('rake carries the table it was taken at', () async {
       final s = _session();
       await TableService.addTable(s, name: 'Table 2');
-      final p = _p(s.id, 'B', seat: 1, tableId: 'table-2');
+      final p = await _p(s.id, 'B', seat: 1, tableId: 'table-2');
       final attributed =
           await _tx(s.id, p.id, TransactionType.rakeCollection, 25);
       final general = await _tx(s.id, null, TransactionType.rakeCollection, 15,

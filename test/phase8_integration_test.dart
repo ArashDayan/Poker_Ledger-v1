@@ -114,7 +114,9 @@ void main() {
       tableNumber: '1',
       currency: AppCurrency.usd,
     );
-    final player = await p.addPlayer(name: 'Bo', seatNumber: 1);
+    final boId = (await PlayerIdentityService.createNew('Bo'))!.id;
+    final player = await p.addPlayer(
+        name: 'Bo', seatNumber: 1, personId: boId);
     await p.recordTransaction(
       playerId: player.id,
       type: TransactionType.buyIn,

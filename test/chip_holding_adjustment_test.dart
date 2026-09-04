@@ -39,6 +39,10 @@ Future<void> _open() async {
   await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
   await Hive.openBox(HiveService.settingsBox);
   await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
+  for (final id in ['p1', 'p2']) {
+    await HiveService.playerIdentities.put(
+        id, PlayerIdentity(id: id, displayName: id));
+  }
   await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
   await Hive.openBox<ChipType>(HiveService.chipsBox);
   await Hive.openBox<ChipMovement>(HiveService.chipMovementsBox);

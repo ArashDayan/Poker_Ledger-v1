@@ -18,6 +18,7 @@ import 'package:poker_ledger/models/enums.dart';
 import 'package:poker_ledger/models/financial_event.dart';
 import 'package:poker_ledger/models/hand.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/providers/session_provider.dart';
@@ -39,6 +40,7 @@ Future<void> _open() async {
   await Hive.openBox<Player>(HiveService.playersBox);
   await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
   await Hive.openBox(HiveService.settingsBox);
+  await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
   await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
   await Hive.openBox<Hand>(HiveService.handsBox);
 }
@@ -64,9 +66,27 @@ Future<SessionProvider> _provider() async {
 
 PokerSession get _live => HiveService.sessions.get('session-1')!;
 
+Future<String> _registeredPerson(String name) async {
+  final id = 'person-$name-${DateTime.now().microsecondsSinceEpoch}';
+  await HiveService.playerIdentities.put(
+    id,
+    PlayerIdentity(id: id, displayName: name),
+  );
+  return id;
+}
+
 /// Mirrors exactly what TransactionsTab now computes for the picker.
 List<Player> actionPlayers(SessionProvider p) =>
     p.isMultiTable ? p.playersAtActiveTable : p.players;
+
+
+Future<String> _j5regId(String name) async {
+  final normalized = name.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+  final id = 'j5reg-$normalized';
+  await HiveService.playerIdentities.put(
+      id, PlayerIdentity(id: id, displayName: name));
+  return id;
+}
 
 void main() {
   setUp(_open);
@@ -75,9 +95,9 @@ void main() {
   group('1. single-table sessions are unchanged', () {
     test('the picker shows every player in the session', () async {
       final provider = await _provider();
-      await provider.addPlayer(name: 'Ali', seatNumber: 1);
-      await provider.addPlayer(name: 'Sara', seatNumber: 2);
-      await provider.addPlayer(name: 'Nima', seatNumber: 3);
+      await provider.addPlayer(name: 'Ali', personId: await _j5regId('Ali'), seatNumber: 1);
+      await provider.addPlayer(name: 'Sara', personId: await _j5regId('Sara'), seatNumber: 2);
+      await provider.addPlayer(name: 'Nima', personId: await _j5regId('Nima'), seatNumber: 3);
 
       expect(provider.isMultiTable, isFalse);
       final list = actionPlayers(provider);
@@ -100,9 +120,9 @@ void main() {
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
 
       await provider.addPlayer(
-          name: 'Ali', seatNumber: 1, tableId: ids[0]);
+          name: 'Ali', personId: await _j5regId('Ali'), seatNumber: 1, tableId: ids[0]);
       await provider.addPlayer(
-          name: 'Sara', seatNumber: 2, tableId: ids[1]);
+          name: 'Sara', personId: await _j5regId('Sara'), seatNumber: 2, tableId: ids[1]);
 
       expect(provider.isMultiTable, isTrue);
 
@@ -121,9 +141,9 @@ void main() {
       await provider.addTable(name: 'Table 2');
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
 
-      await provider.addPlayer(name: 'A1', seatNumber: 1, tableId: ids[0]);
-      await provider.addPlayer(name: 'A2', seatNumber: 2, tableId: ids[0]);
-      await provider.addPlayer(name: 'B1', seatNumber: 1, tableId: ids[1]);
+      await provider.addPlayer(name: 'A1', personId: await _j5regId('A1'), seatNumber: 1, tableId: ids[0]);
+      await provider.addPlayer(name: 'A2', personId: await _j5regId('A2'), seatNumber: 2, tableId: ids[0]);
+      await provider.addPlayer(name: 'B1', personId: await _j5regId('B1'), seatNumber: 1, tableId: ids[1]);
 
       provider.setActiveTable(ids[0]);
       expect(actionPlayers(provider).map((p) => p.name), ['A1', 'A2']);
@@ -145,7 +165,7 @@ void main() {
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
 
       final t1 = await provider.addPlayer(
-          name: 'Ali', seatNumber: 1, tableId: ids[0]);
+          name: 'Ali', personId: await _j5regId('Ali'), seatNumber: 1, tableId: ids[0]);
 
       provider.setActiveTable(ids[1]);
       expect(actionPlayers(provider).map((p) => p.id),
@@ -159,7 +179,7 @@ void main() {
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
 
       final t2 = await provider.addPlayer(
-          name: 'Sara', seatNumber: 1, tableId: ids[1]);
+          name: 'Sara', personId: await _j5regId('Sara'), seatNumber: 1, tableId: ids[1]);
 
       provider.setActiveTable(ids[0]);
       expect(actionPlayers(provider).map((p) => p.id),
@@ -172,9 +192,9 @@ void main() {
       await provider.addTable(name: 'Table 3');
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
 
-      await provider.addPlayer(name: 'A', seatNumber: 1, tableId: ids[0]);
-      await provider.addPlayer(name: 'B', seatNumber: 1, tableId: ids[1]);
-      await provider.addPlayer(name: 'C', seatNumber: 1, tableId: ids[2]);
+      await provider.addPlayer(name: 'A', personId: await _j5regId('A'), seatNumber: 1, tableId: ids[0]);
+      await provider.addPlayer(name: 'B', personId: await _j5regId('B'), seatNumber: 1, tableId: ids[1]);
+      await provider.addPlayer(name: 'C', personId: await _j5regId('C'), seatNumber: 1, tableId: ids[2]);
 
       for (var i = 0; i < 3; i++) {
         provider.setActiveTable(ids[i]);
@@ -196,7 +216,7 @@ void main() {
 
       // Seat a player at the table the banker is looking at.
       final fresh = await provider.addPlayer(
-          name: 'Sara', seatNumber: 3, tableId: ids[1]);
+          name: 'Sara', personId: await _j5regId('Sara'), seatNumber: 3, tableId: ids[1]);
 
       // The very next read already has them — the list is derived from
       // Hive on demand, not cached.
@@ -211,7 +231,7 @@ void main() {
 
       provider.setActiveTable(ids[1]);
       final other = await provider.addPlayer(
-          name: 'Ali', seatNumber: 1, tableId: ids[0]);
+          name: 'Ali', personId: await _j5regId('Ali'), seatNumber: 1, tableId: ids[0]);
 
       expect(actionPlayers(provider).map((p) => p.id),
           isNot(contains(other.id)));
@@ -224,9 +244,13 @@ void main() {
       await provider.addTable(name: 'Table 2');
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
 
-      await provider.addPlayer(name: 'Ali', seatNumber: 3, tableId: ids[0]);
+      await provider.addPlayer(name: 'Ali', personId: await _j5regId('Ali'), seatNumber: 3, tableId: ids[0]);
+      final saraPersonId = await _registeredPerson('Sara');
       final sara = await provider.addPlayer(
-          name: 'Sara', seatNumber: 3, tableId: ids[1]);
+          name: 'Sara',
+          seatNumber: 3,
+          tableId: ids[1],
+          personId: saraPersonId);
 
       provider.setActiveTable(ids[1]);
       final picked = actionPlayers(provider).single;
@@ -255,9 +279,9 @@ void main() {
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
 
       final a = await provider.addPlayer(
-          name: 'Ali', seatNumber: 3, tableId: ids[0]);
+          name: 'Ali', personId: await _j5regId('Ali'), seatNumber: 3, tableId: ids[0]);
       final s = await provider.addPlayer(
-          name: 'Sara', seatNumber: 3, tableId: ids[1]);
+          name: 'Sara', personId: await _j5regId('Sara'), seatNumber: 3, tableId: ids[1]);
 
       expect(a.seatNumber, s.seatNumber);
       expect(a.id, isNot(s.id));
@@ -274,9 +298,9 @@ void main() {
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
 
       final a = await provider.addPlayer(
-          name: 'Ali', seatNumber: 3, tableId: ids[0]);
+          name: 'Ali', personId: await _j5regId('Ali'), seatNumber: 3, tableId: ids[0]);
       final s = await provider.addPlayer(
-          name: 'Sara', seatNumber: 3, tableId: ids[1]);
+          name: 'Sara', personId: await _j5regId('Sara'), seatNumber: 3, tableId: ids[1]);
 
       // This is the subtitle the picker renders.
       expect(TableService.tableById(_live, a.tableId).name,
@@ -289,7 +313,7 @@ void main() {
     test('a null-tableId player appears on Table 1', () async {
       final provider = await _provider();
       // Created before any second table existed -> tableId stays null.
-      final legacy = await provider.addPlayer(name: 'Old', seatNumber: 1);
+      final legacy = await provider.addPlayer(name: 'Old', personId: await _j5regId('Old'), seatNumber: 1);
       expect(legacy.tableId, isNull);
 
       await provider.addTable(name: 'Table 2');
@@ -307,7 +331,7 @@ void main() {
     test('a null-tableId player is labelled with the first table',
         () async {
       final provider = await _provider();
-      final legacy = await provider.addPlayer(name: 'Old', seatNumber: 1);
+      final legacy = await provider.addPlayer(name: 'Old', personId: await _j5regId('Old'), seatNumber: 1);
       await provider.addTable(name: 'Table 2');
 
       // tableById(null) -> first table, matching where playersAt() puts
@@ -324,8 +348,8 @@ void main() {
       await provider.addTable(name: 'Table 2');
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
 
-      await provider.addPlayer(name: 'Ali', seatNumber: 1, tableId: ids[0]);
-      await provider.addPlayer(name: 'Sara', seatNumber: 2, tableId: ids[1]);
+      await provider.addPlayer(name: 'Ali', personId: await _j5regId('Ali'), seatNumber: 1, tableId: ids[0]);
+      await provider.addPlayer(name: 'Sara', personId: await _j5regId('Sara'), seatNumber: 2, tableId: ids[1]);
 
       provider.setActiveTable(ids[1]);
 

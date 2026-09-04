@@ -4,6 +4,7 @@ import '../models/enums.dart';
 import '../models/table_participation.dart';
 import '../models/transaction.dart';
 import 'hive_service.dart';
+import 'player_operation_guard.dart';
 
 const _uuid = Uuid();
 
@@ -85,6 +86,11 @@ class ParticipationService {
     if (!_boxOpen) {
       throw StateError('Participation tracking is unavailable.');
     }
+    // J5 absolute gate: opening a participation is a player table
+    // operation. The seat row must resolve to a registered Player
+    // Master identity; no anonymous/legacy participation is created.
+    PlayerOperationGuard.requireRegisteredHolderRef(
+        seatPlayerId, 'open a table participation');
     final existing = openFor(
       sessionId: sessionId,
       seatPlayerId: seatPlayerId,
@@ -111,12 +117,22 @@ class ParticipationService {
   /// (closing is the caller's step, which knows the reason). Table
   /// rows (no playerId) are never stamped.
   ///
-  /// TRACKING NEVER BREAKS MONEY: any failure here is swallowed —
+  /// TRACKING NEVER BREAKS MONEY except for the J5 identity gate:
+  /// an anonymous/unlinked player leg is rejected before stamping
+  /// (through [PlayerOperationGuard.requireRegisteredHolderRef]) because
+  /// no new player participation may be created without a Player Master
+  /// identity. Other derived/degraded failures are still swallowed —
   /// participation is an overlay, and the money leg is the primary
-  /// record. An unstamped leg settles exactly as before (P-1: money
-  /// is derived from the transactions, not the participations).
+  /// record. P-1: money is derived from the transactions, not the
+  /// participations.
   static void stampTransaction(LedgerTransaction tx) {
     if (!_boxOpen || tx.playerId == null) return;
+    // J5 absolute gate: stamping a player money leg to a participation
+    // is a player table operation. Throws for anonymous/unlinked player
+    // legs instead of silently leaving an unstamped (and unauditable)
+    // participation.
+    PlayerOperationGuard.requireRegisteredHolderRef(
+        tx.playerId, 'stamp a table participation');
     final tableId = tx.tableId;
     if (tableId == null || tableId.isEmpty) return;
 
@@ -173,6 +189,10 @@ class ParticipationService {
     final p = HiveService.participations.get(participationId);
     if (p == null) return null;
     if (p.isClosed) return p;
+    // J5 absolute gate: changing/ending a player participation is a
+    // player table operation and must target a registered identity.
+    PlayerOperationGuard.requireRegisteredHolderRef(
+        p.seatPlayerId, 'close a table participation');
     p.status = ParticipationStatus.closed;
     p.closedAt = DateTime.now();
     p.closeReason = reason;
@@ -188,6 +208,10 @@ class ParticipationService {
     final p = HiveService.participations.get(participationId);
     if (p == null || !p.isOpen) return;
     if (p.tableId == newTableId) return;
+    // J5 absolute gate: moving an open participation to another table is
+    // a player table operation and must target a registered identity.
+    PlayerOperationGuard.requireRegisteredHolderRef(
+        p.seatPlayerId, 'move a table participation');
     p.tableId = newTableId;
     p.save();
   }
@@ -199,6 +223,11 @@ class ParticipationService {
     var closed = 0;
     for (final p in HiveService.participations.values.toList()) {
       if (p.sessionId != sessionId || !p.isOpen) continue;
+      // Session end closes an existing player participation, so it is
+      // still a player-scoped write. [close] applies the J5 identity
+      // gate; an unregistered/legacy open row must be resolved (link or
+      // register the person) before the night can close it — it is not
+      // silently left open nor silently closed without an identity.
       close(p.id, reason: ParticipationCloseReason.sessionEnd);
       closed++;
     }

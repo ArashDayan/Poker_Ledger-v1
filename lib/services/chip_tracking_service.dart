@@ -4,6 +4,7 @@ import '../models/bank_count.dart';
 import '../models/chip_movement.dart';
 import 'chip_bank_service.dart';
 import 'hive_service.dart';
+import 'player_operation_guard.dart';
 
 const _uuid = Uuid();
 
@@ -300,6 +301,21 @@ class ChipTrackingService {
   // Recording
   // -----------------------------------------------------------------
 
+  /// J5 absolute gate for the low-level chip primitives. Any movement
+  /// with a [ChipLocation.player] on either end is a player-attributed
+  /// chip operation, so the holder reference must resolve to a
+  /// registered Player Master identity. House/table/bank/cage movements
+  /// without a player location are untouched.
+  static void _assertPlayerLocationsRegistered(
+      List<ChipLocation> locations) {
+    for (final loc in locations) {
+      if (loc.isPlayer) {
+        PlayerOperationGuard.requireRegisteredHolderRef(
+            loc.refId, 'a player chip movement');
+      }
+    }
+  }
+
   /// Appends one movement.
   ///
   /// Deliberately permissive: it will record a move that takes a
@@ -308,6 +324,7 @@ class ChipTrackingService {
   /// a negative balance is surfaced loudly by the audit report instead
   /// of being silently prevented. Refusing here would push them to
   /// simply not record the movement, which is far worse for the audit.
+  /// (Player-scoped movements additionally pass the J5 identity gate.)
   static Future<ChipMovement> record({
     required String chipTypeId,
     required int quantity,
@@ -325,6 +342,7 @@ class ChipTrackingService {
     if (from == to) {
       throw ArgumentError('Chip movement source and destination are the same');
     }
+    _assertPlayerLocationsRegistered(const [from, to]);
 
     final chip = ChipBankService.byId(chipTypeId);
     final value = chipValueOverride ?? chip?.value ?? 0;
@@ -563,6 +581,12 @@ class ChipTrackingService {
     if (valueIn == 0) {
       throw ArgumentError('Exchange cannot be empty');
     }
+    // J5 absolute gate: a denomination exchange against a player is a
+    // player chip operation and requires a registered identity.
+    if (counterparty.isPlayer) {
+      PlayerOperationGuard.requireRegisteredPerson(
+          counterparty.refId, 'a chip exchange');
+    }
 
     final target = bank ?? ChipLocation.bank;
     final tag = 'exchange:${_uuid.v4()}';
@@ -639,6 +663,11 @@ class ChipTrackingService {
     if (playerId.isEmpty) {
       throw ArgumentError('Adjustment needs a player.');
     }
+    // J5 absolute gate: a player holding adjustment is a player chip
+    // operation and must be performed against a registered identity.
+    PlayerOperationGuard.requireRegisteredPerson(
+        playerId, 'a chip holding adjustment');
+
     if (counted.isEmpty) {
       throw ArgumentError('Physical count cannot be empty');
     }

@@ -5,6 +5,7 @@ import '../models/session.dart';
 import 'chip_tracking_service.dart';
 import 'financial_ledger_service.dart';
 import 'hive_service.dart';
+import 'player_operation_guard.dart';
 
 /// Recovery journal reasons. Stored on [FinancialEvent.reason].
 class RebateRecoveryKind {
@@ -685,10 +686,11 @@ class RebateService {
       );
     }
     if (!hasChipCounts(distribution)) return Future.value(const []);
-    // Phase 2a: grant chips enter the PERSON's holding (personId), or
-    // the seat row's holding for a legacy unlinked seat. The grant
-    // event itself is already person-scoped; the chips must match.
+    // Phase 2a: grant chips enter the PERSON's holding (personId), never
+    // a legacy unlinked seat. The grant event is already person-scoped;
+    // the seat must point at the same registered Player Master.
     final seat = HiveService.players.get(playerId);
+    PlayerOperationGuard.requireRegistered(seat, 'a chip-form Discount');
     final holder = ChipTrackingService.holderRef(
         playerId: playerId, personId: seat?.personId);
     return ChipTrackingService.recordDistribution(

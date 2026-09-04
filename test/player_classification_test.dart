@@ -16,6 +16,7 @@ import 'package:poker_ledger/models/enums.dart';
 import 'package:poker_ledger/models/financial_event.dart';
 import 'package:poker_ledger/models/hand.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/providers/session_provider.dart';
@@ -46,6 +47,8 @@ Future<void> _open() async {
   await Hive.openBox<Player>(HiveService.playersBox);
   await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
   await Hive.openBox(HiveService.settingsBox);
+  await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
+
   await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
   await Hive.openBox<Hand>(HiveService.handsBox);
 }
@@ -71,6 +74,15 @@ Future<SessionProvider> _provider() async {
 
 Player _stored(String id) => HiveService.players.get(id)!;
 
+
+Future<String> _j5regId(String name) async {
+  final normalized = name.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+  final id = 'j5reg-$normalized';
+  await HiveService.playerIdentities.put(
+      id, PlayerIdentity(id: id, displayName: name));
+  return id;
+}
+
 void main() {
   setUp(_open);
   tearDown(_close);
@@ -83,14 +95,14 @@ void main() {
 
     test('a player can be created with no classification', () async {
       final provider = await _provider();
-      final p = await provider.addPlayer(name: 'Ali', seatNumber: 1);
+      final p = await provider.addPlayer(name: 'Ali', personId: await _j5regId('Ali'), seatNumber: 1);
       expect(_stored(p.id).tags, isEmpty);
     });
 
     test('classification is optional — never forced on save', () async {
       final provider = await _provider();
       final p = await provider.addPlayer(
-          name: 'Ali', seatNumber: 1, tags: <PlayerTag>[]);
+          name: 'Ali', personId: await _j5regId('Ali'), seatNumber: 1, tags: <PlayerTag>[]);
       expect(_stored(p.id).tags, isEmpty);
     });
   });
@@ -196,7 +208,7 @@ void main() {
     test('a single classification round-trips through Hive', () async {
       final provider = await _provider();
       final p = await provider.addPlayer(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 1,
         tags: [PlayerTag.vip],
       );
@@ -281,7 +293,7 @@ void main() {
         () async {
       final provider = await _provider();
       final p = await provider.addPlayer(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 4,
         tags: [PlayerTag.vip],
         sampleSignatureBase64: 'SIG1',

@@ -604,7 +604,9 @@ class SessionProvider extends ChangeNotifier {
     /// Permanent identity to attach to this seat. Null leaves the seat
     /// unlinked — the correct state for every caller that has not gone
     /// through confirm-on-suggest. This method never invents or
-    /// suggests a personId.
+    /// suggests a personId. It is a NON-FINANCIAL registration/setup
+    /// primitive: every subsequent player money/chip/participation
+    /// operation is separately gated by the J5 identity gate.
     String? personId,
   }) async {
     if (_current == null) throw StateError('No active session.');
@@ -690,6 +692,13 @@ class SessionProvider extends ChangeNotifier {
     String? tableId,
     String? personId,
   }) async {
+    // J5 gate before any row or leg is written: an opening buy-in is a
+    // player financial operation and must be linked to a registered
+    // Player Master identity.
+    if (buyInAmount != null && buyInAmount > 0) {
+      PlayerOperationGuard.requireRegisteredPerson(
+          personId, 'an opening buy-in');
+    }
     final player = await addPlayer(
       name: name,
       seatNumber: seatNumber,
@@ -753,6 +762,8 @@ class SessionProvider extends ChangeNotifier {
     if (personId.trim().isEmpty) {
       throw StateError('A registered player needs a confirmed person.');
     }
+    PlayerOperationGuard.requireRegisteredPerson(
+        personId, 'register a player');
     final existing = SessionService.registeredForSession(_current!.id, personId);
     if (existing != null) return existing;
 
@@ -780,6 +791,10 @@ class SessionProvider extends ChangeNotifier {
       {int? seat}) async {
     if (_current == null) throw StateError('No active session.');
     if (player.seated) return player; // already seated — nothing to do
+    // J5 gate: seating an existing registration is a table operation and
+    // cannot be used to resurrect an anonymous/legacy unlinked row.
+    PlayerOperationGuard.requireRegistered(
+        player, 'seat a registered player');
     SessionService.assertSessionActive(_current!.id);
     // Materialise so the destination table is explicit on the session,
     // matching the add-player path (a synthesized table id stored on
@@ -901,13 +916,12 @@ class SessionProvider extends ChangeNotifier {
   /// chip movements / the person link are untouched, and the freed
   /// seat is immediately available to another player.
   Future<void> unseatPlayer(Player player) async {
-    if (_current == null) throw StateError('No active session.');
-    if (!player.seated) return; // already unseated — idempotent
-    SessionService.assertSessionActive(_current!.id);
-    player.seated = false;
-    player.tableId = null;
-    await player.save();
-    notifyListeners();
+    // Legacy API kept only for callers that predate J6. It is NOT an
+    // unaudited bypass: it does no cash-out, no transfer, no chip-supply
+    // change and is routed through the exact audited unseat path used by
+    // the UI, which refuses unregistered/anonymous seat rows.
+    if (!player.seated) return; // already unseated — idempotent no-op
+    await unseatWithAudit(player, heldByFloor: true);
   }
 
   /// Deletes an unseated registration row.
@@ -984,8 +998,23 @@ class SessionProvider extends ChangeNotifier {
 
   /// Host-controlled: mark a player settled/left the table, or bring them
   /// back to "playing". Never inferred from a balance calculation.
+  ///
+  /// The settled direction no longer silently flips a flag: any leave is
+  /// routed through the audited J6 unseat path (which refuses an
+  /// unregistered seat). Restoring play is not an unaudited hack either —
+  /// use explicit seating/return-from-absence so the seat/participation
+  /// stack stays honest.
   Future<void> toggleSettled(Player player) async {
-    await SessionService.markPlayerSettled(player, settled: player.isActive);
+    if (player.isActive && player.seated) {
+      await unseatWithAudit(player, heldByFloor: true);
+      return;
+    }
+    if (!player.isActive || !player.seated) {
+      throw StateError(
+        'Restoring a left/absent player must go through explicit seating '
+        'or return-from-absence; toggleSettled cannot re-seat anyone.',
+      );
+    }
     notifyListeners();
   }
 

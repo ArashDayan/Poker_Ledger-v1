@@ -6,6 +6,7 @@ import '../models/transaction.dart';
 import 'dual_verification_service.dart';
 import 'hive_service.dart';
 import 'participation_service.dart';
+import 'player_operation_guard.dart';
 
 const _uuid = Uuid();
 
@@ -539,6 +540,13 @@ class SessionService {
       throw ArgumentError('Amount must be greater than zero for ${type.label}.');
     }
     final player = playerId == null ? null : HiveService.players.get(playerId);
+    // J5 absolute gate at the central ledger service boundary. No new
+    // player-attributed money leg is written without a registered Player
+    // Master identity. There is no implicit identity creation here and no
+    // legacy-permissive fallback.
+    if (playerId != null) {
+      PlayerOperationGuard.requireRegistered(player, '${type.label}');
+    }
     // A player transaction is always attributed to the table that player
     // is actually sitting at, rather than whichever table the banker
     // happens to be viewing — moving a player mid-hand must never
@@ -649,6 +657,13 @@ class SessionService {
       );
     }
     final player = tx.playerId == null ? null : HiveService.players.get(tx.playerId);
+    // J5 absolute gate at the central ledger service boundary. An edit of
+    // a player-attributed row is still a player financial operation and
+    // must be performed against a registered identity, never a
+    // legacy-permissive seat row.
+    if (tx.playerId != null) {
+      PlayerOperationGuard.requireRegistered(player, '${tx.type.label}');
+    }
     tx.amount = amount;
     tx.note = note;
     if (hostSignatureBase64 != null && hostSignatureBase64.isNotEmpty) {
@@ -684,6 +699,7 @@ class SessionService {
     final tx = HiveService.transactions.get(transactionId);
     if (tx == null) throw StateError('Transaction not found.');
     assertSessionActive(tx.sessionId);
+    _requireRegisteredTxPlayer(tx, 'void');
     tx.isVoided = true;
     await tx.save();
     return tx;
@@ -693,6 +709,7 @@ class SessionService {
     final tx = HiveService.transactions.get(transactionId);
     if (tx == null) throw StateError('Transaction not found.');
     assertSessionActive(tx.sessionId);
+    _requireRegisteredTxPlayer(tx, 'unvoid');
     tx.isVoided = false;
     await tx.save();
     return tx;
@@ -704,8 +721,19 @@ class SessionService {
   /// shouldn't linger even as a voided record.
   static Future<void> deleteTransactionPermanently(String transactionId) async {
     final tx = HiveService.transactions.get(transactionId);
-    if (tx != null) assertSessionActive(tx.sessionId);
+    if (tx == null) return;
+    assertSessionActive(tx.sessionId);
+    _requireRegisteredTxPlayer(tx, 'permanent delete of');
     await HiveService.transactions.delete(transactionId);
+  }
+
+  static void _requireRegisteredTxPlayer(
+      LedgerTransaction tx, String operation) {
+    if (tx.playerId == null) return;
+    PlayerOperationGuard.requireRegistered(
+      HiveService.players.get(tx.playerId),
+      '$operation of a ${tx.type.label}',
+    );
   }
 
   /// Explicit host action: mark a player as settled/left the table.
@@ -714,6 +742,10 @@ class SessionService {
   /// signal to key off of) — the host says when someone is done.
   static Future<void> markPlayerSettled(Player player, {bool settled = true}) async {
     assertSessionActive(player.sessionId);
+    // J5 gate: leaving/settling a seat is a player table operation too.
+    // The audited unseat/leave path is preferred, but this legacy helper
+    // must still refuse anonymous/unregistered seat rows.
+    PlayerOperationGuard.requireRegistered(player, 'settle/leave');
     player.isActive = !settled;
     await player.save();
   }
@@ -732,6 +764,7 @@ class SessionService {
     final txs = transactionsFor(sessionId);
     if (txs.isEmpty) return null;
     final last = txs.last;
+    _requireRegisteredTxPlayer(last, 'undo');
     last.isVoided = true;
     last.save();
     return last;
@@ -741,6 +774,7 @@ class SessionService {
     assertSessionActive(sessionId);
     final tx = HiveService.transactions.get(txId);
     if (tx == null) return null;
+    _requireRegisteredTxPlayer(tx, 'redo');
     tx.isVoided = false;
     await tx.save();
     return tx;

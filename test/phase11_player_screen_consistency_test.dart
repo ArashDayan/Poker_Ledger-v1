@@ -77,13 +77,14 @@ Future<String> _person(String name) async =>
 Future<Player> _seat(PokerSession s, String name, int seatNo,
     {String? personId, int table = 1}) async {
   final tables = TableService.tablesFor(s);
+  final linkedPersonId = personId ?? await _person(name);
   final p = Player(
     id: 'seat-${s.id}-${name.toLowerCase()}-$seatNo',
     sessionId: s.id,
     name: name,
     seatNumber: seatNo,
     tableId: tables[table - 1].id,
-    personId: personId,
+    personId: linkedPersonId,
   );
   await HiveService.players.put(p.id, p);
   return p;
@@ -265,9 +266,9 @@ void main() {
       expect(ChipFlow.appliesTo(TransactionType.reentry), isFalse);
     });
 
-    test('backup remains v8', () {
+    test('backup format is v9', () {
       expect(BackupService.formatVersion, 9);
-      expect(BackupService.exportPayload()['formatVersion'], 8);
+      expect(BackupService.exportPayload()['formatVersion'], 9);
     });
   });
 }

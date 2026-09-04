@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/hive_service.dart';
@@ -27,6 +28,7 @@ Future<void> _open() async {
   await Hive.openBox<Player>(HiveService.playersBox);
   await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
   await Hive.openBox(HiveService.settingsBox);
+  await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
 }
 
 Future<void> _close() async {
@@ -48,11 +50,14 @@ PokerSession _session() {
   return s;
 }
 
-Player _p(String sid, String name, {int seat = 1, String? tableId}) {
+Future<Player> _p(String sid, String name, {int seat = 1, String? tableId}) async {
+  final personId = _uuid.v4();
   final p = Player(
       id: _uuid.v4(), sessionId: sid, name: name, seatNumber: seat,
-      tableId: tableId);
-  HiveService.players.put(p.id, p);
+      tableId: tableId, personId: personId);
+  await HiveService.playerIdentities.put(
+      personId, PlayerIdentity(id: personId, displayName: name));
+  await HiveService.players.put(p.id, p);
   return p;
 }
 
@@ -150,7 +155,7 @@ void main() {
     test('a table with unsettled players cannot be closed', () async {
       final s = _session();
       await TableService.addTable(s, name: 'Table 2');
-      final p = _p(s.id, 'Live', seat: 1, tableId: 'table-2');
+      final p = await _p(s.id, 'Live', seat: 1, tableId: 'table-2');
       await _tx(s.id, p.id, TransactionType.buyIn, 500);
 
       expect(TableService.closeBlocker(s, 'table-2'), isNotNull);
@@ -162,7 +167,7 @@ void main() {
     test('once everyone has cashed out the table can close', () async {
       final s = _session();
       await TableService.addTable(s, name: 'Table 2');
-      final p = _p(s.id, 'Done', seat: 1, tableId: 'table-2');
+      final p = await _p(s.id, 'Done', seat: 1, tableId: 'table-2');
       await _tx(s.id, p.id, TransactionType.buyIn, 500);
       await _tx(s.id, p.id, TransactionType.cashOut, 500);
 
@@ -174,7 +179,7 @@ void main() {
     test('a busted player (zero cash-out) does not block closing', () async {
       final s = _session();
       await TableService.addTable(s, name: 'Table 2');
-      final p = _p(s.id, 'Busted', seat: 1, tableId: 'table-2');
+      final p = await _p(s.id, 'Busted', seat: 1, tableId: 'table-2');
       await _tx(s.id, p.id, TransactionType.buyIn, 300);
       await _tx(s.id, p.id, TransactionType.cashOut, 0);
       expect(TableService.closeBlocker(s, 'table-2'), isNull);
@@ -185,7 +190,7 @@ void main() {
       await TableService.addTable(s, name: 'Table 2');
       final t1 = TableService.tablesFor(s).first.id;
       await TableService.closeTable(s, 'table-2');
-      final p = _p(s.id, 'Mover', seat: 1, tableId: t1);
+      final p = await _p(s.id, 'Mover', seat: 1, tableId: t1);
 
       expect(TableService.seatingBlocker(s, 'table-2'), isNotNull);
       expect(() => TableService.movePlayer(s, p, 'table-2'),
@@ -195,7 +200,7 @@ void main() {
     test('closing a table leaves the ledger untouched', () async {
       final s = _session();
       await TableService.addTable(s, name: 'Table 2');
-      final p = _p(s.id, 'A', seat: 1, tableId: 'table-2');
+      final p = await _p(s.id, 'A', seat: 1, tableId: 'table-2');
       await _tx(s.id, p.id, TransactionType.buyIn, 400);
       await _tx(s.id, p.id, TransactionType.cashOut, 400);
       final before = SessionService.checkBalance(s.id);

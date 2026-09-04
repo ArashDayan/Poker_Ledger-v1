@@ -12,6 +12,7 @@ import 'package:hive/hive.dart';
 import 'package:poker_ledger/models/chip_movement.dart';
 import 'package:poker_ledger/models/chip_type.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/chip_bank_service.dart';
@@ -32,6 +33,13 @@ Future<void> _open() async {
   await Hive.openBox(HiveService.settingsBox);
   await Hive.openBox<ChipType>(HiveService.chipsBox);
   await Hive.openBox<ChipMovement>(HiveService.chipMovementsBox);
+  await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
+  // J5 gate fixtures: player-scoped movements need a registered
+  // identity; each holder reference used below gets a Player Master row.
+  for (final ref in ['a', 'ali', 'b', 'p', 'p1', 'p2', 'p3', 'sara', 'x']) {
+    await HiveService.playerIdentities.put(
+        ref, PlayerIdentity(id: ref, displayName: ref));
+  }
 }
 
 Future<void> _close() async {

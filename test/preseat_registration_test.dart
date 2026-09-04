@@ -48,6 +48,7 @@ Future<void> _open() async {
   await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
   await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
   await Hive.openBox<Hand>(HiveService.handsBox);
+  await Hive.openBox(HiveService.transferEventsBox);
 }
 
 Future<void> _close() async {
@@ -78,6 +79,15 @@ Future<String> _person(String name) async =>
     (await PlayerIdentityService.createNew(name))!.id;
 
 Player _stored(String id) => HiveService.players.get(id)!;
+
+
+Future<String> _j5regId(String name) async {
+  final normalized = name.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+  final id = 'j5reg-$normalized';
+  await HiveService.playerIdentities.put(
+      id, PlayerIdentity(id: id, displayName: name));
+  return id;
+}
 
 void main() {
   setUp(_open);
@@ -238,7 +248,7 @@ void main() {
 
       // Fill every seat with other players.
       for (var i = 1; i <= table.seatCount; i++) {
-        await provider.addPlayer(name: 'Filler $i', seatNumber: i);
+        await provider.addPlayer(name: 'Filler $i', personId: await _j5regId('Filler $i'), seatNumber: i);
       }
       expect(() => provider.seatRegisteredPlayer(a, tableId), throwsStateError);
       // A valid row, but the table is full: explicit seat cannot save it.

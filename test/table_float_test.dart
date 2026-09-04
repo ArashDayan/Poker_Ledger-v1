@@ -21,6 +21,7 @@ import 'package:hive/hive.dart';
 import 'package:poker_ledger/models/chip_movement.dart';
 import 'package:poker_ledger/models/chip_type.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/services/chip_bank_service.dart';
 import 'package:poker_ledger/services/chip_tracking_service.dart';
@@ -40,6 +41,11 @@ Future<void> _open() async {
   await Hive.openBox(HiveService.settingsBox);
   await Hive.openBox<ChipType>(HiveService.chipsBox);
   await Hive.openBox<ChipMovement>(HiveService.chipMovementsBox);
+  await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
+  for (final ref in ['person-1', 'person-ali']) {
+    await HiveService.playerIdentities.put(
+        ref, PlayerIdentity(id: ref, displayName: ref));
+  }
 }
 
 Future<void> _close() async {

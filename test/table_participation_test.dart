@@ -83,13 +83,14 @@ Future<String> _person(String name) async =>
 Future<Player> _seat(PokerSession s, String name, int seatNo,
     {String? personId, int table = 1}) async {
   final tables = TableService.tablesFor(s);
+  final linkedPersonId = personId ?? await _person(name);
   final p = Player(
     id: 'seat-${name.toLowerCase()}-$seatNo',
     sessionId: s.id,
     name: name,
     seatNumber: seatNo,
     tableId: tables[table - 1].id,
-    personId: personId,
+    personId: linkedPersonId,
   );
   await HiveService.players.put(p.id, p);
   return p;
@@ -184,10 +185,13 @@ void main() {
         parts.map((p) => p.personId).toSet(), {pidA, pidB});
   });
 
-  test('an unlinked legacy seat gets a seat-scoped participation',
+  test('a registered person gets a person-scoped participation',
       () async {
     final s = await _session('s1');
-    final seat = await _seat(s, 'Mystery', 1); // no personId
+    // J5: the seat is linked to the registered Player Master created by
+    // the fixture helper — an unlinked anonymous seat is refused by the
+    // central gate instead of getting a legacy seat-scoped overlay.
+    final seat = await _seat(s, 'Mystery', 1);
 
     final tx = await SessionService.recordTransaction(
       sessionId: s.id,
@@ -199,7 +203,7 @@ void main() {
 
     expect(tx.participationId, isNotNull);
     final p = HiveService.participations.get(tx.participationId!);
-    expect(p!.personId, isNull); // never invented
+    expect(p!.personId, seat.personId); // real identity, never invented
     expect(p.isOpen, isTrue);
   });
 

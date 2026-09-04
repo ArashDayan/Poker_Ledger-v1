@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:poker_ledger/models/enums.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/providers/session_provider.dart';
@@ -40,6 +41,7 @@ Future<void> _open() async {
   await Hive.openBox<Player>(HiveService.playersBox);
   await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
   await Hive.openBox(HiveService.settingsBox);
+  await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
 }
 
 Future<void> _close() async {
@@ -64,9 +66,25 @@ Future<SessionProvider> _providerWithSession() async {
   return provider;
 }
 
+Future<String> _registeredPerson(String name) async {
+  final id = 'sig-person-$name';
+  await HiveService.playerIdentities.put(
+      id, PlayerIdentity(id: id, displayName: name));
+  return id;
+}
+
 /// Re-reads straight from the box, bypassing any in-memory instance —
 /// this is what Timeline and Edit Player actually see.
 Player _stored(String id) => HiveService.players.get(id)!;
+
+
+Future<String> _j5regId(String name) async {
+  final normalized = name.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+  final id = 'j5reg-$normalized';
+  await HiveService.playerIdentities.put(
+      id, PlayerIdentity(id: id, displayName: name));
+  return id;
+}
 
 void main() {
   setUp(_open);
@@ -77,7 +95,7 @@ void main() {
       final provider = await _providerWithSession();
 
       final player = await provider.addPlayer(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 1,
         sampleSignatureBase64: _sample1,
         sampleSignature2Base64: _sample2,
@@ -94,7 +112,7 @@ void main() {
     test('both capture timestamps are stamped', () async {
       final provider = await _providerWithSession();
       final player = await provider.addPlayer(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 1,
         sampleSignatureBase64: _sample1,
         sampleSignature2Base64: _sample2,
@@ -110,7 +128,7 @@ void main() {
         () async {
       final provider = await _providerWithSession();
       final player = await provider.addPlayer(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 1,
         sampleSignatureBase64: _sample1,
         sampleSignature2Base64: '',
@@ -127,7 +145,7 @@ void main() {
     test('both samples survive a close/reopen of the box', () async {
       final provider = await _providerWithSession();
       final player = await provider.addPlayer(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 1,
         sampleSignatureBase64: _sample1,
         sampleSignature2Base64: _sample2,
@@ -147,7 +165,7 @@ void main() {
     test('both samples survive a toJson/fromJson round-trip', () async {
       final provider = await _providerWithSession();
       final player = await provider.addPlayer(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 1,
         sampleSignatureBase64: _sample1,
         sampleSignature2Base64: _sample2,
@@ -163,7 +181,7 @@ void main() {
     test('contains both samples after Add Player', () async {
       final provider = await _providerWithSession();
       final player = await provider.addPlayer(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 1,
         sampleSignatureBase64: _sample1,
         sampleSignature2Base64: _sample2,
@@ -178,7 +196,7 @@ void main() {
         () async {
       final provider = await _providerWithSession();
       final player = await provider.addPlayer(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 1,
         sampleSignatureBase64: _sample1,
       );
@@ -190,6 +208,7 @@ void main() {
     test('both samples persist and the buy-in is still recorded',
         () async {
       final provider = await _providerWithSession();
+      final personId = await _registeredPerson('Ali');
 
       final player = await provider.addPlayerWithBuyIn(
         name: 'Ali',
@@ -198,6 +217,7 @@ void main() {
         hostSignatureBase64: _hostSig,
         sampleSignatureBase64: _sample1,
         sampleSignature2Base64: _sample2,
+        personId: personId,
       );
 
       // Signatures.
@@ -217,7 +237,7 @@ void main() {
     test('works with no buy-in amount (railing player)', () async {
       final provider = await _providerWithSession();
       final player = await provider.addPlayerWithBuyIn(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 1,
         buyInAmount: null,
         hostSignatureBase64: null,
@@ -260,7 +280,7 @@ void main() {
       // behave exactly as before.
       final provider = await _providerWithSession();
       final player = await provider.addPlayer(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 1,
         sampleSignatureBase64: _sample1,
       );
@@ -272,7 +292,7 @@ void main() {
     test('a legacy player can supply Sample 2 later', () async {
       final provider = await _providerWithSession();
       final player = await provider.addPlayer(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 1,
         sampleSignatureBase64: _sample1,
       );
@@ -291,7 +311,7 @@ void main() {
     test('replacing Sample 2 leaves Sample 1 byte-identical', () async {
       final provider = await _providerWithSession();
       final player = await provider.addPlayer(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 1,
         sampleSignatureBase64: _sample1,
         sampleSignature2Base64: _sample2,
@@ -307,7 +327,7 @@ void main() {
     test('clearing Sample 2 leaves Sample 1 intact', () async {
       final provider = await _providerWithSession();
       final player = await provider.addPlayer(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 1,
         sampleSignatureBase64: _sample1,
         sampleSignature2Base64: _sample2,
@@ -325,7 +345,7 @@ void main() {
     test('replacing Sample 1 leaves Sample 2 intact', () async {
       final provider = await _providerWithSession();
       final player = await provider.addPlayer(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 1,
         sampleSignatureBase64: _sample1,
         sampleSignature2Base64: _sample2,
@@ -343,6 +363,7 @@ void main() {
     test('the host signature is stored on the transaction, not the player',
         () async {
       final provider = await _providerWithSession();
+      final personId = await _registeredPerson('Ali');
       final player = await provider.addPlayerWithBuyIn(
         name: 'Ali',
         seatNumber: 1,
@@ -350,6 +371,7 @@ void main() {
         hostSignatureBase64: _hostSig,
         sampleSignatureBase64: _sample1,
         sampleSignature2Base64: _sample2,
+        personId: personId,
       );
 
       final tx = SessionService.transactionsFor('session-1').single;
@@ -371,7 +393,7 @@ void main() {
         () async {
       final provider = await _providerWithSession();
       final player = await provider.addPlayer(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 1,
         sampleSignatureBase64: _sample1,
         sampleSignature2Base64: _sample2,
@@ -398,6 +420,7 @@ void main() {
     test('recording a later transaction does not touch the samples',
         () async {
       final provider = await _providerWithSession();
+      final personId = await _registeredPerson('Ali');
       final player = await provider.addPlayerWithBuyIn(
         name: 'Ali',
         seatNumber: 1,
@@ -405,6 +428,7 @@ void main() {
         hostSignatureBase64: _hostSig,
         sampleSignatureBase64: _sample1,
         sampleSignature2Base64: _sample2,
+        personId: personId,
       );
 
       await provider.recordTransaction(

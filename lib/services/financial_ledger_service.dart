@@ -204,6 +204,10 @@ class FinancialLedgerService {
     if (original == null) {
       throw FinancialLedgerException('Cannot reverse: event not found.');
     }
+    // J5 absolute gate: reversing a person-scoped financial event is a
+    // player financial operation and must target a registered identity.
+    // There is no legacy-permissive path for a lost identity.
+    _assertKnownPerson(original.personId);
     if (original.isReversal) {
       throw FinancialLedgerException(
         'Cannot reverse a reversal. Record a new event instead.',

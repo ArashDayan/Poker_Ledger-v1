@@ -62,6 +62,22 @@ PokerSession _session() {
   return s;
 }
 
+Future<String> _person(String name) async {
+  final id = 'refresh-$name';
+  await HiveService.playerIdentities.put(
+      id, PlayerIdentity(id: id, displayName: name));
+  return id;
+}
+
+
+Future<String> _j5regId(String name) async {
+  final normalized = name.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+  final id = 'j5reg-$normalized';
+  await HiveService.playerIdentities.put(
+      id, PlayerIdentity(id: id, displayName: name));
+  return id;
+}
+
 void main() {
   group('BoxWatchHub', () {
     test('one failed attach does not block the others', () {
@@ -111,7 +127,7 @@ void main() {
       var ticks = 0;
       p.addListener(() => ticks++);
       final before = p.players.length;
-      await p.addPlayer(name: 'Ada', seatNumber: 1);
+      await p.addPlayer(name: 'Ada', personId: await _j5regId('Ada'), seatNumber: 1);
       expect(p.players.length, before + 1);
       expect(p.players.any((x) => x.name == 'Ada'), isTrue);
       expect(ticks, greaterThan(0));
@@ -122,7 +138,7 @@ void main() {
         () async {
       final p = SessionProvider();
       p.loadSession(_session());
-      await p.addPlayer(name: 'Ben', seatNumber: 3);
+      await p.addPlayer(name: 'Ben', personId: await _j5regId('Ben'), seatNumber: 3);
       final atTable = TableService.playersAt(p.current!, p.activeTableId);
       expect(atTable.map((x) => x.name), contains('Ben'));
       expect(p.playersAtActiveTable.map((x) => x.name), contains('Ben'));
@@ -136,8 +152,8 @@ void main() {
       await p.addTable(name: 'Table 2');
       final t1 = TableService.tablesFor(p.current!).first.id;
       final t2 = TableService.tablesFor(p.current!).last.id;
-      await p.addPlayer(name: 'On1', seatNumber: 1, tableId: t1);
-      await p.addPlayer(name: 'On2', seatNumber: 1, tableId: t2);
+      await p.addPlayer(name: 'On1', personId: await _j5regId('On1'), seatNumber: 1, tableId: t1);
+      await p.addPlayer(name: 'On2', personId: await _j5regId('On2'), seatNumber: 1, tableId: t2);
 
       p.setActiveTable(t1);
       expect(p.playersAtActiveTable.map((x) => x.name), ['On1']);
@@ -151,7 +167,7 @@ void main() {
     test('5. player list updates immediately', () async {
       final p = SessionProvider();
       p.loadSession(_session());
-      await p.addPlayer(name: 'Cara', seatNumber: 2);
+      await p.addPlayer(name: 'Cara', personId: await _j5regId('Cara'), seatNumber: 2);
       expect(p.players.map((x) => x.name), contains('Cara'));
       final cara = p.players.firstWhere((x) => x.name == 'Cara');
       cara.name = 'Cara-X';
@@ -163,7 +179,9 @@ void main() {
     test('6. transaction changes propagate immediately', () async {
       final p = SessionProvider();
       p.loadSession(_session());
-      final player = await p.addPlayer(name: 'Dan', seatNumber: 1);
+      final danId = await _person('Dan');
+      final player = await p.addPlayer(
+          name: 'Dan', seatNumber: 1, personId: danId);
       await p.recordTransaction(
         playerId: player.id,
         type: TransactionType.buyIn,
@@ -202,7 +220,9 @@ void main() {
         () async {
       final p = SessionProvider();
       p.loadSession(_session());
-      final player = await p.addPlayer(name: 'Eve', seatNumber: 1);
+      final eveId = await _person('Eve');
+      final player = await p.addPlayer(
+          name: 'Eve', seatNumber: 1, personId: eveId);
       await p.recordTransaction(
         playerId: player.id,
         type: TransactionType.buyIn,
@@ -233,7 +253,7 @@ void main() {
       final p = SessionProvider();
       expect(p.retryFailedWatchers(), isTrue);
       p.loadSession(_session());
-      await p.addPlayer(name: 'Fay', seatNumber: 4);
+      await p.addPlayer(name: 'Fay', personId: await _j5regId('Fay'), seatNumber: 4);
       expect(p.players.map((x) => x.name), contains('Fay'));
       hub.dispose();
       p.dispose();
@@ -244,7 +264,7 @@ void main() {
       p.loadSession(_session());
       final seen = <int>[];
       p.addListener(() => seen.add(p.players.length));
-      await p.addPlayer(name: 'Gus', seatNumber: 5);
+      await p.addPlayer(name: 'Gus', personId: await _j5regId('Gus'), seatNumber: 5);
       expect(seen, isNotEmpty);
       expect(p.players.length, 1);
       expect(p.revision, greaterThan(0));

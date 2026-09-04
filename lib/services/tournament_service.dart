@@ -1,6 +1,7 @@
 import '../models/enums.dart';
 import '../models/player.dart';
 import '../models/session.dart';
+import 'player_operation_guard.dart';
 import 'session_service.dart';
 
 /// One blind level (or a scheduled break) in a tournament structure.
@@ -384,6 +385,7 @@ class TournamentService {
   /// are recorded in order.
   static Future<int> eliminatePlayer(PokerSession session, Player player) async {
     SessionService.assertSessionActive(session.id);
+    PlayerOperationGuard.requireRegistered(player, 'a tournament elimination');
     if (player.finishPosition != null) return player.finishPosition!;
     final remaining = activePlayers(session.id).length;
     final position = remaining < 1 ? 1 : remaining;
@@ -398,6 +400,7 @@ class TournamentService {
   static Future<void> reinstatePlayer(
       PokerSession session, Player player) async {
     SessionService.assertSessionActive(session.id);
+    PlayerOperationGuard.requireRegistered(player, 'a tournament reinstatement');
     player.finishPosition = null;
     player.eliminatedAt = null;
     player.isActive = true;
@@ -424,6 +427,7 @@ class TournamentService {
     final active = activePlayers(session.id);
     if (active.length != 1) return null;
     final winner = active.first;
+    PlayerOperationGuard.requireRegistered(winner, 'a tournament win finalization');
     winner.finishPosition = 1;
     await winner.save();
     return winner;

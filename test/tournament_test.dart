@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/hive_service.dart';
@@ -27,6 +28,7 @@ Future<void> _open() async {
   await Hive.openBox<Player>(HiveService.playersBox);
   await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
   await Hive.openBox(HiveService.settingsBox);
+  await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
 }
 
 Future<void> _close() async {
@@ -51,9 +53,17 @@ PokerSession _tourney({double buyIn = 100, double fee = 10}) {
   return s;
 }
 
-Player _p(String sid, String name, {int seat = 1}) {
-  final p = Player(id: _uuid.v4(), sessionId: sid, name: name, seatNumber: seat);
-  HiveService.players.put(p.id, p);
+Future<Player> _p(String sid, String name, {int seat = 1}) async {
+  final personId = _uuid.v4();
+  final p = Player(
+      id: _uuid.v4(),
+      sessionId: sid,
+      name: name,
+      seatNumber: seat,
+      personId: personId);
+  await HiveService.playerIdentities.put(
+      personId, PlayerIdentity(id: personId, displayName: name));
+  await HiveService.players.put(p.id, p);
   return p;
 }
 
@@ -98,7 +108,7 @@ void main() {
         tableNumber: '1',
       );
       HiveService.sessions.put(s.id, s);
-      final p = _p(s.id, 'A');
+      final p = await _p(s.id, 'A');
       await _entry(s.id, p.id, 500);
       await _entry(s.id, p.id, 500, type: TransactionType.cashOut);
       final bal = SessionService.checkBalance(s.id);
@@ -124,7 +134,8 @@ void main() {
     test('pool is entries minus the house fee', () async {
       final s = _tourney(buyIn: 100, fee: 10);
       for (var i = 1; i <= 5; i++) {
-        await _entry(s.id, _p(s.id, 'P$i', seat: i).id, 100);
+        final p = await _p(s.id, 'P$i', seat: i);
+        await _entry(s.id, p.id, 100);
       }
       expect(TournamentService.entryCount(s), 5);
       expect(TournamentService.totalCollected(s.id), 500);
@@ -134,7 +145,7 @@ void main() {
 
     test('rebuys feed the prize pool', () async {
       final s = _tourney(buyIn: 100, fee: 0);
-      final p = _p(s.id, 'A');
+      final p = await _p(s.id, 'A');
       await _entry(s.id, p.id, 100);
       await _entry(s.id, p.id, 100, type: TransactionType.rebuy);
       expect(TournamentService.prizePool(s), 200);
@@ -143,7 +154,8 @@ void main() {
     test('payout percentages split the pool exactly', () async {
       final s = _tourney(buyIn: 100, fee: 0);
       for (var i = 1; i <= 9; i++) {
-        await _entry(s.id, _p(s.id, 'P$i', seat: i).id, 100);
+        final p = await _p(s.id, 'P$i', seat: i);
+        await _entry(s.id, p.id, 100);
       }
       await TournamentService.savePayouts(s, [50, 30, 20]);
       final table = TournamentService.payoutTable(s);
@@ -157,7 +169,8 @@ void main() {
 
     test('pool never goes negative when the fee exceeds entries', () async {
       final s = _tourney(buyIn: 10, fee: 1000);
-      await _entry(s.id, _p(s.id, 'A').id, 10);
+      final p = await _p(s.id, 'A');
+      await _entry(s.id, p.id, 10);
       expect(TournamentService.prizePool(s), 0);
     });
   });
@@ -165,7 +178,7 @@ void main() {
   group('Eliminations and rankings', () {
     test('finishing positions count down from the field size', () async {
       final s = _tourney();
-      final ps = [for (var i = 1; i <= 4; i++) _p(s.id, 'P$i', seat: i)];
+      final ps = [for (var i = 1; i <= 4; i++) await _p(s.id, 'P$i', seat: i)];
       expect(await TournamentService.eliminatePlayer(s, ps[0]), 4);
       expect(await TournamentService.eliminatePlayer(s, ps[1]), 3);
       expect(await TournamentService.eliminatePlayer(s, ps[2]), 2);
@@ -177,8 +190,8 @@ void main() {
 
     test('an elimination can be undone', () async {
       final s = _tourney();
-      final a = _p(s.id, 'A', seat: 1);
-      _p(s.id, 'B', seat: 2);
+      final a = await _p(s.id, 'A', seat: 1);
+      await _p(s.id, 'B', seat: 2);
       await TournamentService.eliminatePlayer(s, a);
       expect(a.isEliminated, isTrue);
       await TournamentService.reinstatePlayer(s, a);
@@ -188,8 +201,8 @@ void main() {
 
     test('eliminating twice does not change the position', () async {
       final s = _tourney();
-      final a = _p(s.id, 'A', seat: 1);
-      _p(s.id, 'B', seat: 2);
+      final a = await _p(s.id, 'A', seat: 1);
+      await _p(s.id, 'B', seat: 2);
       final first = await TournamentService.eliminatePlayer(s, a);
       final second = await TournamentService.eliminatePlayer(s, a);
       expect(second, first);
@@ -197,7 +210,7 @@ void main() {
 
     test('eliminated players are listed in finishing order', () async {
       final s = _tourney();
-      final ps = [for (var i = 1; i <= 3; i++) _p(s.id, 'P$i', seat: i)];
+      final ps = [for (var i = 1; i <= 3; i++) await _p(s.id, 'P$i', seat: i)];
       await TournamentService.eliminatePlayer(s, ps[0]);
       await TournamentService.eliminatePlayer(s, ps[1]);
       final out = TournamentService.eliminatedPlayers(s.id);

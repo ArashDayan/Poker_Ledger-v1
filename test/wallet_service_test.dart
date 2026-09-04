@@ -84,6 +84,30 @@ Future<void> _fe(
   );
 }
 
+/// Seed a chip movement directly (legacy/J5-refused shape) so the
+/// wallet test can prove that an old unlinked seat's holding stays a
+/// DIFFERENT holder without attempting a new anonymous operation.
+Future<void> _rawChipMovement({
+  required String chipTypeId,
+  required int quantity,
+  required ChipLocation from,
+  required ChipLocation to,
+}) async {
+  final chip = ChipBankService.byId(chipTypeId)!;
+  await HiveService.chipMovements.put(
+    'wallet-legacy-${DateTime.now().microsecondsSinceEpoch}-$to',
+    ChipMovement(
+      id: 'wallet-legacy-${DateTime.now().microsecondsSinceEpoch}-$to',
+      chipTypeId: chipTypeId,
+      chipValue: chip.value,
+      quantity: quantity,
+      fromLocation: from.encoded,
+      toLocation: to.encoded,
+      reason: ChipMovementReason.buyIn.wire,
+    ),
+  );
+}
+
 void main() {
   setUp(_open);
   tearDown(_close);
@@ -157,12 +181,13 @@ void main() {
       reason: ChipMovementReason.buyIn,
     );
     // An UNLINKED seat's chips are a different holder — not this
-    // person's holding.
-    await ChipTrackingService.recordDistribution(
-      distribution: {c100.id: 5},
+    // person's holding. Seeded as a pre-J5 legacy chip record, since
+    // the J5 gate now refuses new anonymous player-chip movements.
+    await _rawChipMovement(
+      chipTypeId: c100.id,
+      quantity: 5,
       from: ChipLocation.bank,
       to: ChipLocation.player('seat-9'),
-      reason: ChipMovementReason.buyIn,
     );
 
     final w = WalletService.walletFor(pid);

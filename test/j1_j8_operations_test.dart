@@ -20,7 +20,10 @@ import 'package:poker_ledger/models/table_operation_event.dart';
 import 'package:poker_ledger/models/table_participation.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/backup_service.dart';
+import 'package:poker_ledger/services/chip_bank_service.dart';
+import 'package:poker_ledger/services/chip_tracking_service.dart';
 import 'package:poker_ledger/services/dual_verification_service.dart';
+import 'package:poker_ledger/services/financial_ledger_service.dart';
 import 'package:poker_ledger/services/hive_service.dart';
 import 'package:poker_ledger/services/participation_service.dart';
 import 'package:poker_ledger/services/session_service.dart';
@@ -113,6 +116,122 @@ void main() {
         hostSignatureBase64: 'host',
       ),
       throwsA(isA<StateError>()),
+    );
+  });
+
+  test('J5 central gate refuses an anonymous recordTransaction', () async {
+    final s = _session();
+    final anon = Player(
+      id: _uuid.v4(),
+      sessionId: s.id,
+      name: 'Anonymous',
+      seatNumber: 1,
+      tableId: 'table-1',
+    );
+    await HiveService.players.put(anon.id, anon);
+    expect(
+      () => SessionService.recordTransaction(
+        sessionId: s.id,
+        playerId: anon.id,
+        type: TransactionType.buyIn,
+        amount: 100,
+        hostSignatureBase64: 'sig',
+      ),
+      throwsA(isA<StateError>()),
+    );
+  });
+
+  test('J5 central gate refuses anonymous settle/leave', () async {
+    final s = _session();
+    final anon = Player(
+      id: _uuid.v4(),
+      sessionId: s.id,
+      name: 'Anonymous',
+      seatNumber: 1,
+      tableId: 'table-1',
+    );
+    await HiveService.players.put(anon.id, anon);
+    expect(
+      () => SessionService.markPlayerSettled(anon, settled: true),
+      throwsA(isA<StateError>()),
+    );
+  });
+
+  test('J5 central gate refuses an anonymous chip movement', () async {
+    final s = _session();
+    final anon = Player(
+      id: _uuid.v4(),
+      sessionId: s.id,
+      name: 'Anonymous',
+      seatNumber: 1,
+      tableId: 'table-1',
+    );
+    await HiveService.players.put(anon.id, anon);
+    final chip = await ChipBankService.addChip(value: 100, quantity: 10);
+    expect(
+      () => ChipTrackingService.record(
+        chipTypeId: chip.id,
+        quantity: 1,
+        from: ChipLocation.bank,
+        to: ChipLocation.player(anon.id),
+        reason: ChipMovementReason.buyIn,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(HiveService.chipMovements.length, 0);
+  });
+
+  test('J5 central gate refuses anonymous participation writes', () async {
+    final s = _session();
+    final anon = Player(
+      id: _uuid.v4(),
+      sessionId: s.id,
+      name: 'Anonymous',
+      seatNumber: 1,
+      tableId: 'table-1',
+    );
+    await HiveService.players.put(anon.id, anon);
+
+    expect(
+      () => ParticipationService.openOrFind(
+        sessionId: s.id,
+        seatPlayerId: anon.id,
+        tableId: 'table-1',
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    final legacy = TableParticipation(
+      id: _uuid.v4(),
+      sessionId: s.id,
+      personId: null,
+      tableId: 'table-1',
+      seatPlayerId: anon.id,
+    );
+    await HiveService.participations.put(legacy.id, legacy);
+    expect(
+      () => ParticipationService.close(legacy.id,
+          reason: ParticipationCloseReason.sessionEnd),
+      throwsA(isA<StateError>()),
+    );
+    expect(HiveService.participations.get(legacy.id)!.status,
+        ParticipationStatus.open);
+  });
+
+  test('J5 gate applies to financial ledger reversal', () async {
+    final s = _session();
+    final p = await _registeredSeat(s);
+    final event = await FinancialLedgerService.record(
+      personId: p.personId!,
+      currency: AppCurrency.usd,
+      type: FinancialEventType.cashInForChips,
+      amount: 100,
+      sessionId: s.id,
+    );
+    await HiveService.playerIdentities.delete(p.personId!);
+    expect(
+      () => FinancialLedgerService.reverse(event.id),
+      throwsA(isA<FinancialLedgerException>()),
     );
   });
 

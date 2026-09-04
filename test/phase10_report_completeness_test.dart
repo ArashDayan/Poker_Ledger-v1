@@ -89,13 +89,14 @@ Future<Player> _seat(
   int table = 1,
 }) async {
   final tables = TableService.tablesFor(s);
+  final linkedPersonId = personId ?? await _person(name);
   final p = Player(
     id: id ?? 'seat-${s.id}-${name.toLowerCase()}-$seatNo',
     sessionId: s.id,
     name: name,
     seatNumber: seatNo,
     tableId: tables[table - 1].id,
-    personId: personId,
+    personId: linkedPersonId,
   );
   await HiveService.players.put(p.id, p);
   return p;
@@ -418,9 +419,9 @@ void main() {
   });
 
   group('backup / l10n / ChipFlow', () {
-    test('backup remains v8 and surfaces malformed hands', () async {
+    test('backup format is v9 and surfaces malformed hands', () async {
       expect(BackupService.formatVersion, 9);
-      expect(BackupService.exportPayload()['formatVersion'], 8);
+      expect(BackupService.exportPayload()['formatVersion'], 9);
       final result = await BackupService.importPayload({
         'formatVersion': 9,
         'sessions': const [],

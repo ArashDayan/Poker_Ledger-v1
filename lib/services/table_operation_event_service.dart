@@ -2,6 +2,7 @@ import 'package:uuid/uuid.dart';
 
 import '../models/table_operation_event.dart';
 import 'hive_service.dart';
+import 'player_operation_guard.dart';
 
 const _uuid = Uuid();
 
@@ -31,6 +32,15 @@ class TableOperationEventService {
   ) async {
     if (!_boxOpen) {
       throw StateError('Transfer event storage is unavailable.');
+    }
+    // J5 absolute gate: an appended table operation event for a player
+    // must be linked to a registered identity; an anonymous/legacy seat
+    // can no longer produce an audited operation record either.
+    if (event.playerId != null && event.playerId!.isNotEmpty) {
+      PlayerOperationGuard.requireRegistered(
+        HiveService.players.get(event.playerId),
+        'a table operation event',
+      );
     }
     await HiveService.transferEvents.put(event.id, event.toJson());
     return event;

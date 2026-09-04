@@ -8,6 +8,7 @@ import 'package:hive/hive.dart';
 import 'package:poker_ledger/models/financial_event.dart';
 import 'package:poker_ledger/models/hand.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/providers/session_provider.dart';
@@ -18,6 +19,15 @@ import 'package:uuid/uuid.dart';
 import 'test_helper.dart';
 
 const _uuid = Uuid();
+
+
+Future<String> _j5regId(String name) async {
+  final normalized = name.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+  final id = 'j5reg-$normalized';
+  await HiveService.playerIdentities.put(
+      id, PlayerIdentity(id: id, displayName: name));
+  return id;
+}
 
 void main() {
   late Directory tmp;
@@ -30,6 +40,8 @@ void main() {
     await Hive.openBox<Player>(HiveService.playersBox);
     await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
     await Hive.openBox(HiveService.settingsBox);
+    await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
+
     await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
     await Hive.openBox<Hand>(HiveService.handsBox);
   });
@@ -63,7 +75,7 @@ void main() {
 
     expect(find.text('empty-table'), findsOneWidget);
 
-    await provider.addPlayer(name: 'Hank', seatNumber: 2);
+    await provider.addPlayer(name: 'Hank', personId: await _j5regId('Hank'), seatNumber: 2);
     await tester.pump();
 
     expect(find.text('Hank'), findsOneWidget);

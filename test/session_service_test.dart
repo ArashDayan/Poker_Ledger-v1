@@ -13,6 +13,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/hive_service.dart';
@@ -31,6 +32,7 @@ Future<void> _openTestBoxes() async {
   await Hive.openBox<Player>(HiveService.playersBox);
   await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
   await Hive.openBox(HiveService.settingsBox);
+  await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
 }
 
 Future<void> _closeTestBoxes() async {
@@ -61,15 +63,21 @@ PokerSession _makeSession({
   return session;
 }
 
-Player _makePlayer(String sessionId, {int seat = 1, bool isActive = true}) {
+Future<Player> _makePlayer(String sessionId, {int seat = 1, bool isActive = true}) async {
+  final personId = _uuid.v4();
   final player = Player(
     id: _uuid.v4(),
     sessionId: sessionId,
     name: 'Player $seat',
     seatNumber: seat,
     isActive: isActive,
+    personId: personId,
   );
-  HiveService.players.put(player.id, player);
+  await HiveService.playerIdentities.put(
+    personId,
+    PlayerIdentity(id: personId, displayName: player.name),
+  );
+  await HiveService.players.put(player.id, player);
   return player;
 }
 
@@ -85,7 +93,7 @@ void main() {
   group('Settlement engine — BalanceResult', () {
     test('a session with matching buy-ins and cash-outs is balanced', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
 
       await SessionService.recordTransaction(
         sessionId: session.id,
@@ -110,8 +118,8 @@ void main() {
     test('a winner cashing out MORE than their buy-in is never blocked, and the '
         'session still balances once rake covers the difference', () async {
       final session = _makeSession();
-      final winner = _makePlayer(session.id, seat: 1);
-      final loser = _makePlayer(session.id, seat: 2);
+      final winner = await _makePlayer(session.id, seat: 1);
+      final loser = await _makePlayer(session.id, seat: 2);
 
       // Winner buys in for 2,000, ends up cashing out 5,000 (won from the loser).
       await SessionService.recordTransaction(
@@ -152,7 +160,7 @@ void main() {
 
     test('a real discrepancy is reported with the correct sign and magnitude', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
 
       await SessionService.recordTransaction(
         sessionId: session.id,
@@ -172,7 +180,7 @@ void main() {
     test('known issues (unsettled players) are reported separately from generic '
         'possible causes, and known issues come first conceptually', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       await SessionService.recordTransaction(
         sessionId: session.id,
         playerId: p1.id,
@@ -191,7 +199,7 @@ void main() {
     test('a \$0 cash-out correctly counts as "cashed out", not "never cashed out"',
         () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       await SessionService.recordTransaction(
         sessionId: session.id,
         playerId: p1.id,
@@ -216,7 +224,7 @@ void main() {
   group('Transaction validation', () {
     test('cash-out of exactly 0 is accepted', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       final tx = await SessionService.recordTransaction(
         sessionId: session.id,
         playerId: p1.id,
@@ -229,7 +237,7 @@ void main() {
 
     test('a \$0 buy-in is rejected', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       expect(
         () => SessionService.recordTransaction(
           sessionId: session.id,
@@ -244,7 +252,7 @@ void main() {
 
     test('a negative amount is always rejected, regardless of type', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       expect(
         () => SessionService.recordTransaction(
           sessionId: session.id,
@@ -259,7 +267,7 @@ void main() {
 
     test('buy-in without a signature is rejected', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       expect(
         () => SessionService.recordTransaction(
           sessionId: session.id,
@@ -284,7 +292,7 @@ void main() {
     test('a transaction recorded for an inactive player is flagged signedWhileAbsent',
         () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id, isActive: false);
+      final p1 = await _makePlayer(session.id, isActive: false);
       final tx = await SessionService.recordTransaction(
         sessionId: session.id,
         playerId: p1.id,
@@ -298,7 +306,7 @@ void main() {
     test('a transaction for an active player is NOT flagged signedWhileAbsent',
         () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id, isActive: true);
+      final p1 = await _makePlayer(session.id, isActive: true);
       final tx = await SessionService.recordTransaction(
         sessionId: session.id,
         playerId: p1.id,
@@ -328,7 +336,7 @@ void main() {
 
     test('voiding a transaction on an ended session throws', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       final tx = await SessionService.recordTransaction(
         sessionId: session.id,
         playerId: p1.id,
@@ -360,13 +368,13 @@ void main() {
   group('Rebuy eligibility', () {
     test('a player with 0 rebuys is eligible at level 2', () async {
       final session = _makeSession(currentLevel: 2);
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       expect(SessionService.canRebuy(session, p1.id), isTrue);
     });
 
     test('a player is not eligible for a 2nd rebuy before level 4', () async {
       final session = _makeSession(currentLevel: 3);
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       await SessionService.recordTransaction(
         sessionId: session.id,
         playerId: p1.id,
@@ -380,7 +388,7 @@ void main() {
 
     test('disabling rebuyLevelEnforcementEnabled always allows a rebuy', () async {
       final session = _makeSession(currentLevel: 1, rebuyLevelEnforcementEnabled: false);
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       // At level 1 with enforcement on, allowed = 0 — normally ineligible.
       expect(SessionService.canRebuy(session, p1.id), isTrue);
     });
@@ -389,7 +397,7 @@ void main() {
   group('Outlier amount detection', () {
     test('an amount within normal range is not flagged', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       await SessionService.recordTransaction(
         sessionId: session.id,
         playerId: p1.id,
@@ -403,7 +411,7 @@ void main() {
     test('an amount far larger than anything recorded so far is flagged '
         '(the classic extra-zero typo)', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       await SessionService.recordTransaction(
         sessionId: session.id,
         playerId: p1.id,
@@ -424,7 +432,7 @@ void main() {
     test('a player can be seated without a sample — it is never required',
         () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       expect(p1.hasSampleSignature, isFalse);
       expect(p1.sampleSignatureBase64, isNull);
       expect(p1.sampleSignatureAt, isNull);
@@ -442,7 +450,7 @@ void main() {
 
     test('a stored sample survives a save/reload round trip', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       p1.sampleSignatureBase64 = 'BASE64SPECIMEN';
       p1.sampleSignatureAt = DateTime(2026, 8, 3, 21, 30);
       await p1.save();
@@ -455,7 +463,7 @@ void main() {
 
     test('an empty-string sample does not count as having one', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       p1.sampleSignatureBase64 = '';
       await p1.save();
       expect(HiveService.players.get(p1.id)!.hasSampleSignature, isFalse);
@@ -466,7 +474,7 @@ void main() {
       // Hive returns null for fields that were never written by an older
       // build — the adapter must tolerate that rather than throw.
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       final json = p1.toJson();
       json.remove('sampleSignatureBase64');
       json.remove('sampleSignatureAt');
@@ -477,7 +485,7 @@ void main() {
 
     test('the sample is round-tripped through backup JSON', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       p1.sampleSignatureBase64 = 'SPECIMEN';
       p1.sampleSignatureAt = DateTime(2026, 1, 2, 3, 4);
       final restored = Player.fromJson(p1.toJson());
@@ -545,7 +553,7 @@ void main() {
   group('Live refresh — every mutation is observable on its Hive box', () {
     test('markPlayerSettled emits a players-box event', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       final events = <BoxEvent>[];
       final sub = HiveService.players.watch().listen(events.add);
 
@@ -560,7 +568,7 @@ void main() {
 
     test('recordTransaction emits a transactions-box event', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       final events = <BoxEvent>[];
       final sub = HiveService.transactions.watch().listen(events.add);
 
@@ -580,7 +588,7 @@ void main() {
 
     test('an in-place player edit (rename/reseat) emits an event', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       final events = <BoxEvent>[];
       final sub = HiveService.players.watch().listen(events.add);
 
@@ -599,7 +607,7 @@ void main() {
 
     test('undoLast emits an event so totals repaint immediately', () async {
       final session = _makeSession();
-      final p1 = _makePlayer(session.id);
+      final p1 = await _makePlayer(session.id);
       await SessionService.recordTransaction(
         sessionId: session.id,
         playerId: p1.id,
@@ -640,7 +648,7 @@ void main() {
       // stale UI obvious. Verifies coalescing never drops a write.
       final session = _makeSession();
       for (var i = 1; i <= 9; i++) {
-        final p = _makePlayer(session.id, seat: i);
+        final p = await _makePlayer(session.id, seat: i);
         await SessionService.recordTransaction(
           sessionId: session.id,
           playerId: p.id,

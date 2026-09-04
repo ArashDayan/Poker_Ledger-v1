@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/hive_service.dart';
@@ -24,6 +25,7 @@ Future<void> _open() async {
   await Hive.openBox<Player>(HiveService.playersBox);
   await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
   await Hive.openBox(HiveService.settingsBox);
+  await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
 }
 
 Future<void> _close() async {
@@ -180,8 +182,15 @@ void main() {
 
     test('a legacy session and its ledger still reconcile', () async {
       final s = _session();
+      final personId = _uuid.v4();
+      await HiveService.playerIdentities.put(
+          personId, PlayerIdentity(id: personId, displayName: 'A'));
       final p = Player(
-          id: _uuid.v4(), sessionId: s.id, name: 'A', seatNumber: 1);
+          id: _uuid.v4(),
+          sessionId: s.id,
+          name: 'A',
+          seatNumber: 1,
+          personId: personId);
       await HiveService.players.put(p.id, p);
       await SessionService.recordTransaction(
         sessionId: s.id,

@@ -19,6 +19,7 @@ import 'package:poker_ledger/models/enums.dart';
 import 'package:poker_ledger/models/financial_event.dart';
 import 'package:poker_ledger/models/hand.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/providers/session_provider.dart';
@@ -42,6 +43,8 @@ Future<void> _open() async {
   await Hive.openBox<Player>(HiveService.playersBox);
   await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
   await Hive.openBox(HiveService.settingsBox);
+  await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
+
   await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
   await Hive.openBox<Hand>(HiveService.handsBox);
 }
@@ -68,6 +71,15 @@ Future<SessionProvider> _provider() async {
 PokerSession get _live => HiveService.sessions.get('session-1')!;
 Player _stored(String id) => HiveService.players.get(id)!;
 
+
+Future<String> _j5regId(String name) async {
+  final normalized = name.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+  final id = 'j5reg-$normalized';
+  await HiveService.playerIdentities.put(
+      id, PlayerIdentity(id: id, displayName: name));
+  return id;
+}
+
 void main() {
   setUp(_open);
   tearDown(_close);
@@ -79,7 +91,7 @@ void main() {
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
 
       final player = await provider.addPlayer(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 1,
         tableId: ids[0],
       );
@@ -93,7 +105,7 @@ void main() {
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
 
       final player = await provider.addPlayer(
-        name: 'Sara',
+        name: 'Sara', personId: await _j5regId('Sara'),
         seatNumber: 3,
         tableId: ids[1],
       );
@@ -111,7 +123,7 @@ void main() {
           reason: 'precondition: tables not yet materialised');
 
       final player = await provider.addPlayer(
-        name: 'Nima',
+        name: 'Nima', personId: await _j5regId('Nima'),
         seatNumber: 5,
         tableId: 'table-2',
       );
@@ -126,7 +138,7 @@ void main() {
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
 
       final player = await provider.addPlayer(
-        name: 'Sara',
+        name: 'Sara', personId: await _j5regId('Sara'),
         seatNumber: 3,
         tableId: ids[1],
       );
@@ -148,7 +160,7 @@ void main() {
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
 
       final player = await provider.addPlayerWithBuyIn(
-        name: 'Sara',
+        name: 'Sara', personId: await _j5regId('Sara'),
         seatNumber: 4,
         buyInAmount: 1000,
         hostSignatureBase64: _hostSig,
@@ -175,7 +187,7 @@ void main() {
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
 
       final player = await provider.addPlayerWithBuyIn(
-        name: 'Ali',
+        name: 'Ali', personId: await _j5regId('Ali'),
         seatNumber: 2,
         buyInAmount: 500,
         hostSignatureBase64: _hostSig,
@@ -198,7 +210,7 @@ void main() {
         () async {
       final provider = await _provider();
 
-      final player = await provider.addPlayer(name: 'Ali', seatNumber: 1);
+      final player = await provider.addPlayer(name: 'Ali', personId: await _j5regId('Ali'), seatNumber: 1);
 
       // Legacy shape preserved — null means "the one and only table".
       expect(_stored(player.id).tableId, isNull);
@@ -211,7 +223,7 @@ void main() {
     test('a null-tableId legacy player remains visible after a 2nd table',
         () async {
       final provider = await _provider();
-      final legacy = await provider.addPlayer(name: 'Old', seatNumber: 1);
+      final legacy = await provider.addPlayer(name: 'Old', personId: await _j5regId('Old'), seatNumber: 1);
       expect(_stored(legacy.id).tableId, isNull);
 
       await provider.addTable(name: 'Table 2');
@@ -230,7 +242,7 @@ void main() {
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
       provider.setActiveTable(ids[1]);
 
-      final player = await provider.addPlayer(name: 'Sara', seatNumber: 2);
+      final player = await provider.addPlayer(name: 'Sara', personId: await _j5regId('Sara'), seatNumber: 2);
 
       expect(_stored(player.id).tableId, ids[1]);
     });
@@ -244,7 +256,7 @@ void main() {
 
       for (final seat in [1, 4, 9]) {
         final p = await provider.addPlayer(
-          name: 'P$seat',
+          name: 'P$seat', personId: await _j5regId('P$seat'),
           seatNumber: seat,
           tableId: ids[1],
         );
@@ -260,9 +272,9 @@ void main() {
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
 
       final a = await provider.addPlayer(
-          name: 'A', seatNumber: 1, tableId: ids[0]);
+          name: 'A', personId: await _j5regId('A'), seatNumber: 1, tableId: ids[0]);
       final b = await provider.addPlayer(
-          name: 'B', seatNumber: 1, tableId: ids[1]);
+          name: 'B', personId: await _j5regId('B'), seatNumber: 1, tableId: ids[1]);
 
       expect(TableService.playersAt(_live, ids[0]).map((p) => p.id), [a.id]);
       expect(TableService.playersAt(_live, ids[1]).map((p) => p.id), [b.id]);
@@ -276,7 +288,7 @@ void main() {
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
 
       final first = await provider.addPlayer(
-        name: 'First',
+        name: 'First', personId: await _j5regId('First'),
         seatNumber: 1,
         sampleSignatureBase64: _sample1,
         sampleSignature2Base64: _sample2,
@@ -288,7 +300,7 @@ void main() {
       final beforeS2 = _stored(first.id).sampleSignature2Base64;
 
       await provider.addPlayer(
-          name: 'Second', seatNumber: 2, tableId: ids[1]);
+          name: 'Second', personId: await _j5regId('Second'), seatNumber: 2, tableId: ids[1]);
 
       final after = _stored(first.id);
       expect(after.tableId, beforeTable);
@@ -301,12 +313,12 @@ void main() {
     test('materialise does not rewrite any player record', () async {
       final provider = await _provider();
       // Created while tables were unmaterialised -> null tableId.
-      final legacy = await provider.addPlayer(name: 'Legacy', seatNumber: 1);
+      final legacy = await provider.addPlayer(name: 'Legacy', personId: await _j5regId('Legacy'), seatNumber: 1);
       expect(_stored(legacy.id).tableId, isNull);
 
       // A later add triggers materialise; the old record must be left
       // exactly as it was — no automatic repair, by requirement.
-      await provider.addPlayer(name: 'New', seatNumber: 2);
+      await provider.addPlayer(name: 'New', personId: await _j5regId('New'), seatNumber: 2);
 
       expect(_stored(legacy.id).tableId, isNull,
           reason: 'existing players must not be migrated');
@@ -319,7 +331,7 @@ void main() {
       await provider.addTable(name: 'Table 2');
       final ids = TableService.tablesFor(_live).map((t) => t.id).toList();
       final player = await provider.addPlayer(
-          name: 'Sara', seatNumber: 3, tableId: ids[1]);
+          name: 'Sara', personId: await _j5regId('Sara'), seatNumber: 3, tableId: ids[1]);
 
       await Hive.box<Player>(HiveService.playersBox).close();
       await Hive.openBox<Player>(HiveService.playersBox);
@@ -331,7 +343,7 @@ void main() {
       final provider = await _provider();
       expect(_live.tables == null || _live.tables!.isEmpty, isTrue);
 
-      await provider.addPlayer(name: 'Ali', seatNumber: 1);
+      await provider.addPlayer(name: 'Ali', personId: await _j5regId('Ali'), seatNumber: 1);
 
       expect(_live.tables, isNotNull);
       expect(_live.tables!.isNotEmpty, isTrue,

@@ -10,6 +10,7 @@ import 'package:poker_ledger/models/chip_movement.dart';
 import 'package:poker_ledger/models/chip_type.dart';
 import 'package:poker_ledger/models/financial_event.dart';
 import 'package:poker_ledger/models/player.dart';
+import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/chip_bank_service.dart';
@@ -35,6 +36,9 @@ Future<void> _open() async {
   await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
   await Hive.openBox<ChipType>(HiveService.chipsBox);
   await Hive.openBox<ChipMovement>(HiveService.chipMovementsBox);
+  await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
+  await HiveService.playerIdentities.put(
+      'p1', PlayerIdentity(id: 'p1', displayName: 'P1'));
   ChipTrackingService.installBankResolver();
 }
 
@@ -50,7 +54,7 @@ Future<Map<String, ChipType>> _stock() async {
   return {'100': c100, '1000': c1000};
 }
 
-String _session() {
+Future<String> _session() async {
   final s = PokerSession(
     id: _uuid.v4(),
     name: 'X',
@@ -60,7 +64,17 @@ String _session() {
     bigBlind: 2,
     tableNumber: '1',
   );
-  HiveService.sessions.put(s.id, s);
+  await HiveService.sessions.put(s.id, s);
+  await HiveService.players.put(
+    'p1',
+    Player(
+      id: 'p1',
+      sessionId: s.id,
+      name: 'P1',
+      seatNumber: 1,
+      personId: 'p1',
+    ),
+  );
   return s.id;
 }
 
@@ -70,7 +84,7 @@ void main() {
 
   test('1. buy-in 2000 + ledger 10000 can exchange 5000', () async {
     final c = await _stock();
-    final sid = _session();
+    final sid = await _session();
     await SessionService.recordTransaction(
       sessionId: sid,
       playerId: 'p1',
@@ -192,7 +206,7 @@ void main() {
 
   test('7–11. no Money In/Out/Rake/Host Profit/Discount change', () async {
     final c = await _stock();
-    final sid = _session();
+    final sid = await _session();
     await SessionService.recordTransaction(
       sessionId: sid,
       playerId: 'p1',
@@ -231,7 +245,7 @@ void main() {
 
   test('12. buy-in/rebuy is not the exchange limit', () async {
     final c = await _stock();
-    final sid = _session();
+    final sid = await _session();
     await SessionService.recordTransaction(
       sessionId: sid,
       playerId: 'p1',
