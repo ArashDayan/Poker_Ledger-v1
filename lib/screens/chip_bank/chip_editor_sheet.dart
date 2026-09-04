@@ -112,30 +112,41 @@ class _ChipEditorSheetState extends State<ChipEditorSheet> {
         : null;
     if (inventoryChange && (authorization == null || !mounted)) return;
 
-    if (_isEdit) {
-      await provider.updateChip(
-        widget.existing!.id,
-        value: value,
-        quantity: quantity,
-        name: name.isEmpty ? null : name,
-        colorValue: _color,
-        note: note.isEmpty ? null : note,
-        // Explicit clears: leaving a field blank must actually remove it,
-        // not silently keep the old value.
-        clearName: name.isEmpty,
-        clearColor: _color == null,
-        clearNote: note.isEmpty,
-        authorization: authorization,
-      );
-    } else {
-      await provider.addChip(
-        value: value,
-        quantity: quantity,
-        name: name.isEmpty ? null : name,
-        colorValue: _color,
-        note: note.isEmpty ? null : note,
-        authorization: authorization!,
-      );
+    // Same failure contract as the other inventory entry points
+    // (_remove / _adjustQuantity / the holding sheet): a refused or
+    // failed write surfaces as a SnackBar and the sheet stays open so
+    // the authorization is not silently swallowed.
+    try {
+      if (_isEdit) {
+        await provider.updateChip(
+          widget.existing!.id,
+          value: value,
+          quantity: quantity,
+          name: name.isEmpty ? null : name,
+          colorValue: _color,
+          note: note.isEmpty ? null : note,
+          // Explicit clears: leaving a field blank must actually remove
+          // it, not silently keep the old value.
+          clearName: name.isEmpty,
+          clearColor: _color == null,
+          clearNote: note.isEmpty,
+          authorization: authorization,
+        );
+      } else {
+        await provider.addChip(
+          value: value,
+          quantity: quantity,
+          name: name.isEmpty ? null : name,
+          colorValue: _color,
+          note: note.isEmpty ? null : note,
+          authorization: authorization!,
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('$e')));
+      return;
     }
 
     if (!mounted) return;
