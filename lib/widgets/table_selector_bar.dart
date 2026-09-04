@@ -724,7 +724,7 @@ Future<void> showMovePlayerSheet(BuildContext context, Player player) {
                             to: t,
                           );
                           if (selection == null) return;
-                          String? secondVerifierSignature;
+                          SecondVerifierResult? secondVerifier;
                           if (DualVerificationService.requiresSecond(
                               selection.amount)) {
                             final second =
@@ -735,7 +735,7 @@ Future<void> showMovePlayerSheet(BuildContext context, Player player) {
                               operationLabel: tr('money_moving_with'),
                             );
                             if (second == null) return;
-                            secondVerifierSignature = second;
+                            secondVerifier = second;
                           }
                           try {
                             await provider.movePlayerToTable(
@@ -748,9 +748,9 @@ Future<void> showMovePlayerSheet(BuildContext context, Player player) {
                               operatorName: selection.operatorName,
                               hostSignatureBase64:
                                   selection.hostSignatureBase64,
-                              secondVerifierName: selection.operatorName,
+                              secondVerifierName: secondVerifier?.name,
                               secondVerifierSignature:
-                                  secondVerifierSignature,
+                                  secondVerifier?.signature,
                             );
                             if (ctx.mounted) Navigator.pop(ctx);
                           } catch (e) {

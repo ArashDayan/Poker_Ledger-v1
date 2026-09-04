@@ -15,6 +15,7 @@ import '../screens/settings/settings_screen.dart';
 import '../services/financial_ledger_service.dart';
 import '../services/session_service.dart';
 import 'chip_exchange_sheet.dart';
+import 'dual_verification_sheet.dart';
 import 'table_selector_bar.dart';
 import 'void_linked_financial_sheet.dart';
 
@@ -92,6 +93,14 @@ Future<void> runSessionUndo(BuildContext context) async {
   final txs = SessionService.transactionsFor(session.id);
   if (txs.isEmpty) return;
   final last = txs.last;
+  // J8: undoing a sensitive transaction is itself sensitive.
+  final secondVerifier = await collectSecondVerifierIfRequired(
+    context,
+    amount: last.amount,
+    currency: session.currency,
+    operationLabel: tr('undo_last'),
+  );
+  if (secondVerifier == null) return;
   final linked = FinancialLedgerService.activeEventsLinkedTo(last.id);
   VoidChipFinancialChoice? choice;
   if (linked.isNotEmpty) {
@@ -102,7 +111,11 @@ Future<void> runSessionUndo(BuildContext context) async {
     );
     if (choice == null || !context.mounted) return;
   }
-  final voided = provider.undo();
+  final voided = await provider.undo(
+    secondVerifierName: secondVerifier.isRequired ? secondVerifier.name : null,
+    secondVerifierSignature:
+        secondVerifier.isRequired ? secondVerifier.signature : null,
+  );
   if (voided == null || !context.mounted) return;
   if (choice == VoidChipFinancialChoice.chipAndReverseLinked) {
     await FinancialLedgerService.reverseLinkedTo(voided.id);
@@ -125,6 +138,28 @@ Future<void> runSessionUndo(BuildContext context) async {
           '${tr('undone')}: ${voided.type.localizedLabel} · ${fmt.format(voided.amount)} · $playerName'),
       duration: const Duration(seconds: 4),
     ),
+  );
+}
+
+/// Redo the last voided transaction of the live session, with the same
+/// J8 second-authorisation rule as undo (a redo re-applies money/chips).
+Future<void> runSessionRedo(BuildContext context) async {
+  final provider = context.read<SessionProvider>();
+  final session = provider.current;
+  if (session == null) return;
+  final tx = provider.pendingRedoTransaction;
+  if (tx == null) return;
+  final secondVerifier = await collectSecondVerifierIfRequired(
+    context,
+    amount: tx.amount,
+    currency: session.currency,
+    operationLabel: tr('redo'),
+  );
+  if (secondVerifier == null) return;
+  await provider.redo(
+    secondVerifierName: secondVerifier.isRequired ? secondVerifier.name : null,
+    secondVerifierSignature:
+        secondVerifier.isRequired ? secondVerifier.signature : null,
   );
 }
 
@@ -155,7 +190,7 @@ class SessionOverflowMenu extends StatelessWidget {
             runSessionUndo(context);
             break;
           case 'redo':
-            provider.redo();
+            runSessionRedo(context);
             break;
           case 'switch_night':
             Navigator.of(context).push(MaterialPageRoute(

@@ -221,29 +221,30 @@ Future<void> showQuickRakeSheet(
   );
   if (!context.mounted) return;
 
-  // J8: attributed player rake is a player chip operation and can be
-  // sensitive. Table-level rake has no player identity, so it is left
-  // to the table-level signature rules.
-  String? secondVerifierSignature;
-  if (player != null) {
-    secondVerifierSignature = await collectSecondVerifierIfRequired(
-      context,
-      amount: amount,
-      currency: session.currency,
-      operationLabel: tr('rake_collected'),
-    );
-    if (secondVerifierSignature == null) return;
-  }
+  // J8: rake is a financial/chip operation, able to be sensitive at a
+  // configured threshold regardless of whether it is attributed to a
+  // named player or taken at table level. The service's dual gate applies
+  // to both, so collect the second authorisation for either before any
+  // write.
+  final secondVerifier = await collectSecondVerifierIfRequired(
+    context,
+    amount: amount,
+    currency: session.currency,
+    operationLabel: tr('rake_collected'),
+  );
+  if (secondVerifier == null) return;
 
   final tx = await provider.recordTransaction(
     playerId: player?.id,
     type: TransactionType.rakeCollection,
     amount: amount,
     hostSignatureBase64: '',
+    secondVerifierName:
+        (secondVerifier?.isRequired ?? false) ? secondVerifier!.name : null,
     secondVerifierSignature:
-        (secondVerifierSignature ?? '').isEmpty
-            ? null
-            : secondVerifierSignature,
+        (secondVerifier?.isRequired ?? false)
+            ? secondVerifier!.signature
+            : null,
   );
   if (context.mounted) {
     // Player -> Bank when the rake came from a named player, otherwise

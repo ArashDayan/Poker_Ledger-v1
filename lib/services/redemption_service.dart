@@ -131,6 +131,11 @@ class RedemptionService {
       throw RedemptionException(
           'A second authorisation is required for this table cash-out.');
     }
+    if (DualVerificationService.requiresSecond(amount) &&
+        (secondVerifierName == null || secondVerifierName.trim().isEmpty)) {
+      throw RedemptionException(
+          'The second verifier name is required for this table cash-out.');
+    }
 
     // Identity gate (J5) before any write: a table cash-out releases the
     // person's chips and closes their participation, so the seat must
@@ -231,6 +236,11 @@ class RedemptionService {
             secondVerifierSignature.isEmpty)) {
       throw RedemptionException(
           'A second authorisation is required for this redemption.');
+    }
+    if (dual &&
+        (secondVerifierName == null || secondVerifierName.trim().isEmpty)) {
+      throw RedemptionException(
+          'The second verifier name is required for this redemption.');
     }
 
     // MARKER GATE (E2): no redemption while a marker is outstanding,

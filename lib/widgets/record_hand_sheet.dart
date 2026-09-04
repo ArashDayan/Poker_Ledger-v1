@@ -9,6 +9,7 @@ import '../models/player.dart';
 import '../providers/session_provider.dart';
 import '../services/hand_service.dart';
 import '../services/table_service.dart';
+import 'dual_verification_sheet.dart';
 import 'signature_pad.dart';
 
 /// Record-after-the-fact sheet for a completed pot.
@@ -125,9 +126,27 @@ class _RecordHandSheetState extends State<_RecordHandSheet> {
       );
       return;
     }
+
+    // J8: a sensitive hand (rake and/or house win at/above the configured
+    // threshold) requires a second authorisation before any ledger or chip
+    // write. The captured identity + signature is forwarded to both money
+    // legs; each service-level transaction applies the threshold itself.
+    final provider = context.read<SessionProvider>();
+    final session = provider.current;
+    if (session == null) return;
+    final sensitiveAmount =
+        preview.rake > preview.houseWin ? preview.rake : preview.houseWin;
+    final secondVerifier = await collectSecondVerifierIfRequired(
+      context,
+      amount: sensitiveAmount,
+      currency: session.currency,
+      operationLabel: tr('record_hand'),
+    );
+    if (secondVerifier == null) return;
+
     setState(() => _saving = true);
     try {
-      final hand = await context.read<SessionProvider>().recordHand(
+      final hand = await provider.recordHand(
             tableId: widget.tableId,
             kind: _kind,
             drafts: preview.drafts,
@@ -137,6 +156,10 @@ class _RecordHandSheetState extends State<_RecordHandSheet> {
             note: _noteCtrl.text.trim().isEmpty ? null : _noteCtrl.text.trim(),
             hostSignatureBase64:
                 preview.houseWin > 0 ? _signature : null,
+            secondVerifierName:
+                secondVerifier.isRequired ? secondVerifier.name : null,
+            secondVerifierSignature:
+                secondVerifier.isRequired ? secondVerifier.signature : null,
           );
       if (!mounted) return;
       Navigator.pop(context, hand);

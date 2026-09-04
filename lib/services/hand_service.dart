@@ -113,6 +113,8 @@ class HandService {
     double houseWinAmount = 0,
     String? note,
     String? hostSignatureBase64,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
     Map<String, Map<String, int>>? postHandCounts,
     Map<String, int>? rakeChips,
     Map<String, Map<String, int>>? houseWinChipsByPlayer,
@@ -217,6 +219,8 @@ class HandService {
           amount: rakeAmount,
           tableId: tableId,
           note: note ?? 'Hand #$table rake',
+          secondVerifierName: secondVerifierName,
+          secondVerifierSignature: secondVerifierSignature,
         );
         if (rakeChips != null && rakeChips.isNotEmpty) {
           final made = await ChipTrackingService.recordDistribution(
@@ -244,6 +248,8 @@ class HandService {
           hostSignatureBase64: hostSignatureBase64,
           tableId: tableId,
           note: note ?? 'Hand house win',
+          secondVerifierName: secondVerifierName,
+          secondVerifierSignature: secondVerifierSignature,
         );
         if (houseWinChipsByPlayer != null) {
           for (final entry in houseWinChipsByPlayer.entries) {
@@ -304,12 +310,20 @@ class HandService {
       return hand;
     } catch (e) {
       if (rakeTx != null) {
-        await SessionService.voidTransaction(rakeTx.id);
+        await SessionService.voidTransaction(
+          rakeTx.id,
+          secondVerifierName: secondVerifierName,
+          secondVerifierSignature: secondVerifierSignature,
+        );
         await ChipTrackingService.reverseForTransaction(rakeTx.id,
             note: 'hand record failed');
       }
       if (houseTx != null) {
-        await SessionService.voidTransaction(houseTx.id);
+        await SessionService.voidTransaction(
+          houseTx.id,
+          secondVerifierName: secondVerifierName,
+          secondVerifierSignature: secondVerifierSignature,
+        );
         await ChipTrackingService.reverseForTransaction(houseTx.id,
             note: 'hand record failed');
       }
@@ -319,7 +333,11 @@ class HandService {
     }
   }
 
-  static Future<Hand> voidHand(String handId) async {
+  static Future<Hand> voidHand(
+    String handId, {
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+  }) async {
     if (!_boxOpen) {
       throw HandException('Hand history is unavailable.');
     }
@@ -334,7 +352,11 @@ class HandService {
     if (rakeId != null && rakeId.isNotEmpty) {
       final tx = HiveService.transactions.get(rakeId);
       if (tx != null && !tx.isVoided) {
-        await SessionService.voidTransaction(rakeId);
+        await SessionService.voidTransaction(
+          rakeId,
+          secondVerifierName: secondVerifierName,
+          secondVerifierSignature: secondVerifierSignature,
+        );
       }
       await ChipTrackingService.reverseForTransaction(rakeId, note: 'void hand');
     }
@@ -342,7 +364,11 @@ class HandService {
     if (houseId != null && houseId.isNotEmpty) {
       final tx = HiveService.transactions.get(houseId);
       if (tx != null && !tx.isVoided) {
-        await SessionService.voidTransaction(houseId);
+        await SessionService.voidTransaction(
+          houseId,
+          secondVerifierName: secondVerifierName,
+          secondVerifierSignature: secondVerifierSignature,
+        );
       }
       await ChipTrackingService.reverseForTransaction(houseId,
           note: 'void hand');

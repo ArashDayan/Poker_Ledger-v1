@@ -418,6 +418,7 @@ void main() {
         .where((e) => e.operation == TableOperationType.dualVerification)
         .toList();
     expect(events, hasLength(1));
+    expect(events.single.secondVerifierName, 'CFO');
     expect(events.single.secondVerifierSignature, 'second');
     expect(events.single.hostSignatureBase64, 'host');
 
@@ -437,6 +438,26 @@ void main() {
         type: TransactionType.rebuy,
         amount: 1500,
         hostSignatureBase64: 'host',
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await DualVerificationService.clearThreshold();
+    await DualVerificationService.configure(enabled: false);
+  });
+
+  test('J8 missing second verifier name is refused when above threshold',
+      () async {
+    final s = _session();
+    final p = await _registeredSeat(s);
+    await DualVerificationService.configure(enabled: true, threshold: 1000);
+    expect(
+      () => SessionService.recordTransaction(
+        sessionId: s.id,
+        playerId: p.id,
+        type: TransactionType.rebuy,
+        amount: 1500,
+        hostSignatureBase64: 'host',
+        secondVerifierSignature: 'second',
       ),
       throwsA(isA<StateError>()),
     );

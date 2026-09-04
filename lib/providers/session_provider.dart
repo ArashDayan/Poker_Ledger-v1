@@ -691,6 +691,8 @@ class SessionProvider extends ChangeNotifier {
     String? sampleSignature2Base64,
     String? tableId,
     String? personId,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     // J5 gate before any row or leg is written: an opening buy-in is a
     // player financial operation and must be linked to a registered
@@ -718,6 +720,8 @@ class SessionProvider extends ChangeNotifier {
         type: TransactionType.buyIn,
         amount: buyInAmount,
         hostSignatureBase64: hostSignatureBase64,
+        secondVerifierName: secondVerifierName,
+        secondVerifierSignature: secondVerifierSignature,
       );
     }
     return player;
@@ -855,6 +859,8 @@ class SessionProvider extends ChangeNotifier {
     double houseWinAmount = 0,
     String? note,
     String? hostSignatureBase64,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
     Map<String, Map<String, int>>? postHandCounts,
     Map<String, int>? rakeChips,
     Map<String, Map<String, int>>? houseWinChipsByPlayer,
@@ -870,6 +876,8 @@ class SessionProvider extends ChangeNotifier {
       houseWinAmount: houseWinAmount,
       note: note,
       hostSignatureBase64: hostSignatureBase64,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
       postHandCounts: postHandCounts,
       rakeChips: rakeChips,
       houseWinChipsByPlayer: houseWinChipsByPlayer,
@@ -878,8 +886,16 @@ class SessionProvider extends ChangeNotifier {
     return hand;
   }
 
-  Future<Hand> voidHand(String handId) async {
-    final hand = await HandService.voidHand(handId);
+  Future<Hand> voidHand(
+    String handId, {
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+  }) async {
+    final hand = await HandService.voidHand(
+      handId,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+    );
     notifyListeners();
     return hand;
   }
@@ -891,6 +907,8 @@ class SessionProvider extends ChangeNotifier {
     required double amount,
     required String hostSignatureBase64,
     String? note,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     if (_current == null) throw StateError('No active session.');
     await TableService.materialise(_current!);
@@ -902,6 +920,8 @@ class SessionProvider extends ChangeNotifier {
       amount: amount,
       hostSignatureBase64: hostSignatureBase64,
       note: note,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
     );
     _redoStack.clear();
     notifyListeners();
@@ -1227,25 +1247,27 @@ class SessionProvider extends ChangeNotifier {
   /// Voids the most recent transaction and returns it, so the caller can
   /// tell the banker exactly what was just undone — after a burst of
   /// quick actions, "Undo" alone doesn't say which one it reversed.
-  LedgerTransaction? undo() {
+  Future<LedgerTransaction?> undo({
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+  }) async {
     if (_current == null) return null;
-    final voided = SessionService.undoLast(_current!.id);
+    final voided = await SessionService.undoLast(
+      _current!.id,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+    );
     if (voided != null) {
       _redoStack.add(voided.id);
       // Undo is a void by another name — the chips must come back too.
       //
-      // This method is deliberately synchronous: callers use its return
-      // value to name the transaction they just undid. The chip reversal
-      // is asynchronous, so it is sequenced with `then` rather than
-      // dropped — notifying again on completion means the Bank figure
-      // refreshes once the movements are actually on disk, instead of
-      // the UI reading a half-written ledger. Errors are surfaced in
-      // debug rather than silently swallowed; the money undo has already
+      // The chip reversal is sequenced with `then` rather than dropped —
+      // notifying again on completion means the Bank figure refreshes
+      // once the movements are actually on disk, instead of the UI
+      // reading a half-written ledger. Errors are surfaced in debug
+      // rather than silently swallowed; the money undo has already
       // succeeded by this point and is never rolled back by a chip
       // failure.
-      // `ignore: discarded_futures` is not used: the future IS handled,
-      // just not awaited. Written with unawaited-style chaining that
-      // needs no extra import for the movement type.
       ChipTrackingService.reverseForTransaction(voided.id, note: 'undo')
           .then(
         (_) => notifyListeners(),
@@ -1257,10 +1279,25 @@ class SessionProvider extends ChangeNotifier {
     return voided;
   }
 
-  Future<void> redo() async {
+  /// The transaction that would be restored by the next [redo], used by
+  /// the UI to apply the J8 sensitivity check before re-applying it.
+  LedgerTransaction? get pendingRedoTransaction {
+    if (_current == null || _redoStack.isEmpty) return null;
+    return HiveService.transactions.get(_redoStack.last);
+  }
+
+  Future<void> redo({
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+  }) async {
     if (_current == null || _redoStack.isEmpty) return;
     final id = _redoStack.removeLast();
-    await SessionService.redo(_current!.id, id);
+    await SessionService.redo(
+      _current!.id,
+      id,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+    );
     // Redo un-voids, so the chips it took back must go out again.
     await ChipTrackingService.reapplyForTransaction(id);
     notifyListeners();
@@ -1289,12 +1326,16 @@ class SessionProvider extends ChangeNotifier {
     required double amount,
     String? note,
     String? hostSignatureBase64,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     final tx = await SessionService.updateTransaction(
       transactionId: transactionId,
       amount: amount,
       note: note,
       hostSignatureBase64: hostSignatureBase64,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
     );
     notifyListeners();
     return tx;
@@ -1306,8 +1347,15 @@ class SessionProvider extends ChangeNotifier {
   /// gone from the ledger but the chips would still read as handed out.
   /// The reversal is appended, never deleted, so the history still shows
   /// the original movement and the correction.
-  Future<void> voidTransactionById(String transactionId) async {
-    await SessionService.voidTransaction(transactionId);
+  Future<void> voidTransactionById(String transactionId, {
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+  }) async {
+    await SessionService.voidTransaction(
+      transactionId,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+    );
     await ChipTrackingService.reverseForTransaction(transactionId,
         note: 'void');
     notifyListeners();
@@ -1315,8 +1363,15 @@ class SessionProvider extends ChangeNotifier {
 
   /// Restores a voided transaction and re-applies the exact chip
   /// composition that was reversed, denomination for denomination.
-  Future<void> unvoidTransactionById(String transactionId) async {
-    await SessionService.unvoidTransaction(transactionId);
+  Future<void> unvoidTransactionById(String transactionId, {
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+  }) async {
+    await SessionService.unvoidTransaction(
+      transactionId,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+    );
     await ChipTrackingService.reapplyForTransaction(transactionId);
     notifyListeners();
   }

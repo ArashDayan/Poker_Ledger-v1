@@ -101,13 +101,13 @@ class TableViewTab extends StatelessWidget {
     );
     if (!funding.shouldCommit || !context.mounted) return;
     // J8: sensitive player money ops need a second authorisation.
-    final secondVerifierSignature = await collectSecondVerifierIfRequired(
+    final secondVerifier = await collectSecondVerifierIfRequired(
       context,
       amount: result.amount,
       currency: session.currency,
       operationLabel: type.localizedLabel,
     );
-    if (secondVerifierSignature == null) return;
+    if (secondVerifier == null) return;
     // Optional chip composition. Skip / dismiss does not abort.
     final dist = ChipFlow.appliesTo(type)
         ? await ChipFlow.ask(context,
@@ -120,9 +120,11 @@ class TableViewTab extends StatelessWidget {
         type: type,
         amount: result.amount,
         hostSignatureBase64: result.signature ?? '',
-        secondVerifierSignature: secondVerifierSignature.isEmpty
-            ? null
-            : secondVerifierSignature,
+        secondVerifierName:
+            secondVerifier.isRequired ? secondVerifier.name : null,
+        secondVerifierSignature: secondVerifier.isRequired
+            ? secondVerifier.signature
+            : null,
       );
       if (context.mounted) {
         // Phase 2a: person-scoped chip holding.

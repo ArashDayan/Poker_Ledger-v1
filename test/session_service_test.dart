@@ -619,7 +619,7 @@ void main() {
 
       final events = <BoxEvent>[];
       final sub = HiveService.transactions.watch().listen(events.add);
-      SessionService.undoLast(session.id);
+      await SessionService.undoLast(session.id);
       await Future<void>.delayed(Duration.zero);
       await sub.cancel();
 

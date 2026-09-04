@@ -4,6 +4,7 @@ import '../models/financial_event.dart';
 import '../models/player.dart';
 import '../models/transaction.dart';
 import 'chip_tracking_service.dart';
+import 'dual_verification_service.dart';
 import 'financial_capture.dart';
 import 'financial_ledger_service.dart';
 import 'hive_service.dart';
@@ -85,6 +86,54 @@ class WalletIssuanceResult {
 class DepositToChips {
   DepositToChips._();
 
+  /// J8 shared gate for the seat-free wallet/marker paths that write
+  /// financial and chip rows without a [LedgerTransaction] of their own.
+  ///
+  /// The checks run before any write; the audit event is appended by the
+  /// caller once the writes are complete so the event can link the actual
+  /// created rows.
+  static void requireDualIfApplicable({
+    required String operation,
+    required double amount,
+    required String? secondVerifierName,
+    required String? secondVerifierSignature,
+  }) {
+    if (!DualVerificationService.requiresSecond(amount)) return;
+    if (secondVerifierSignature == null || secondVerifierSignature.isEmpty) {
+      throw FinancialLedgerException(
+        'A second authorisation is required for this $operation.',
+      );
+    }
+    if (secondVerifierName == null || secondVerifierName.trim().isEmpty) {
+      throw FinancialLedgerException(
+        'The second verifier name is required for this $operation.',
+      );
+    }
+  }
+
+  /// Records the J8 dual-authorisation event after a seat-free write set.
+  static Future<void> recordDualIfApplicable({
+    required String operation,
+    required double amount,
+    String? personId,
+    required String? secondVerifierName,
+    required String? secondVerifierSignature,
+    String? hostSignatureBase64,
+    String? relatedTransactionId,
+  }) async {
+    if (!DualVerificationService.requiresSecond(amount)) return;
+    await DualVerificationService.recordVerification(
+      operation: operation,
+      personId: personId,
+      amount: amount,
+      operatorName: '',
+      secondVerifierName: secondVerifierName ?? '',
+      hostSignatureBase64: hostSignatureBase64 ?? '',
+      secondVerifierSignature: secondVerifierSignature ?? '',
+      relatedTransactionId: relatedTransactionId,
+    );
+  }
+
   /// Seat in [sessionId] linked to [personId], or null.
   ///
   /// Requires an ACTUAL seat: the seated deposit-to-chips path
@@ -101,6 +150,8 @@ class DepositToChips {
     required AppCurrency currency,
     required double amount,
     required String hostSignatureBase64,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     if (personId.isEmpty) {
       throw FinancialLedgerException('personId is required.');
@@ -132,6 +183,8 @@ class DepositToChips {
       amount: amount,
       hostSignatureBase64: hostSignatureBase64,
       note: 'From deposit',
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
     );
 
     final pair = await FinancialCapture.useDepositForChips(
@@ -170,6 +223,8 @@ class DepositToChips {
     required Map<String, int> composition,
     required String hostSignatureBase64,
     String? sessionId,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     if (personId.isEmpty) {
       throw FinancialLedgerException('personId is required.');
@@ -196,6 +251,16 @@ class DepositToChips {
           'The bank does not hold the issued chip composition.');
     }
 
+    // J8: a sensitive wallet issuance requires a second authorisation
+    // before any financial or chip write. Fails closed like the seated
+    // path (which is enforced inside SessionService.recordTransaction).
+    requireDualIfApplicable(
+      operation: 'wallet chip issuance',
+      amount: amount,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+    );
+
     // 1+2: the approved financial pair, session-optional, with the
     // audit signature on both events. The deposit cap
     // ("Cannot use more deposit than is held") is enforced inside
@@ -221,6 +286,16 @@ class DepositToChips {
       reason: ChipMovementReason.depositIssuance,
       sessionId: sessionId,
       note: 'deposit issuance',
+    );
+
+    await recordDualIfApplicable(
+      operation: 'wallet_chip_issuance',
+      amount: amount,
+      personId: personId,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+      hostSignatureBase64: hostSignatureBase64,
+      relatedTransactionId: pair.frontMoneyOut.id,
     );
 
     return WalletIssuanceResult(
@@ -264,6 +339,8 @@ class DepositToChips {
     required Map<String, int> composition,
     required String playerSignatureBase64,
     String? sessionId,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     if (personId.isEmpty) {
       throw FinancialLedgerException('personId is required.');
@@ -289,6 +366,16 @@ class DepositToChips {
       throw FinancialLedgerException(
           'The bank does not hold the issued chip composition.');
     }
+
+    // J8: a sensitive marker issuance has two authorisations — the
+    // player's marker signature (primary) and the configured second
+    // verifier. Enforced before any write, audited after the write set.
+    requireDualIfApplicable(
+      operation: 'marker chip issuance',
+      amount: amount,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+    );
 
     // 1: the wallet draw. The AVAILABLE-DEPOSIT CAP is enforced here
     // (depositHeld guard) BEFORE anything is written — the marker can
@@ -336,6 +423,16 @@ class DepositToChips {
       reason: ChipMovementReason.markerIssuance,
       sessionId: sessionId,
       note: 'marker issuance',
+    );
+
+    await recordDualIfApplicable(
+      operation: 'marker_chip_issuance',
+      amount: amount,
+      personId: personId,
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
+      hostSignatureBase64: playerSignatureBase64,
+      relatedTransactionId: draw.id,
     );
 
     return MarkerIssuanceResult(

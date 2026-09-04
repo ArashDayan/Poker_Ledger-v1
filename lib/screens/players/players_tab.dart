@@ -402,13 +402,13 @@ class PlayersTab extends StatelessWidget {
     if (!funding.shouldCommit || !context.mounted) return;
 
     // J8: sensitive player money ops need a second authorisation.
-    final secondVerifierSignature = await collectSecondVerifierIfRequired(
+    final secondVerifier = await collectSecondVerifierIfRequired(
       context,
       amount: result.amount,
       currency: session.currency,
       operationLabel: type.localizedLabel,
     );
-    if (secondVerifierSignature == null) return;
+    if (secondVerifier == null) return;
 
     final dist = ChipFlow.appliesTo(type)
         ? await ChipFlow.ask(
@@ -424,9 +424,11 @@ class PlayersTab extends StatelessWidget {
         type: type,
         amount: result.amount,
         hostSignatureBase64: result.signature ?? '',
-        secondVerifierSignature: secondVerifierSignature.isEmpty
-            ? null
-            : secondVerifierSignature,
+        secondVerifierName:
+            secondVerifier.isRequired ? secondVerifier.name : null,
+        secondVerifierSignature: secondVerifier.isRequired
+            ? secondVerifier.signature
+            : null,
       );
       if (context.mounted) {
         await ChipFlow.apply(context,
@@ -737,6 +739,16 @@ class PlayersTab extends StatelessWidget {
                               }
                               return;
                             }
+                            // J8: a sensitive re-entry needs the second
+                            // verifier identity + signature before write.
+                            final secondVerifier =
+                                await collectSecondVerifierIfRequired(
+                              context,
+                              amount: result.amount,
+                              currency: session.currency,
+                              operationLabel: tr('reentry'),
+                            );
+                            if (secondVerifier == null) return;
                             try {
                               await context
                                   .read<SessionProvider>()
@@ -747,6 +759,13 @@ class PlayersTab extends StatelessWidget {
                                     t.id,
                                     amount: result.amount,
                                     hostSignatureBase64: result.signature!,
+                                    secondVerifierName: secondVerifier.isRequired
+                                        ? secondVerifier.name
+                                        : null,
+                                    secondVerifierSignature:
+                                        secondVerifier.isRequired
+                                            ? secondVerifier.signature
+                                            : null,
                                   );
                               if (context.mounted) {
                                 AppSounds.play(AppSounds

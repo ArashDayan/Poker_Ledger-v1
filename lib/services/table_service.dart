@@ -974,6 +974,8 @@ class TableService {
     required double amount,
     required String hostSignatureBase64,
     String? note,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
   }) async {
     SessionService.assertSessionActive(session.id);
     PlayerOperationGuard.requireRegistered(player, 'a re-entry');
@@ -1039,6 +1041,8 @@ class TableService {
       amount: amount,
       hostSignatureBase64: hostSignatureBase64,
       note: note ?? 'Re-entry with held chips',
+      secondVerifierName: secondVerifierName,
+      secondVerifierSignature: secondVerifierSignature,
     );
   }
 

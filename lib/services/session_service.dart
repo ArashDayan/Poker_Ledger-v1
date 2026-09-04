@@ -586,6 +586,13 @@ class SessionService {
         '(sensitive operation).',
       );
     }
+    if (dual &&
+        (secondVerifierName == null || secondVerifierName.trim().isEmpty)) {
+      throw StateError(
+        'The second verifier name is required when second authorisation '
+        'applies to this ${type.label}.',
+      );
+    }
     // Phase 6: stamp player money legs onto their table participation
     // (opens on the first leg). Tracking never breaks money — any
     // failure here leaves the leg unstamped, which settles as before.
@@ -656,6 +663,13 @@ class SessionService {
         'A second authorisation is required to edit this ${tx.type.label}.',
       );
     }
+    if (dual &&
+        (secondVerifierName == null || secondVerifierName.trim().isEmpty)) {
+      throw StateError(
+        'The second verifier name is required when second authorisation '
+        'applies to this ${tx.type.label}.',
+      );
+    }
     final player = tx.playerId == null ? null : HiveService.players.get(tx.playerId);
     // J5 absolute gate at the central ledger service boundary. An edit of
     // a player-attributed row is still a player financial operation and
@@ -695,23 +709,39 @@ class SessionService {
   /// Voids ANY transaction (not just the most recent one) — the general
   /// case used from the transaction list. Preserves the audit trail:
   /// the record stays, just excluded from every balance calculation.
-  static Future<LedgerTransaction> voidTransaction(String transactionId) async {
+  static Future<LedgerTransaction> voidTransaction(
+    String transactionId, {
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+  }) async {
     final tx = HiveService.transactions.get(transactionId);
     if (tx == null) throw StateError('Transaction not found.');
     assertSessionActive(tx.sessionId);
     _requireRegisteredTxPlayer(tx, 'void');
+    _requireDualForCorrection(
+        tx, 'void', secondVerifierName, secondVerifierSignature);
     tx.isVoided = true;
     await tx.save();
+    await _recordDualForCorrection(
+        tx, 'void', secondVerifierName, secondVerifierSignature);
     return tx;
   }
 
-  static Future<LedgerTransaction> unvoidTransaction(String transactionId) async {
+  static Future<LedgerTransaction> unvoidTransaction(
+    String transactionId, {
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+  }) async {
     final tx = HiveService.transactions.get(transactionId);
     if (tx == null) throw StateError('Transaction not found.');
     assertSessionActive(tx.sessionId);
     _requireRegisteredTxPlayer(tx, 'unvoid');
+    _requireDualForCorrection(
+        tx, 'unvoid', secondVerifierName, secondVerifierSignature);
     tx.isVoided = false;
     await tx.save();
+    await _recordDualForCorrection(
+        tx, 'unvoid', secondVerifierName, secondVerifierSignature);
     return tx;
   }
 
@@ -733,6 +763,53 @@ class SessionService {
     PlayerOperationGuard.requireRegistered(
       HiveService.players.get(tx.playerId),
       '$operation of a ${tx.type.label}',
+    );
+  }
+
+  /// J8 gate for corrections (void/unvoid/undo/redo) applied against the
+  /// amount of the transaction being changed, before any mutation.
+  static void _requireDualForCorrection(
+    LedgerTransaction tx,
+    String operation,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+  ) {
+    if (!DualVerificationService.requiresSecond(tx.amount)) return;
+    if (secondVerifierSignature == null || secondVerifierSignature.isEmpty) {
+      throw StateError(
+        'A second authorisation is required to $operation this '
+        '${tx.type.label}.',
+      );
+    }
+    if (secondVerifierName == null || secondVerifierName.trim().isEmpty) {
+      throw StateError(
+        'The second verifier name is required to $operation this '
+        '${tx.type.label}.',
+      );
+    }
+  }
+
+  /// Appends the J8 audit event after a correction, when the corrected
+  /// transaction was above the configured threshold.
+  static Future<void> _recordDualForCorrection(
+    LedgerTransaction tx,
+    String operation,
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+  ) async {
+    if (!DualVerificationService.requiresSecond(tx.amount)) return;
+    final player = tx.playerId == null ? null : HiveService.players.get(tx.playerId);
+    await DualVerificationService.recordVerification(
+      operation: '${tx.type.name}_$operation',
+      playerId: tx.playerId,
+      personId: player?.personId,
+      sourceTableId: tx.tableId,
+      amount: tx.amount,
+      operatorName: '',
+      secondVerifierName: secondVerifierName ?? '',
+      hostSignatureBase64: tx.hostSignatureBase64 ?? '',
+      secondVerifierSignature: secondVerifierSignature ?? '',
+      relatedTransactionId: tx.id,
     );
   }
 
@@ -759,24 +836,41 @@ class SessionService {
   /// Voids the most recent non-voided transaction for a session (the
   /// quick "Undo" button). For editing/voiding an arbitrary earlier
   /// transaction, use [voidTransaction] from the transaction list instead.
-  static LedgerTransaction? undoLast(String sessionId) {
+  static Future<LedgerTransaction?> undoLast(
+    String sessionId, {
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+  }) async {
     assertSessionActive(sessionId);
     final txs = transactionsFor(sessionId);
     if (txs.isEmpty) return null;
     final last = txs.last;
     _requireRegisteredTxPlayer(last, 'undo');
+    _requireDualForCorrection(
+        last, 'undo', secondVerifierName, secondVerifierSignature);
     last.isVoided = true;
-    last.save();
+    await last.save();
+    await _recordDualForCorrection(
+        last, 'undo', secondVerifierName, secondVerifierSignature);
     return last;
   }
 
-  static Future<LedgerTransaction?> redo(String sessionId, String txId) async {
+  static Future<LedgerTransaction?> redo(
+    String sessionId,
+    String txId, {
+    String? secondVerifierName,
+    String? secondVerifierSignature,
+  }) async {
     assertSessionActive(sessionId);
     final tx = HiveService.transactions.get(txId);
     if (tx == null) return null;
     _requireRegisteredTxPlayer(tx, 'redo');
+    _requireDualForCorrection(
+        tx, 'redo', secondVerifierName, secondVerifierSignature);
     tx.isVoided = false;
     await tx.save();
+    await _recordDualForCorrection(
+        tx, 'redo', secondVerifierName, secondVerifierSignature);
     return tx;
   }
 }

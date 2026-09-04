@@ -22,6 +22,7 @@ import '../../services/sound_service.dart';
 import '../../models/chip_movement.dart';
 import '../../widgets/cashout_flow.dart';
 import '../../widgets/chip_flow.dart';
+import '../../widgets/dual_verification_sheet.dart';
 import '../../widgets/financial_funding_sheet.dart';
 import '../../widgets/rebate_grant_sheet.dart';
 import '../../widgets/signature_pad.dart';
@@ -554,13 +555,26 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
 
     final player =
         hasSession ? DepositToChips.seatedPlayer(sessionId!, widget.personId) : null;
+
+    // J8: a deposit-to-chips conversion is a financial/chip operation
+    // and can be sensitive at the configured threshold. Collect the
+    // second authorisation before any chip composition / write, for both
+    // the seat-free wallet path and the seated buy-in path.
+    final choice = await _askConvert(currency: currency, initial: held);
+    if (choice == null) return;
+    final secondVerifier = await collectSecondVerifierIfRequired(
+      context,
+      amount: choice.amount,
+      currency: currency,
+      operationLabel: tr('use_deposit_for_chips'),
+    );
+    if (secondVerifier == null || !mounted) return;
+
     if (player == null) {
       // Phase 4 — seat-free wallet issuance: the cage issues chips
       // from the deposit draw straight into the PERSON's holding.
       // No seat and no session required (session-optional, C-1). The
       // banker amount + signature, then the bank-anchored composition.
-      final choice = await _askConvert(currency: currency, initial: held);
-      if (choice == null) return;
       final dist = await ChipFlow.ask(
           context, amount: choice.amount, currency: currency);
       if (dist == null || dist.isEmpty || !mounted) return;
@@ -572,6 +586,11 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
           composition: dist,
           hostSignatureBase64: choice.signature,
           sessionId: hasSession ? sessionId : null,
+          secondVerifierName:
+              secondVerifier.isRequired ? secondVerifier.name : null,
+          secondVerifierSignature: secondVerifier.isRequired
+              ? secondVerifier.signature
+              : null,
         );
         AppSounds.play(AppSounds.forTransaction(TransactionType.buyIn));
         if (mounted) setState(() {});
@@ -586,9 +605,6 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
 
     // Seated: the existing path — a table buy-in funded from the
     // deposit (behavior unchanged; Phase 6 owns participation).
-    final choice = await _askConvert(currency: currency, initial: held);
-    if (choice == null) return;
-
     final dist = ChipFlow.appliesTo(TransactionType.buyIn)
         ? await ChipFlow.ask(context,
             amount: choice.amount, currency: currency)
@@ -603,6 +619,11 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
         currency: currency,
         amount: choice.amount,
         hostSignatureBase64: choice.signature,
+        secondVerifierName:
+            secondVerifier.isRequired ? secondVerifier.name : null,
+        secondVerifierSignature: secondVerifier.isRequired
+            ? secondVerifier.signature
+            : null,
       );
       if (mounted) {
         // Phase 2a: issued chips enter the person's holding.
@@ -644,6 +665,16 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
 
     final choice = await _askMarker(currency: currency, initial: held);
     if (choice == null) return;
+    // J8: a marker draw is a financial/chip operation and can be
+    // sensitive. The player's signature is the primary authorisation;
+    // the configured second verifier must also authorise above threshold.
+    final secondVerifier = await collectSecondVerifierIfRequired(
+      context,
+      amount: choice.amount,
+      currency: currency,
+      operationLabel: tr('issue_marker'),
+    );
+    if (secondVerifier == null || !mounted) return;
     final dist = await ChipFlow.ask(
         context, amount: choice.amount, currency: currency);
     if (dist == null || dist.isEmpty || !mounted) return;
@@ -655,6 +686,11 @@ class _PlayerAccountScreenState extends State<PlayerAccountScreen> {
         composition: dist,
         playerSignatureBase64: choice.signature,
         sessionId: hasSession ? sessionId : null,
+        secondVerifierName:
+            secondVerifier.isRequired ? secondVerifier.name : null,
+        secondVerifierSignature: secondVerifier.isRequired
+            ? secondVerifier.signature
+            : null,
       );
       AppSounds.play(AppSounds.forTransaction(TransactionType.buyIn));
       if (mounted) setState(() {});

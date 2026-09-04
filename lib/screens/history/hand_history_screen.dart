@@ -11,6 +11,7 @@ import '../../providers/session_provider.dart';
 import '../../services/hand_service.dart';
 import '../../services/table_service.dart';
 import '../../widgets/confirm_action_dialog.dart';
+import '../../widgets/dual_verification_sheet.dart';
 
 /// Per-session / per-table completed-hand list. Not a bottom tab.
 class HandHistoryScreen extends StatefulWidget {
@@ -130,6 +131,16 @@ class _HandHistoryScreenState extends State<HandHistoryScreen> {
                         onVoid: ended
                             ? null
                             : () async {
+                                final secondVerifier =
+                                    await collectSecondVerifierIfRequired(
+                                  context,
+                                  amount: h.rakeAmount > h.houseWinAmount
+                                      ? h.rakeAmount
+                                      : h.houseWinAmount,
+                                  currency: fmt.currency,
+                                  operationLabel: tr('void_hand'),
+                                );
+                                if (secondVerifier == null) return;
                                 final ok = await confirmSensitiveAction(
                                   context,
                                   title: tr('void_hand'),
@@ -137,7 +148,17 @@ class _HandHistoryScreenState extends State<HandHistoryScreen> {
                                 );
                                 if (!ok || !context.mounted) return;
                                 try {
-                                  await provider.voidHand(h.id);
+                                  await provider.voidHand(
+                                    h.id,
+                                    secondVerifierName: secondVerifier
+                                            .isRequired
+                                        ? secondVerifier.name
+                                        : null,
+                                    secondVerifierSignature:
+                                        secondVerifier.isRequired
+                                            ? secondVerifier.signature
+                                            : null,
+                                  );
                                   if (context.mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(

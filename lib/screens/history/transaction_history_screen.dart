@@ -15,6 +15,7 @@ import '../../services/session_service.dart';
 import '../../widgets/chip_composition_editor.dart';
 import '../../widgets/chip_flow.dart';
 import '../../widgets/confirm_action_dialog.dart';
+import '../../widgets/dual_verification_sheet.dart';
 import '../../widgets/void_linked_financial_sheet.dart';
 import '../../widgets/signature_compare_sheet.dart';
 import '../../widgets/signature_pad.dart';
@@ -146,6 +147,17 @@ class _HistoryTabState extends State<HistoryTab> {
                                 .showSnackBar(SnackBar(content: Text(tr('signature_required_edit'))));
                             return;
                           }
+                          // J8: a sensitive edit (at/above the configured
+                          // threshold) needs the second verifier identity
+                          // and signature before the record is changed.
+                          final secondVerifier =
+                              await collectSecondVerifierIfRequired(
+                            ctx,
+                            amount: amount,
+                            currency: fmt.currency,
+                            operationLabel: tr('edit_transaction'),
+                          );
+                          if (secondVerifier == null) return;
                           setSheetState(() => savingEdit = true);
                           try {
                             await provider.updateTransaction(
@@ -153,6 +165,10 @@ class _HistoryTabState extends State<HistoryTab> {
                               amount: amount,
                               note: noteCtrl.text.trim().isEmpty ? null : noteCtrl.text.trim(),
                               hostSignatureBase64: signature.isEmpty ? null : signature,
+                              secondVerifierName:
+                                  secondVerifier.isRequired ? secondVerifier.name : null,
+                              secondVerifierSignature:
+                                  secondVerifier.isRequired ? secondVerifier.signature : null,
                             );
                             if (ctx.mounted) Navigator.pop(ctx, true);
                           } catch (e) {
@@ -199,10 +215,36 @@ class _HistoryTabState extends State<HistoryTab> {
 
   Future<void> _voidOrRestore(LedgerTransaction tx) async {
     final provider = context.read<SessionProvider>();
+    final session = provider.current;
+    if (session == null) return;
+    final fmt = CurrencyFormatter(session.currency);
     if (tx.isVoided) {
-      await provider.unvoidTransactionById(tx.id);
+      // J8: restoring a transaction re-applies money/chips too.
+      final secondVerifier = await collectSecondVerifierIfRequired(
+        context,
+        amount: tx.amount,
+        currency: fmt.currency,
+        operationLabel: tr('redo'),
+      );
+      if (secondVerifier == null) return;
+      await provider.unvoidTransactionById(
+        tx.id,
+        secondVerifierName:
+            secondVerifier.isRequired ? secondVerifier.name : null,
+        secondVerifierSignature: secondVerifier.isRequired
+            ? secondVerifier.signature
+            : null,
+      );
       return;
     }
+    // J8: voiding a sensitive transaction is itself sensitive.
+    final secondVerifier = await collectSecondVerifierIfRequired(
+      context,
+      amount: tx.amount,
+      currency: fmt.currency,
+      operationLabel: tr('void_transaction'),
+    );
+    if (secondVerifier == null) return;
     final linked = FinancialLedgerService.activeEventsLinkedTo(tx.id);
     if (linked.isEmpty) {
       final confirmed = await confirmSensitiveAction(
@@ -210,18 +252,33 @@ class _HistoryTabState extends State<HistoryTab> {
         title: tr('void_transaction'),
         message: tr('void_tx_message'),
       );
-      if (confirmed) await provider.voidTransactionById(tx.id);
+      if (confirmed) {
+        await provider.voidTransactionById(
+          tx.id,
+          secondVerifierName:
+              secondVerifier.isRequired ? secondVerifier.name : null,
+          secondVerifierSignature: secondVerifier.isRequired
+              ? secondVerifier.signature
+              : null,
+        );
+      }
       return;
     }
     if (!mounted) return;
-    final fmt = CurrencyFormatter(provider.current!.currency);
     final choice = await askVoidChipWithLinkedFinancial(
       context,
       transactionId: tx.id,
       formatter: fmt,
     );
     if (choice == null || !mounted) return;
-    await provider.voidTransactionById(tx.id);
+    await provider.voidTransactionById(
+      tx.id,
+      secondVerifierName:
+          secondVerifier.isRequired ? secondVerifier.name : null,
+      secondVerifierSignature: secondVerifier.isRequired
+          ? secondVerifier.signature
+          : null,
+    );
     if (choice == VoidChipFinancialChoice.chipAndReverseLinked) {
       await FinancialLedgerService.reverseLinkedTo(tx.id);
     } else if (mounted) {

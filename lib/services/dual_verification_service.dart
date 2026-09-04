@@ -91,6 +91,14 @@ class DualVerificationService {
     String? relatedTransactionId,
     String? relatedTransferEventId,
   }) {
+    // Audit integrity: a dual-authorisation event must identify the
+    // second verifier, not merely store an anonymous signature. Fail
+    // clearly rather than recording an audit row that cannot name both
+    // actors.
+    if (secondVerifierName.trim().isEmpty) {
+      throw StateError(
+          'A second verifier name is required to record dual authorisation.');
+    }
     return TableOperationEventService.append(TableOperationEvent(
       id: TableOperationEventService.newId(),
       operation: TableOperationType.dualVerification,

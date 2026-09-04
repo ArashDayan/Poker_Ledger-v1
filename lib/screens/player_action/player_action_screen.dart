@@ -174,13 +174,13 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
 
     // J8: collect the second authorisation for sensitive amounts before
     // any write. Null means the second signer cancelled -> abort.
-    final secondVerifierSignature = await collectSecondVerifierIfRequired(
+    final secondVerifier = await collectSecondVerifierIfRequired(
       context,
       amount: amount,
       currency: session.currency,
       operationLabel: _type.localizedLabel,
     );
-    if (secondVerifierSignature == null) return;
+    if (secondVerifier == null) return;
 
     // OPTIONAL physical chip step. Skip / dismiss records no chips.
     Map<String, int>? distribution;
@@ -198,10 +198,12 @@ class _PlayerActionScreenState extends State<PlayerActionScreen> {
         amount: amount,
         hostSignatureBase64: _signature,
         note: _note.text.trim().isEmpty ? null : _note.text.trim(),
-        secondVerifierName: null,
-        secondVerifierSignature: secondVerifierSignature.isEmpty
-            ? null
-            : secondVerifierSignature,
+        secondVerifierName: secondVerifier.isRequired
+            ? secondVerifier.name
+            : null,
+        secondVerifierSignature: secondVerifier.isRequired
+            ? secondVerifier.signature
+            : null,
       );
 
       // Physical chips are recorded SEPARATELY, after the money is safely

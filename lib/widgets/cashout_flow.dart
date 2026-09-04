@@ -82,7 +82,8 @@ Future<bool> performTableCashOut(
         operationLabel: tr('cash_out'),
       );
       if (second == null) return false;
-      secondVerifierSignature = second;
+      secondVerifierSignature = second.signature;
+      secondVerifierName = second.name;
     }
 
     final tx = await RedemptionService.tableCashOut(
@@ -190,7 +191,8 @@ Future<bool> performCageRedemption(
         operationLabel: tr('cash_out'),
       );
       if (second == null) return false;
-      secondVerifierSignature = second;
+      secondVerifierSignature = second.signature;
+      secondVerifierName = second.name;
     }
 
     final result = await RedemptionService.redeem(

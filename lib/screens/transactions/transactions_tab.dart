@@ -128,13 +128,13 @@ class TransactionsTab extends StatelessWidget {
     if (!funding.shouldCommit || !context.mounted) return;
 
     // J8: sensitive player money ops need a second authorisation.
-    final secondVerifierSignature = await collectSecondVerifierIfRequired(
+    final secondVerifier = await collectSecondVerifierIfRequired(
       context,
       amount: result.amount,
       currency: session.currency,
       operationLabel: type.localizedLabel,
     );
-    if (secondVerifierSignature == null) return;
+    if (secondVerifier == null) return;
 
     final dist = ChipFlow.appliesTo(type)
         ? await ChipFlow.ask(context,
@@ -147,9 +147,11 @@ class TransactionsTab extends StatelessWidget {
         type: type,
         amount: result.amount,
         hostSignatureBase64: result.signature ?? '',
-        secondVerifierSignature: secondVerifierSignature.isEmpty
-            ? null
-            : secondVerifierSignature,
+        secondVerifierName:
+            secondVerifier.isRequired ? secondVerifier.name : null,
+        secondVerifierSignature: secondVerifier.isRequired
+            ? secondVerifier.signature
+            : null,
       );
       if (context.mounted) {
         // Phase 2a: person-scoped chip holding.
@@ -226,6 +228,17 @@ class TransactionsTab extends StatelessWidget {
     // and cash drop — a tip belongs to the table, not to one player.
     final tableId = provider.activeTableId;
 
+    // J8: dealer tips move value and can be sensitive at the configured
+    // threshold, even though they are table-level rather than attributed
+    // to a player.
+    final secondVerifier = await collectSecondVerifierIfRequired(
+      context,
+      amount: result.amount,
+      currency: session.currency,
+      operationLabel: tr('dealer_tips'),
+    );
+    if (secondVerifier == null) return;
+
     final dist = await ChipFlow.ask(
       context,
       amount: result.amount,
@@ -239,6 +252,11 @@ class TransactionsTab extends StatelessWidget {
         amount: result.amount,
         hostSignatureBase64: result.signature ?? '',
         tableId: tableId,
+        secondVerifierName:
+            secondVerifier.isRequired ? secondVerifier.name : null,
+        secondVerifierSignature: secondVerifier.isRequired
+            ? secondVerifier.signature
+            : null,
       );
       if (context.mounted) {
         await ChipFlow.apply(
@@ -272,10 +290,24 @@ class TransactionsTab extends StatelessWidget {
       sessionId: session.id,
     );
     if (result == null) return;
+    // J8: a cash drop moves value to the safe and can be sensitive at
+    // the configured threshold, even though it is table-level.
+    final secondVerifier = await collectSecondVerifierIfRequired(
+      context,
+      amount: result.amount,
+      currency: session.currency,
+      operationLabel: tr('cash_drop_to_safe'),
+    );
+    if (secondVerifier == null) return;
     await provider.recordTransaction(
       type: TransactionType.cashDrop,
       amount: result.amount,
       hostSignatureBase64: '',
+      secondVerifierName:
+          secondVerifier.isRequired ? secondVerifier.name : null,
+      secondVerifierSignature: secondVerifier.isRequired
+          ? secondVerifier.signature
+          : null,
     );
     AppSounds.play(SoundEffect.cashDrop);
   }
