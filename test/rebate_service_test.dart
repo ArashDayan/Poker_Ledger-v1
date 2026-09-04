@@ -326,7 +326,7 @@ void main() {
       );
       // The player's stack grew at the table — captured by a physical
       // count, not a recorded player transfer (E7).
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: 'seat-1',
         counted: {'c100': 10},
         sessionId: s.id,
@@ -884,12 +884,12 @@ void main() {
       );
       // Four $25 grant chips moved from seat-1's stack to seat-2's
       // during play — captured by counts (P2P transfer removed, E7).
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: 'seat-1',
         counted: {'c25': 0},
         sessionId: s.id,
       );
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: 'seat-2',
         counted: {'c25': 4},
         sessionId: s.id,

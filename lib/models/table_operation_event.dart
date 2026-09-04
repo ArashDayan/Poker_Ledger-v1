@@ -55,6 +55,20 @@ class TableOperationEvent {
   final String? correctsId;
   final String? correctionNote;
 
+  /// Manual chip-bank inventory adjustment facts (always-dual D1):
+  /// the adjusted denomination and its owned-quantity before / after
+  /// the counted correction. Null on every other event kind.
+  final String? chipTypeId;
+  final int? previousQuantity;
+  final int? countedQuantity;
+
+  /// Unit value of the adjusted denomination after the change (D1),
+  /// and the holding-value aggregates of a standalone player-holding
+  /// reconciliation (D2): value before the count / counted value.
+  final double? denominationValue;
+  final double? previousValue;
+  final double? countedValue;
+
   const TableOperationEvent({
     required this.id,
     required this.operation,
@@ -79,6 +93,12 @@ class TableOperationEvent {
     this.destinationParticipationId,
     this.correctsId,
     this.correctionNote,
+    this.chipTypeId,
+    this.previousQuantity,
+    this.countedQuantity,
+    this.denominationValue,
+    this.previousValue,
+    this.countedValue,
   }) : timestamp = timestamp ?? DateTime.now();
 
   Map<String, dynamic> toJson() => {
@@ -105,6 +125,12 @@ class TableOperationEvent {
         'destinationParticipationId': destinationParticipationId,
         'correctsId': correctsId,
         'correctionNote': correctionNote,
+        'chipTypeId': chipTypeId,
+        'previousQuantity': previousQuantity,
+        'countedQuantity': countedQuantity,
+        'denominationValue': denominationValue,
+        'previousValue': previousValue,
+        'countedValue': countedValue,
       };
 
   /// Parses a stored JSON map. Unknown/absent fields degrade to null rather
@@ -141,6 +167,12 @@ class TableOperationEvent {
           j['destinationParticipationId'] as String?,
       correctsId: j['correctsId'] as String?,
       correctionNote: j['correctionNote'] as String?,
+      chipTypeId: j['chipTypeId'] as String?,
+      previousQuantity: (j['previousQuantity'] as num?)?.toInt(),
+      countedQuantity: (j['countedQuantity'] as num?)?.toInt(),
+      denominationValue: (j['denominationValue'] as num?)?.toDouble(),
+      previousValue: (j['previousValue'] as num?)?.toDouble(),
+      countedValue: (j['countedValue'] as num?)?.toDouble(),
     );
   }
 }

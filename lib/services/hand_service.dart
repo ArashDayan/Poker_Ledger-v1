@@ -281,7 +281,7 @@ class HandService {
             playerId: entry.key,
             personId: player?.personId,
           );
-          final made = await ChipTrackingService.adjustPlayerHoldingToCount(
+          final made = await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
             playerId: holder,
             counted: entry.value,
             sessionId: sessionId,

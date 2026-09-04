@@ -19,6 +19,7 @@ import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/chip_bank_service.dart';
+import 'package:poker_ledger/services/dual_verification_service.dart';
 import 'package:poker_ledger/services/chip_tracking_service.dart';
 import 'package:poker_ledger/services/deposit_to_chips.dart';
 import 'package:poker_ledger/services/financial_ledger_service.dart';
@@ -41,6 +42,7 @@ Future<void> _open() async {
   await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
   await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
   await Hive.openBox<ChipType>(HiveService.chipsBox);
+  await Hive.openBox(HiveService.transferEventsBox);
   await Hive.openBox<ChipMovement>(HiveService.chipMovementsBox);
 }
 
@@ -61,6 +63,14 @@ Future<void> _deposit(String personId, double amount) async {
   );
 }
 
+const _d1Auth = DualAuthorization(
+  reason: 'test inventory',
+  operatorName: 'Op',
+  operatorSignatureBase64: 'op-sig',
+  secondVerifierName: 'V',
+  secondVerifierSignature: 'v-sig',
+);
+
 void main() {
   setUp(_open);
   tearDown(_close);
@@ -69,7 +79,7 @@ void main() {
       () async {
     final pid = await _person('Ali');
     await _deposit(pid, 10000);
-    final c500 = await ChipBankService.addChip(value: 500, quantity: 10);
+    final c500 = await ChipBankService.addChip(authorization: _d1Auth, value: 500, quantity: 10);
 
     final result = await DepositToChips.issueMarker(
       personId: pid,
@@ -120,7 +130,7 @@ void main() {
   test('a marker can never exceed the available deposit', () async {
     final pid = await _person('Ali');
     await _deposit(pid, 1000);
-    final c500 = await ChipBankService.addChip(value: 500, quantity: 10);
+    final c500 = await ChipBankService.addChip(authorization: _d1Auth, value: 500, quantity: 10);
 
     await expectLater(
       () => DepositToChips.issueMarker(
@@ -143,8 +153,8 @@ void main() {
       () async {
     final pid = await _person('Ali');
     await _deposit(pid, 10000);
-    final c500 = await ChipBankService.addChip(value: 500, quantity: 40);
-    final c100 = await ChipBankService.addChip(value: 100, quantity: 100);
+    final c500 = await ChipBankService.addChip(authorization: _d1Auth, value: 500, quantity: 40);
+    final c100 = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 100);
 
     // Phase 4 issuance draws 2000 first: deposit 8000 remains.
     await DepositToChips.issueToWallet(
@@ -191,7 +201,7 @@ void main() {
       () async {
     final pid = await _person('Ali');
     await _deposit(pid, 10000);
-    final c100 = await ChipBankService.addChip(value: 100, quantity: 50);
+    final c100 = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 50);
 
     await expectLater(
       () => DepositToChips.issueMarker(
@@ -210,7 +220,7 @@ void main() {
   test('the composition cannot exceed bank holdings', () async {
     final pid = await _person('Ali');
     await _deposit(pid, 10000);
-    final c500 = await ChipBankService.addChip(value: 500, quantity: 1);
+    final c500 = await ChipBankService.addChip(authorization: _d1Auth, value: 500, quantity: 1);
 
     await expectLater(
       () => DepositToChips.issueMarker(
@@ -230,7 +240,7 @@ void main() {
       () async {
     final pid = await _person('Ali');
     await _deposit(pid, 5000);
-    final c500 = await ChipBankService.addChip(value: 500, quantity: 10);
+    final c500 = await ChipBankService.addChip(authorization: _d1Auth, value: 500, quantity: 10);
 
     await DepositToChips.issueMarker(
       personId: pid,
@@ -258,7 +268,7 @@ void main() {
       () async {
     final pid = await _person('Ali');
     await _deposit(pid, 10000);
-    final c500 = await ChipBankService.addChip(value: 500, quantity: 10);
+    final c500 = await ChipBankService.addChip(authorization: _d1Auth, value: 500, quantity: 10);
     await DepositToChips.issueMarker(
       personId: pid,
       currency: AppCurrency.usd,
@@ -286,7 +296,7 @@ void main() {
   test('a marker issued chips are still in hand (continuity)', () async {
     final pid = await _person('Ali');
     await _deposit(pid, 5000);
-    final c500 = await ChipBankService.addChip(value: 500, quantity: 10);
+    final c500 = await ChipBankService.addChip(authorization: _d1Auth, value: 500, quantity: 10);
 
     await DepositToChips.issueMarker(
       personId: pid,

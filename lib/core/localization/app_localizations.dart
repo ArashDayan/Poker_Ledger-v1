@@ -941,6 +941,17 @@ class AppLocalizations {
       'reverse_rebate_grant': 'Reverse this Discount grant',
       'reverse_rebate_grant_confirm':
           'This reverses the grant append-only: the grant event and any chips issued for it are reversed, and the cycle can be granted again. Continue?',
+      'chip_inventory_adjustment': 'Chip inventory adjustment',
+      'adjustment_reason_label': 'Reason for adjustment',
+      'adjustment_reason_hint':
+          'Mandatory - recorded on the immutable audit event with both signatures.',
+      'dual_verification_always_hint':
+          'This operation always requires a second person authorisation - regardless of any configured threshold.',
+      'dual_verification_operator_name': 'First operator (name)',
+      'dual_verification_operator_name_hint':
+          'The person performing the adjustment',
+      'dual_verification_operator_signature': 'First operator signature',
+      'dual_verification_verifier_signature': 'Second verifier signature',
       'fin_rebate_granted': 'Discount granted',
       'fin_rebate_recovered': 'Discount returned to house',
       'reason_loss_rebate': 'Loss rebate',
@@ -2031,6 +2042,16 @@ class AppLocalizations {
       'reverse_rebate_grant': 'برگشت این اعطای تخفیف',
       'reverse_rebate_grant_confirm':
           'این کار اعطا را به‌صورت فقط-افزوده برمی‌گرداند: رویداد اعطا و تراشه‌های صادرشده برای آن معکوس می‌شوند و چرخه می‌تواند دوباره اعطا شود. ادامه می‌دهید؟',
+      'chip_inventory_adjustment': 'تنظیم موجودی تراشه بانک',
+      'adjustment_reason_label': 'دلیل تنظیم',
+      'adjustment_reason_hint':
+          'الزامی - همراه هر دو امضا در رویداد حسابرسی تغییرناپذیر ثبت می‌شود.',
+      'dual_verification_always_hint':
+          'این عملیات همیشه به تأیید شخص دوم نیاز دارد - مستقل از هر آستانه تنظیم‌شده.',
+      'dual_verification_operator_name': 'اپراتور اول (نام)',
+      'dual_verification_operator_name_hint': 'شخصی که این عملیات را انجام می‌دهد',
+      'dual_verification_operator_signature': 'امضای اپراتور اول',
+      'dual_verification_verifier_signature': 'امضای تأییدکننده دوم',
       'fin_rebate_granted': 'تخفیف اعطاشده',
       'fin_rebate_recovered': 'تخفیف برگشته به خانه',
       'reason_loss_rebate': 'تخفیف زیان',

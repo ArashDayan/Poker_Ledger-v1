@@ -21,6 +21,7 @@ import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/chip_bank_service.dart';
+import 'package:poker_ledger/services/dual_verification_service.dart';
 import 'package:poker_ledger/services/chip_tracking_service.dart';
 import 'package:poker_ledger/services/financial_ledger_service.dart';
 import 'package:poker_ledger/services/hive_service.dart';
@@ -43,6 +44,7 @@ Future<void> _open() async {
   await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
   await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
   await Hive.openBox<ChipType>(HiveService.chipsBox);
+  await Hive.openBox(HiveService.transferEventsBox);
   await Hive.openBox<ChipMovement>(HiveService.chipMovementsBox);
 }
 
@@ -108,6 +110,14 @@ Future<void> _rawChipMovement({
   );
 }
 
+const _d1Auth = DualAuthorization(
+  reason: 'test inventory',
+  operatorName: 'Op',
+  operatorSignatureBase64: 'op-sig',
+  secondVerifierName: 'V',
+  secondVerifierSignature: 'v-sig',
+);
+
 void main() {
   setUp(_open);
   tearDown(_close);
@@ -170,8 +180,8 @@ void main() {
   test('chips in hand come from the PERSON-scoped holding (Phase 2a)',
       () async {
     final pid = await _person('Ali');
-    final c100 = await ChipBankService.addChip(value: 100, quantity: 50);
-    final c500 = await ChipBankService.addChip(value: 500, quantity: 20);
+    final c100 = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 50);
+    final c500 = await ChipBankService.addChip(authorization: _d1Auth, value: 500, quantity: 20);
 
     // The person holds 2 x 100 + 1 x 500 = 700.
     await ChipTrackingService.recordDistribution(

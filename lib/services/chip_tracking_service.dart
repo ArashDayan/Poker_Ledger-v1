@@ -645,10 +645,83 @@ class ChipTrackingService {
   // Player-to-player chip transfer is REMOVED (E7): a pot being pushed
   // or players settling up is physical play, not a financial
   // operation. The ledger captures the net effect through physical
-  // counts ([adjustPlayerHoldingToCount]) and the approved
+  // counts (the count-adjustment entry points below) and the approved
   // person-scoped holding, never through recorded player↔player
   // movements. The `transfer` reason survives for parsing legacy
   // records only.
+
+  /// DECISION 2, Option B (finalised) -- TWO ENTRY POINTS for a
+  /// player-holding count reconciliation:
+  ///  * [adjustPlayerHoldingForHandSettlement] -- post-hand stack
+  ///    counts recorded as part of normal hand settlement. Deliberately
+  ///    NOT second-verifier gated: hand recording / settlement is
+  ///    normal gameplay and must never be interrupted for a second
+  ///    verifier.
+  ///  * [reconcilePlayerHoldingToCount] -- the STANDALONE workflow an
+  ///    operator deliberately opens to correct a player's physical
+  ///    holding. ALWAYS requires the two-person authorisation plus a
+  ///    mandatory reason (no threshold), and appends the immutable
+  ///    two-actor audit event.
+  static Future<List<ChipMovement>> adjustPlayerHoldingForHandSettlement({
+    required String playerId,
+    required Map<String, int> counted,
+    String? sessionId,
+    String? note,
+  }) {
+    return _applyCountAdjustment(
+      playerId: playerId,
+      counted: counted,
+      sessionId: sessionId,
+      note: note,
+    );
+  }
+
+  /// The STANDALONE player-holding reconciliation (Decision 2, Option
+  /// B): always two-person verified -- no threshold -- and audited on
+  /// the immutable two-actor event stream with the previous / counted
+  /// holding values and both actors. Append-only: historical
+  /// transactions are never edited or deleted to achieve the
+  /// correction; the correction is new movement rows plus this event.
+  static Future<List<ChipMovement>> reconcilePlayerHoldingToCount({
+    required String playerId,
+    required Map<String, int> counted,
+    String? sessionId,
+    required DualAuthorization authorization,
+  }) async {
+    DualVerificationService.requireAlways(
+        authorization, 'a player holding reconciliation');
+    final previousValue = playerHolding(playerId).totalValue;
+    final countedValue = valueOf(counted);
+    final tag = 'count:${_uuid.v4()}';
+    final made = await _applyCountAdjustment(
+      playerId: playerId,
+      counted: counted,
+      sessionId: sessionId,
+      note: authorization.reason.trim(),
+      tag: tag,
+    );
+    // The audit event names the PERSON behind the holding (the J5 gate
+    // inside the core ensures the reference resolves to a registered
+    // Player Master identity).
+    String? personId;
+    if (PlayerOperationGuard.hasRegisteredPerson(playerId)) {
+      personId = playerId;
+    } else {
+      try {
+        personId = HiveService.players.get(playerId)?.personId;
+      } catch (_) {}
+    }
+    await DualVerificationService.recordAlways(
+      operation: 'holding_reconciliation',
+      authorization: authorization,
+      personId: personId,
+      previousValue: previousValue,
+      countedValue: countedValue,
+      carriedAmount: countedValue - previousValue,
+      relatedTransactionId: tag,
+    );
+    return made;
+  }
 
   /// Reconciles one player's RECORDED holding with the ACTUAL physical
   /// count of their stack.
@@ -683,11 +756,12 @@ class ChipTrackingService {
   /// counted; denominations absent from the map count as zero.
   /// Returns the movements appended (empty when the count already
   /// matches — nothing to record, and a zero adjustment would be noise).
-  static Future<List<ChipMovement>> adjustPlayerHoldingToCount({
+  static Future<List<ChipMovement>> _applyCountAdjustment({
     required String playerId,
     required Map<String, int> counted,
     String? sessionId,
     String? note,
+    String? tag,
   }) async {
     if (playerId.isEmpty) {
       throw ArgumentError('Adjustment needs a player.');
@@ -707,7 +781,7 @@ class ChipTrackingService {
     }
 
     final location = ChipLocation.player(playerId);
-    final tag = 'count:${_uuid.v4()}';
+    final effectiveTag = tag ?? 'count:${_uuid.v4()}';
     final made = <ChipMovement>[];
 
     // Every denomination that exists either in the inventory or in the
@@ -733,8 +807,8 @@ class ChipTrackingService {
         reason: ChipMovementReason.adjustment,
         sessionId: sessionId,
         note: note == null
-            ? '$tag recorded=$held counted=$target'
-            : '$tag recorded=$held counted=$target · $note',
+            ? '$effectiveTag recorded=$held counted=$target'
+            : '$effectiveTag recorded=$held counted=$target · $note',
       ));
     }
     return made;

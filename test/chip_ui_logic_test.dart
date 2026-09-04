@@ -22,6 +22,7 @@ import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/chip_bank_service.dart';
+import 'package:poker_ledger/services/dual_verification_service.dart';
 import 'package:poker_ledger/services/chip_tracking_service.dart';
 import 'package:poker_ledger/services/hive_service.dart';
 
@@ -38,6 +39,7 @@ Future<void> _open() async {
   await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
   await Hive.openBox(HiveService.settingsBox);
   await Hive.openBox<ChipType>(HiveService.chipsBox);
+  await Hive.openBox(HiveService.transferEventsBox);
   await Hive.openBox<ChipMovement>(HiveService.chipMovementsBox);
   await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
   for (final id in ['p1', 'p2', 'p3', 'p4', 'a', 'b']) {
@@ -55,8 +57,8 @@ Future<void> _close() async {
 
 /// $25 x 400 + $100 x 100 = exactly $20,000.
 Future<Map<String, ChipType>> _stock() async {
-  final c25 = await ChipBankService.addChip(value: 25, quantity: 400);
-  final c100 = await ChipBankService.addChip(value: 100, quantity: 100);
+  final c25 = await ChipBankService.addChip(authorization: _d1Auth, value: 25, quantity: 400);
+  final c100 = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 100);
   return {'25': c25, '100': c100};
 }
 
@@ -87,6 +89,14 @@ bool exchangeAllowed({
   return true;
 }
 
+
+const _d1Auth = DualAuthorization(
+  reason: 'test inventory',
+  operatorName: 'Op',
+  operatorSignatureBase64: 'op-sig',
+  secondVerifierName: 'V',
+  secondVerifierSignature: 'v-sig',
+);
 
 void main() {
   setUp(_open);
@@ -382,11 +392,11 @@ void main() {
 
       // Play happens: the banker counts the stacks — a now holds 7 x
       // $100, b now holds 3 x $100.
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: 'a',
         counted: {c['100']!.id: 7},
       );
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: 'b',
         counted: {c['100']!.id: 3},
       );
@@ -411,7 +421,7 @@ void main() {
         reason: ChipMovementReason.buyIn,
       );
       await expectLater(
-        ChipTrackingService.adjustPlayerHoldingToCount(
+        ChipTrackingService.adjustPlayerHoldingForHandSettlement(
           playerId: 'a',
           counted: {c['100']!.id: -1},
         ),
@@ -431,11 +441,11 @@ void main() {
       final txCount = HiveService.transactions.length;
       final total = ChipTrackingService.reconcile().totalAccountedFor;
 
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: 'a',
         counted: {c['100']!.id: 7},
       );
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: 'b',
         counted: {c['100']!.id: 3},
       );

@@ -20,12 +20,31 @@ class SecondVerificationResult {
   final String name;
   final String signature;
 
-  const SecondVerificationResult({required this.name, required this.signature});
+  /// First operator identity + signature, collected only in the
+  /// always-on mode ([DualVerificationSheet.collectOperator]) used by
+  /// the finalised D1/D2 decisions.
+  final String operatorName;
+  final String operatorSignature;
+
+  /// Mandatory adjustment reason, collected only in the always-on mode
+  /// ([DualVerificationSheet.requireReason]).
+  final String reason;
+
+  const SecondVerificationResult({
+    required this.name,
+    required this.signature,
+    this.operatorName = '',
+    this.operatorSignature = '',
+    this.reason = '',
+  });
 
   /// Sentinel for "dual verification is not required for this amount".
   const SecondVerificationResult.none()
       : name = '',
-        signature = '';
+        signature = '',
+        operatorName = '',
+        operatorSignature = '',
+        reason = '';
 
   bool get isRequired => name.isNotEmpty || signature.isNotEmpty;
 }
@@ -39,15 +58,36 @@ class SecondVerificationResult {
 /// never writes anything itself; the caller records the two-authorisation
 /// event via [DualVerificationService].
 class DualVerificationSheet extends StatefulWidget {
-  final double amount;
-  final CurrencyFormatter formatter;
+  /// Amount + formatter drive the subtitle in the threshold-based
+  /// mode. Both are optional: the always-on mode (D1/D2) passes
+  /// [amountText] instead -- a manual inventory adjustment shows a
+  /// chip count, not a currency amount.
+  final double? amount;
+  final CurrencyFormatter? formatter;
   final String operationLabel;
+
+  /// Pre-formatted subtitle (e.g. "100 -> 80 x 200" or "+1 x 200"),
+  /// preferred over [amount]/[formatter] when given.
+  final String? amountText;
+
+  /// Always-on mode (D1/D2): also collect the FIRST operator's name
+  /// and signature alongside the second verifier.
+  final bool collectOperator;
+
+  /// Always-on mode (D1/D2): collect the mandatory adjustment reason.
+  final bool requireReason;
+
+  final String? reasonHint;
 
   const DualVerificationSheet({
     super.key,
-    required this.amount,
-    required this.formatter,
+    this.amount,
+    this.formatter,
     required this.operationLabel,
+    this.amountText,
+    this.collectOperator = false,
+    this.requireReason = false,
+    this.reasonHint,
   });
 
   @override
@@ -57,12 +97,46 @@ class DualVerificationSheet extends StatefulWidget {
 
 class _DualVerificationSheetState extends State<DualVerificationSheet> {
   final _verifierController = TextEditingController();
+  final _operatorController = TextEditingController();
+  final _reasonController = TextEditingController();
   String _signature = '';
+  String _operatorSignature = '';
 
   @override
   void dispose() {
     _verifierController.dispose();
+    _operatorController.dispose();
+    _reasonController.dispose();
     super.dispose();
+  }
+
+  bool get _canConfirm {
+    if (_signature.trim().isEmpty) return false;
+    if (_verifierController.text.trim().isEmpty) return false;
+    if (widget.collectOperator &&
+        (_operatorSignature.trim().isEmpty ||
+            _operatorController.text.trim().isEmpty)) {
+      return false;
+    }
+    if (widget.requireReason && _reasonController.text.trim().isEmpty) {
+      return false;
+    }
+    return true;
+  }
+
+  /// Subtitle: the pre-formatted always-mode text, else the formatted
+  /// currency amount, else just the operation label.
+  String get _subtitle {
+    final text = widget.amountText;
+    if (text != null && text.isNotEmpty) {
+      return '${widget.operationLabel} · $text';
+    }
+    final fmt = widget.formatter;
+    final amount = widget.amount;
+    if (fmt != null && amount != null) {
+      return '${widget.operationLabel} · ${fmt.formatRaw(amount)}';
+    }
+    return widget.operationLabel;
   }
 
   @override
@@ -87,17 +161,52 @@ class _DualVerificationSheetState extends State<DualVerificationSheet> {
               ),
               const SizedBox(height: 6),
               Text(
-                '${widget.operationLabel} · ${widget.formatter.formatRaw(widget.amount)}',
+                _subtitle,
                 style: TextStyle(
                     fontSize: 12.5, color: AppColors.textSecondary),
               ),
               const SizedBox(height: 8),
               Text(
-                tr('dual_verification_hint'),
+                tr(widget.requireReason
+                    ? 'dual_verification_always_hint'
+                    : 'dual_verification_hint'),
                 style: const TextStyle(
                     fontSize: 11.5, color: AppColors.warning),
               ),
               const SizedBox(height: 14),
+              if (widget.requireReason) ...[
+                TextField(
+                  controller: _reasonController,
+                  minLines: 1,
+                  maxLines: 2,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    labelText: tr('adjustment_reason_label'),
+                    hintText: widget.reasonHint ?? tr('adjustment_reason_hint'),
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+              if (widget.collectOperator) ...[
+                TextField(
+                  controller: _operatorController,
+                  textCapitalization: TextCapitalization.words,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    labelText: tr('dual_verification_operator_name'),
+                    hintText: tr('dual_verification_operator_name_hint'),
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                SignaturePad(
+                  caption: tr('dual_verification_operator_signature'),
+                  onChanged: (sig) =>
+                      setState(() => _operatorSignature = sig),
+                ),
+                const SizedBox(height: 14),
+              ],
               TextField(
                 controller: _verifierController,
                 textCapitalization: TextCapitalization.words,
@@ -109,7 +218,10 @@ class _DualVerificationSheetState extends State<DualVerificationSheet> {
                 ),
               ),
               const SizedBox(height: 14),
-              SignaturePad(onChanged: (sig) => setState(() => _signature = sig)),
+              SignaturePad(
+                caption: tr('dual_verification_verifier_signature'),
+                onChanged: (sig) => setState(() => _signature = sig),
+              ),
               const SizedBox(height: 14),
               Row(
                 children: [
@@ -123,18 +235,19 @@ class _DualVerificationSheetState extends State<DualVerificationSheet> {
                   Expanded(
                     flex: 2,
                     child: ElevatedButton(
-                      onPressed:
-                          _signature.trim().isEmpty ||
-                                  _verifierController.text.trim().isEmpty
-                              ? null
-                              : () => Navigator.pop(
-                                    context,
-                                    SecondVerificationResult(
-                                      name:
-                                          _verifierController.text.trim(),
-                                      signature: _signature,
-                                    ),
-                                  ),
+                      onPressed: !_canConfirm
+                          ? null
+                          : () => Navigator.pop(
+                                context,
+                                SecondVerificationResult(
+                                  name: _verifierController.text.trim(),
+                                  signature: _signature,
+                                  operatorName:
+                                      _operatorController.text.trim(),
+                                  operatorSignature: _operatorSignature,
+                                  reason: _reasonController.text.trim(),
+                                ),
+                              ),
                       child: Text(tr('confirm_second')),
                     ),
                   ),
@@ -186,5 +299,39 @@ Future<SecondVerificationResult?> collectSecondVerifierIfRequired(
     amount: amount,
     formatter: CurrencyFormatter(currency),
     operationLabel: operationLabel,
+  );
+}
+
+/// ALWAYS-ON two-person collection (finalised decisions D1/D2): manual
+/// chip-bank inventory adjustments and the standalone player-holding
+/// reconciliation. No threshold is consulted -- the sheet is shown for
+/// every call. Collects the mandatory reason, the FIRST operator's name
+/// + signature and the SECOND verifier's name + signature, returning
+/// the [DualAuthorization] the service boundaries require, or null if
+/// the operator cancelled (callers must abort).
+Future<DualAuthorization?> collectDualAuthorization(
+  BuildContext context, {
+  required String operationLabel,
+  String? amountText,
+  String? reasonHint,
+}) async {
+  final result = await showModalBottomSheet<SecondVerificationResult>(
+    context: context,
+    isScrollControlled: true,
+    builder: (_) => DualVerificationSheet(
+      operationLabel: operationLabel,
+      amountText: amountText,
+      collectOperator: true,
+      requireReason: true,
+      reasonHint: reasonHint,
+    ),
+  );
+  if (result == null) return null;
+  return DualAuthorization(
+    reason: result.reason,
+    operatorName: result.operatorName,
+    operatorSignatureBase64: result.operatorSignature,
+    secondVerifierName: result.name,
+    secondVerifierSignature: result.signature,
   );
 }

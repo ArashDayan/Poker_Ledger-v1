@@ -16,6 +16,7 @@ import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/chip_bank_service.dart';
+import 'package:poker_ledger/services/dual_verification_service.dart';
 import 'package:poker_ledger/services/chip_tracking_service.dart';
 import 'package:poker_ledger/services/hive_service.dart';
 import 'package:poker_ledger/services/session_service.dart';
@@ -32,6 +33,7 @@ Future<void> _open() async {
   await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
   await Hive.openBox(HiveService.settingsBox);
   await Hive.openBox<ChipType>(HiveService.chipsBox);
+  await Hive.openBox(HiveService.transferEventsBox);
   await Hive.openBox<ChipMovement>(HiveService.chipMovementsBox);
   await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
   // J5 gate fixtures: player-scoped movements need a registered
@@ -46,6 +48,14 @@ Future<void> _close() async {
   await Hive.deleteFromDisk();
   if (await _tmp.exists()) await _tmp.delete(recursive: true);
 }
+
+const _d1Auth = DualAuthorization(
+  reason: 'test inventory',
+  operatorName: 'Op',
+  operatorSignatureBase64: 'op-sig',
+  secondVerifierName: 'V',
+  secondVerifierSignature: 'v-sig',
+);
 
 void main() {
   setUp(_open);
@@ -80,7 +90,7 @@ void main() {
   group('movement recording', () {
     test('a movement decreases the source and increases the target',
         () async {
-      final chip = await ChipBankService.addChip(value: 100, quantity: 500);
+      final chip = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 500);
 
       await ChipTrackingService.record(
         chipTypeId: chip.id,
@@ -99,7 +109,7 @@ void main() {
     });
 
     test('a zero or negative quantity is refused', () async {
-      final chip = await ChipBankService.addChip(value: 100, quantity: 10);
+      final chip = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 10);
       expect(
         () => ChipTrackingService.record(
           chipTypeId: chip.id,
@@ -113,7 +123,7 @@ void main() {
     });
 
     test('moving to the same place is refused', () async {
-      final chip = await ChipBankService.addChip(value: 100, quantity: 10);
+      final chip = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 10);
       expect(
         () => ChipTrackingService.record(
           chipTypeId: chip.id,
@@ -128,7 +138,7 @@ void main() {
 
     test('the recorded value is frozen at the time of the movement',
         () async {
-      final chip = await ChipBankService.addChip(value: 100, quantity: 50);
+      final chip = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 50);
       final m = await ChipTrackingService.record(
         chipTypeId: chip.id,
         quantity: 5,
@@ -140,7 +150,7 @@ void main() {
       expect(m.totalValue, 500);
 
       // Correcting the denomination later must not rewrite history.
-      await ChipBankService.updateChip(chip.id, value: 250);
+      await ChipBankService.updateChip(chip.id, value: 250, authorization: _d1Auth);
       final reread = HiveService.chipMovements.get(m.id)!;
       expect(reread.chipValue, 100);
       expect(reread.totalValue, 500);
@@ -148,8 +158,8 @@ void main() {
 
     test('a multi-denomination distribution shares one transaction id',
         () async {
-      final c100 = await ChipBankService.addChip(value: 100, quantity: 500);
-      final c500 = await ChipBankService.addChip(value: 500, quantity: 200);
+      final c100 = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 500);
+      final c500 = await ChipBankService.addChip(authorization: _d1Auth, value: 500, quantity: 200);
 
       final made = await ChipTrackingService.recordDistribution(
         distribution: {c100.id: 5, c500.id: 1},
@@ -166,7 +176,7 @@ void main() {
     });
 
     test('zero-quantity entries are skipped in a distribution', () async {
-      final c = await ChipBankService.addChip(value: 100, quantity: 50);
+      final c = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 50);
       final made = await ChipTrackingService.recordDistribution(
         distribution: {c.id: 0},
         from: ChipLocation.bank,
@@ -178,7 +188,7 @@ void main() {
 
     test('movements for a voided transaction can be reversed out',
         () async {
-      final c = await ChipBankService.addChip(value: 100, quantity: 500);
+      final c = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 500);
       await ChipTrackingService.recordDistribution(
         distribution: {c.id: 10},
         from: ChipLocation.bank,
@@ -202,7 +212,7 @@ void main() {
 
     setUp(() async {
       // Banker owns 1000 x $100 chips.
-      c100 = await ChipBankService.addChip(value: 100, quantity: 1000);
+      c100 = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 1000);
 
       await ChipTrackingService.record(
         chipTypeId: c100.id,
@@ -281,7 +291,7 @@ void main() {
 
   group('players holding chips is normal, not a discrepancy', () {
     test('a player-to-player transfer keeps the total unchanged', () async {
-      final c = await ChipBankService.addChip(value: 100, quantity: 1000);
+      final c = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 1000);
       await ChipTrackingService.record(
         chipTypeId: c.id,
         quantity: 150,
@@ -323,7 +333,7 @@ void main() {
     });
 
     test('removed chips are accounted for, never missing', () async {
-      final c = await ChipBankService.addChip(value: 100, quantity: 100);
+      final c = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 100);
       await ChipTrackingService.record(
         chipTypeId: c.id,
         quantity: 8,
@@ -350,10 +360,10 @@ void main() {
 
   group('multi-table', () {
     test('each table tracks its own chips independently', () async {
-      final c100 = await ChipBankService.addChip(value: 100, quantity: 500);
-      final c500 = await ChipBankService.addChip(value: 500, quantity: 200);
+      final c100 = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 500);
+      final c500 = await ChipBankService.addChip(authorization: _d1Auth, value: 500, quantity: 200);
       final c1000 =
-          await ChipBankService.addChip(value: 1000, quantity: 100);
+          await ChipBankService.addChip(authorization: _d1Auth, value: 1000, quantity: 100);
 
       await ChipTrackingService.recordDistribution(
         distribution: {c100.id: 200, c500.id: 50},
@@ -382,7 +392,7 @@ void main() {
     });
 
     test('chips can move directly between tables', () async {
-      final c = await ChipBankService.addChip(value: 100, quantity: 500);
+      final c = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 500);
       await ChipTrackingService.record(
         chipTypeId: c.id,
         quantity: 100,
@@ -404,7 +414,7 @@ void main() {
     });
 
     test('movements are scoped correctly by session', () async {
-      final c = await ChipBankService.addChip(value: 100, quantity: 500);
+      final c = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 500);
       await ChipTrackingService.record(
         chipTypeId: c.id,
         quantity: 10,
@@ -437,7 +447,7 @@ void main() {
 
   group('chips returned to the bank', () {
     test('a cash-out puts chips back and restores the bank', () async {
-      final c = await ChipBankService.addChip(value: 100, quantity: 500);
+      final c = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 500);
       await ChipTrackingService.record(
         chipTypeId: c.id,
         quantity: 30,
@@ -461,30 +471,30 @@ void main() {
 
   group('distribution helper', () {
     test('suggests largest denominations first', () async {
-      await ChipBankService.addChip(value: 100, quantity: 500);
-      await ChipBankService.addChip(value: 500, quantity: 200);
-      await ChipBankService.addChip(value: 1000, quantity: 100);
+      await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 500);
+      await ChipBankService.addChip(authorization: _d1Auth, value: 500, quantity: 200);
+      await ChipBankService.addChip(authorization: _d1Auth, value: 1000, quantity: 100);
 
       final s = ChipTrackingService.suggestDistribution(2700);
       expect(ChipTrackingService.valueOf(s), 2700);
     });
 
     test('never suggests more than the bank holds', () async {
-      final c100 = await ChipBankService.addChip(value: 100, quantity: 3);
+      final c100 = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 3);
       final s = ChipTrackingService.suggestDistribution(1000);
       expect(s[c100.id] ?? 0, lessThanOrEqualTo(3));
       expect(ChipTrackingService.valueOf(s), lessThanOrEqualTo(1000));
     });
 
     test('bankCanCover rejects an impossible distribution', () async {
-      final c = await ChipBankService.addChip(value: 100, quantity: 5);
+      final c = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 5);
       expect(ChipTrackingService.bankCanCover({c.id: 5}), isTrue);
       expect(ChipTrackingService.bankCanCover({c.id: 6}), isFalse);
     });
 
     test('an amount the chip set cannot make returns a partial set',
         () async {
-      await ChipBankService.addChip(value: 100, quantity: 10);
+      await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 10);
       final s = ChipTrackingService.suggestDistribution(250);
       // 2 x 100 = 200; the remaining 50 cannot be made.
       expect(ChipTrackingService.valueOf(s), 200);
@@ -526,7 +536,7 @@ void main() {
 
       // A deliberately MISMATCHED distribution: 500 in chips against a
       // 1000 buy-in. The money must be entirely unaffected.
-      final c = await ChipBankService.addChip(value: 100, quantity: 500);
+      final c = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 500);
       await ChipTrackingService.recordDistribution(
         distribution: {c.id: 5},
         from: ChipLocation.bank,
@@ -572,7 +582,7 @@ void main() {
       );
       final rakeBefore = SessionService.totalRake('s1');
 
-      final c = await ChipBankService.addChip(value: 100, quantity: 100);
+      final c = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 100);
       await ChipTrackingService.record(
         chipTypeId: c.id,
         quantity: 50,
@@ -590,7 +600,7 @@ void main() {
     });
 
     test('the movement log lives in its own box', () async {
-      final c = await ChipBankService.addChip(value: 100, quantity: 10);
+      final c = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 10);
       await ChipTrackingService.record(
         chipTypeId: c.id,
         quantity: 1,
@@ -607,7 +617,7 @@ void main() {
 
   group('persistence', () {
     test('a movement survives a reload through its adapter', () async {
-      final c = await ChipBankService.addChip(value: 250, quantity: 40);
+      final c = await ChipBankService.addChip(authorization: _d1Auth, value: 250, quantity: 40);
       final m = await ChipTrackingService.record(
         chipTypeId: c.id,
         quantity: 7,
@@ -635,7 +645,7 @@ void main() {
     });
 
     test('json round-trip preserves every field', () async {
-      final c = await ChipBankService.addChip(value: 100, quantity: 10);
+      final c = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 10);
       final m = await ChipTrackingService.record(
         chipTypeId: c.id,
         quantity: 3,

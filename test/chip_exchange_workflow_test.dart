@@ -14,6 +14,7 @@ import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/chip_bank_service.dart';
+import 'package:poker_ledger/services/dual_verification_service.dart';
 import 'package:poker_ledger/services/chip_exchange_rules.dart';
 import 'package:poker_ledger/services/chip_tracking_service.dart';
 import 'package:poker_ledger/services/hive_service.dart';
@@ -35,6 +36,7 @@ Future<void> _open() async {
   await Hive.openBox(HiveService.settingsBox);
   await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
   await Hive.openBox<ChipType>(HiveService.chipsBox);
+  await Hive.openBox(HiveService.transferEventsBox);
   await Hive.openBox<ChipMovement>(HiveService.chipMovementsBox);
   await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
   await HiveService.playerIdentities.put(
@@ -49,8 +51,8 @@ Future<void> _close() async {
 }
 
 Future<Map<String, ChipType>> _stock() async {
-  final c100 = await ChipBankService.addChip(value: 100, quantity: 200);
-  final c1000 = await ChipBankService.addChip(value: 1000, quantity: 50);
+  final c100 = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 200);
+  final c1000 = await ChipBankService.addChip(authorization: _d1Auth, value: 1000, quantity: 50);
   return {'100': c100, '1000': c1000};
 }
 
@@ -77,6 +79,14 @@ Future<String> _session() async {
   );
   return s.id;
 }
+
+const _d1Auth = DualAuthorization(
+  reason: 'test inventory',
+  operatorName: 'Op',
+  operatorSignatureBase64: 'op-sig',
+  secondVerifierName: 'V',
+  secondVerifierSignature: 'v-sig',
+);
 
 void main() {
   setUp(_open);
@@ -278,7 +288,7 @@ void main() {
       to: ChipLocation.player('p1'),
       reason: ChipMovementReason.buyIn,
     );
-    final made = await ChipTrackingService.adjustPlayerHoldingToCount(
+    final made = await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
       playerId: 'p1',
       counted: {c['100']!.id: 100, c['1000']!.id: 0},
     );

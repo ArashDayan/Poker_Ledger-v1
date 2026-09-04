@@ -12,6 +12,7 @@ import '../../services/chip_tracking_service.dart';
 import 'chip_audit_screen.dart';
 import 'chip_editor_sheet.dart';
 import 'chip_movements_screen.dart';
+import '../../widgets/dual_verification_sheet.dart';
 
 /// The banker's physical chip inventory.
 ///
@@ -56,10 +57,62 @@ class ChipBankScreen extends StatelessWidget {
     );
     if (confirmed != true || !context.mounted) return;
 
-    await context.read<ChipBankProvider>().removeChip(chip.id);
+    // D1 (finalised): removing a denomination removes owned inventory --
+    // always a two-person inventory adjustment with a mandatory reason.
+    final fmt = CurrencyFormatter(
+        context.read<SettingsProvider>().defaultCurrency);
+    final authorization = await collectDualAuthorization(
+      context,
+      operationLabel: tr('chip_inventory_adjustment'),
+      amountText:
+          '${chip.quantity} × ${fmt.format(chip.value)} → 0',
+      reasonHint: tr('adjustment_reason_hint'),
+    );
+    if (authorization == null || !context.mounted) return;
+    try {
+      await context
+          .read<ChipBankProvider>()
+          .removeChip(chip.id, authorization: authorization);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
+      }
+      return;
+    }
     if (!context.mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(tr('chip_removed'))));
+  }
+
+  /// D1 (finalised): the +/- steppers are manual inventory adjustments --
+  /// every tap runs the same two-person authorisation flow as any other
+  /// correction (reason + both signatures, immutable audit event).
+  Future<void> _adjustQuantity(
+      BuildContext context, ChipType chip, int delta) async {
+    final fmt = CurrencyFormatter(
+        context.read<SettingsProvider>().defaultCurrency);
+    final authorization = await collectDualAuthorization(
+      context,
+      operationLabel: tr('chip_inventory_adjustment'),
+      amountText:
+          '${delta > 0 ? '+' : ''}$delta → ${chip.quantity + delta}'
+          ' × ${fmt.format(chip.value)}',
+      reasonHint: tr('adjustment_reason_hint'),
+    );
+    if (authorization == null || !context.mounted) return;
+    try {
+      await context.read<ChipBankProvider>().adjustQuantity(
+            chip.id,
+            delta,
+            authorization: authorization,
+          );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
   }
 
   @override
@@ -141,10 +194,7 @@ class ChipBankScreen extends StatelessWidget {
                   onEdit: () => _openEditor(context, existing: c),
                   onRemove: () => _remove(context, c),
                   onAdjust: (delta) =>
-                      context.read<ChipBankProvider>().adjustQuantity(
-                            c.id,
-                            delta,
-                          ),
+                      _adjustQuantity(context, c, delta),
                 )),
           ],
 

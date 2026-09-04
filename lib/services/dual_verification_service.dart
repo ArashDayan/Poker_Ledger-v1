@@ -25,7 +25,34 @@ class DualVerificationSettings {
   });
 }
 
+/// Both authorising actors plus the mandatory reason for an operation
+/// that ALWAYS requires two-person verification -- no monetary
+/// threshold applies (finalised product decisions):
+///   * D1 -- every manual Chip Bank inventory adjustment;
+///   * D2 -- the standalone player-holding reconciliation workflow.
+///
+/// The first operator's identity + signature ride the same fields the
+/// threshold-based events already use ([TableOperationEvent.operatorName]
+/// and [TableOperationEvent.hostSignatureBase64]), so there is exactly
+/// one verification architecture, not a parallel one.
+class DualAuthorization {
+  final String reason;
+  final String operatorName;
+  final String operatorSignatureBase64;
+  final String secondVerifierName;
+  final String secondVerifierSignature;
+
+  const DualAuthorization({
+    required this.reason,
+    required this.operatorName,
+    required this.operatorSignatureBase64,
+    required this.secondVerifierName,
+    required this.secondVerifierSignature,
+  });
+}
+
 class DualVerificationService {
+
   DualVerificationService._();
 
   static const String enabledKey = 'dual_verification_enabled';
@@ -172,6 +199,88 @@ class DualVerificationService {
       secondVerifierSignature: secondVerifierSignature,
       transferOutTransactionId: relatedTransactionId,
       transferInTransactionId: relatedTransferEventId,
+    ));
+  }
+
+  /// ALWAYS-ON two-person gate for operations with no monetary
+  /// threshold (finalised product decisions D1 / D2): every manual
+  /// chip-bank inventory adjustment and the standalone player-holding
+  /// reconciliation. Deliberately independent of [isEnabled] and
+  /// [threshold] -- the decision is that these operations are
+  /// sensitive at ANY size, so the configurable threshold policy is
+  /// not consulted at all.
+  ///
+  /// Fails closed BEFORE any write when the mandatory reason, the
+  /// first operator's identity + signature, or the second verifier's
+  /// identity + signature is missing.
+  static void requireAlways(
+    DualAuthorization authorization,
+    String operation,
+  ) {
+    if (authorization.reason.trim().isEmpty) {
+      throw StateError('A reason is required for $operation.');
+    }
+    if (authorization.operatorName.trim().isEmpty) {
+      throw StateError(
+          'The first operator must be identified for $operation.');
+    }
+    if (authorization.operatorSignatureBase64.isEmpty) {
+      throw StateError('The first operator must sign $operation.');
+    }
+    if (authorization.secondVerifierSignature.isEmpty) {
+      throw StateError(
+          'A second verifier signature is required for $operation.');
+    }
+    if (authorization.secondVerifierName.trim().isEmpty) {
+      throw StateError(
+          'The second verifier must be identified for $operation.');
+    }
+  }
+
+  /// Appends the immutable two-actor audit event for an ALWAYS-dual
+  /// operation, carrying the structured adjustment facts alongside
+  /// the authorisation: chip denomination + previous / counted
+  /// quantities (D1 inventory adjustments), holding value before /
+  /// after the count (D2 reconciliations). [detail] is optional extra
+  /// context appended after the operator's reason (e.g. a unit-value
+  /// change note).
+  static Future<void> recordAlways({
+    required String operation,
+    required DualAuthorization authorization,
+    String? playerId,
+    String? personId,
+    String? chipTypeId,
+    int? previousQuantity,
+    int? countedQuantity,
+    double? denominationValue,
+    double? previousValue,
+    double? countedValue,
+    double? carriedAmount,
+    String? detail,
+    String? relatedTransactionId,
+  }) async {
+    var reason = '$operation \u00b7 ${authorization.reason.trim()}';
+    if (detail != null && detail.trim().isNotEmpty) {
+      reason = '$reason \u00b7 ${detail.trim()}';
+    }
+    await TableOperationEventService.append(TableOperationEvent(
+      id: TableOperationEventService.newId(),
+      operation: TableOperationType.dualVerification,
+      playerId: playerId,
+      personId: personId,
+      carriedAmount: carriedAmount,
+      reason: reason,
+      operatorName: authorization.operatorName.trim(),
+      hostSignatureBase64: authorization.operatorSignatureBase64,
+      secondVerifierName: authorization.secondVerifierName.trim(),
+      secondVerifierSignature: authorization.secondVerifierSignature,
+      chipTypeId: chipTypeId,
+      previousQuantity: previousQuantity,
+      countedQuantity: countedQuantity,
+      denominationValue: denominationValue,
+      previousValue: previousValue,
+      countedValue: countedValue,
+      transferOutTransactionId: relatedTransactionId,
     ));
   }
 }

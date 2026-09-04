@@ -288,12 +288,12 @@ void main() {
     );
     // The $150 grant chips moved from Ali's stack to Baba's during
     // play — captured by physical counts (P2P transfer removed, E7).
-    await ChipTrackingService.adjustPlayerHoldingToCount(
+    await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
       playerId: 'seat-1',
       counted: {'c25': 0},
       sessionId: s.id,
     );
-    await ChipTrackingService.adjustPlayerHoldingToCount(
+    await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
       playerId: 'seat-2',
       counted: {'c25': 6},
       sessionId: s.id,

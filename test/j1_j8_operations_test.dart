@@ -37,6 +37,14 @@ import 'package:uuid/uuid.dart';
 import 'test_helper.dart';
 
 const _uuid = Uuid();
+const _j8Auth = DualAuthorization(
+  reason: 'test inventory',
+  operatorName: 'Op',
+  operatorSignatureBase64: 'op-sig',
+  secondVerifierName: 'V',
+  secondVerifierSignature: 'v-sig',
+);
+
 late Directory _tempDir;
 
 Future<void> _openAll() async {
@@ -170,7 +178,7 @@ void main() {
       tableId: 'table-1',
     );
     await HiveService.players.put(anon.id, anon);
-    final chip = await ChipBankService.addChip(value: 100, quantity: 10);
+    final chip = await ChipBankService.addChip(authorization: _j8Auth, value: 100, quantity: 10);
     expect(
       () => ChipTrackingService.record(
         chipTypeId: chip.id,
@@ -667,7 +675,7 @@ void main() {
     final s = _session();
     final p = await _registeredSeat(s);
     await DualVerificationService.configure(enabled: true, threshold: 1000);
-    final chip = await ChipBankService.addChip(value: 1000, quantity: 10);
+    final chip = await ChipBankService.addChip(authorization: _j8Auth, value: 1000, quantity: 10);
 
     expect(
       () => ChipTrackingService.recordExchange(
@@ -688,8 +696,14 @@ void main() {
       secondVerifierSignature: 'second',
     );
     expect(made, hasLength(2));
+    // The D1-gated addChip above also appends an inventory_adjustment
+    // dual-verification event; the exchange assertion is scoped to the
+    // chip_exchange authorisation itself.
     final dual = TableOperationEventService.all()
-        .where((e) => e.operation == TableOperationType.dualVerification)
+        .where((e) =>
+            e.operation == TableOperationType.dualVerification &&
+            e.reason != null &&
+            !e.reason!.startsWith('inventory_adjustment'))
         .toList();
     expect(dual, hasLength(1));
     expect(dual.single.reason, 'chip_exchange');

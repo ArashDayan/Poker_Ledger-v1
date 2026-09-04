@@ -5,6 +5,7 @@ import '../models/chip_movement.dart';
 import '../models/chip_type.dart';
 import '../services/box_watch_hub.dart';
 import '../services/chip_bank_service.dart';
+import '../services/dual_verification_service.dart';
 import '../services/chip_tracking_service.dart';
 import '../services/hive_service.dart';
 
@@ -189,6 +190,7 @@ class ChipBankProvider extends ChangeNotifier {
     String? name,
     int? colorValue,
     String? note,
+    required DualAuthorization authorization,
   }) async {
     await ChipBankService.addChip(
       value: value,
@@ -196,6 +198,7 @@ class ChipBankProvider extends ChangeNotifier {
       name: name,
       colorValue: colorValue,
       note: note,
+      authorization: authorization,
     );
     refresh();
   }
@@ -210,6 +213,7 @@ class ChipBankProvider extends ChangeNotifier {
     bool clearName = false,
     bool clearColor = false,
     bool clearNote = false,
+    DualAuthorization? authorization,
   }) async {
     await ChipBankService.updateChip(
       id,
@@ -221,17 +225,26 @@ class ChipBankProvider extends ChangeNotifier {
       clearName: clearName,
       clearColor: clearColor,
       clearNote: clearNote,
+      authorization: authorization,
     );
     refresh();
   }
 
-  Future<void> adjustQuantity(String id, int delta) async {
-    await ChipBankService.adjustQuantity(id, delta);
+  Future<void> adjustQuantity(
+    String id,
+    int delta, {
+    required DualAuthorization authorization,
+  }) async {
+    await ChipBankService.adjustQuantity(id, delta,
+        authorization: authorization);
     refresh();
   }
 
-  Future<void> removeChip(String id) async {
-    await ChipBankService.removeChip(id);
+  Future<void> removeChip(
+    String id, {
+    required DualAuthorization authorization,
+  }) async {
+    await ChipBankService.removeChip(id, authorization: authorization);
     refresh();
   }
 }

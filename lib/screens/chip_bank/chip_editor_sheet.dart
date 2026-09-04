@@ -6,6 +6,7 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/chip_type.dart';
 import '../../providers/chip_bank_provider.dart';
+import '../../widgets/dual_verification_sheet.dart';
 
 /// A small, fixed palette of typical casino chip colours.
 ///
@@ -89,6 +90,28 @@ class _ChipEditorSheetState extends State<ChipEditorSheet> {
     final name = _name.text.trim();
     final note = _note.text.trim();
 
+    // D1 (finalised): a change to the quantity or the unit value is a
+    // manual inventory adjustment and ALWAYS requires the two-person
+    // authorisation (reason + both signatures) before anything is
+    // written. Creating a denomination creates owned inventory, so the
+    // add path is gated too. Cosmetic edits (name / colour / note)
+    // stay single-operator.
+    final existing = widget.existing;
+    final inventoryChange = existing == null ||
+        quantity != existing.quantity ||
+        value != existing.value;
+    final authorization = inventoryChange
+        ? await collectDualAuthorization(
+            context,
+            operationLabel: tr('chip_inventory_adjustment'),
+            amountText: existing == null
+                ? '0 → $quantity × $value'
+                : '${existing.quantity} → $quantity × $value',
+            reasonHint: tr('adjustment_reason_hint'),
+          )
+        : null;
+    if (inventoryChange && (authorization == null || !mounted)) return;
+
     if (_isEdit) {
       await provider.updateChip(
         widget.existing!.id,
@@ -102,6 +125,7 @@ class _ChipEditorSheetState extends State<ChipEditorSheet> {
         clearName: name.isEmpty,
         clearColor: _color == null,
         clearNote: note.isEmpty,
+        authorization: authorization,
       );
     } else {
       await provider.addChip(
@@ -110,6 +134,7 @@ class _ChipEditorSheetState extends State<ChipEditorSheet> {
         name: name.isEmpty ? null : name,
         colorValue: _color,
         note: note.isEmpty ? null : note,
+        authorization: authorization!,
       );
     }
 

@@ -23,6 +23,7 @@ import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/chip_bank_service.dart';
+import 'package:poker_ledger/services/dual_verification_service.dart';
 import 'package:poker_ledger/services/chip_migration.dart';
 import 'package:poker_ledger/services/chip_tracking_service.dart';
 import 'package:poker_ledger/services/hive_service.dart';
@@ -42,6 +43,7 @@ Future<void> _open() async {
   await Hive.openBox(HiveService.settingsBox);
   await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
   await Hive.openBox<ChipType>(HiveService.chipsBox);
+  await Hive.openBox(HiveService.transferEventsBox);
   await Hive.openBox<ChipMovement>(HiveService.chipMovementsBox);
 }
 
@@ -65,7 +67,7 @@ int _bankQty(String chipTypeId) =>
     ChipTrackingService.quantityAt(ChipLocation.bank, chipTypeId);
 
 Future<String> _chip(double value, int quantity) async {
-  final c = await ChipBankService.addChip(value: value, quantity: quantity);
+  final c = await ChipBankService.addChip(authorization: _d1Auth, value: value, quantity: quantity);
   return c.id;
 }
 
@@ -124,6 +126,14 @@ Future<String> _seat({
   await HiveService.players.put(p.id, p);
   return p.id;
 }
+
+const _d1Auth = DualAuthorization(
+  reason: 'test inventory',
+  operatorName: 'Op',
+  operatorSignatureBase64: 'op-sig',
+  secondVerifierName: 'V',
+  secondVerifierSignature: 'v-sig',
+);
 
 void main() {
   setUp(_open);

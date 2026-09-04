@@ -9,6 +9,7 @@ import '../models/enums.dart';
 import '../models/player.dart';
 import '../providers/chip_bank_provider.dart';
 import '../services/chip_tracking_service.dart';
+import 'dual_verification_sheet.dart';
 
 /// Reconciles a player's RECORDED chip holding with the ACTUAL physical
 /// stack — the auditable bridge between "the log says 2M" and "the
@@ -143,11 +144,37 @@ class _ChipHoldingAdjustmentSheetState
     try {
       // Phase 2a: the count re-anchors the PERSON's holding (the
       // reference the ledger uses), not the seat's.
-      final made = await ChipTrackingService.adjustPlayerHoldingToCount(
-        playerId: ChipTrackingService.holderRef(
-            playerId: p.id, personId: p.personId),
+      final holder = ChipTrackingService.holderRef(
+          playerId: p.id, personId: p.personId);
+      final fmt = CurrencyFormatter(widget.currency);
+      final recorded = <String, int>{};
+      for (final c in context.read<ChipBankProvider>().chips) {
+        recorded[c.id] = ChipTrackingService.quantityAt(
+            ChipLocation.player(holder), c.id);
+      }
+      final recordedValue = _valueOf(recorded);
+      final countedValue = _valueOf(_parsedCounts());
+      // D2, Option B (finalised): the STANDALONE holding reconciliation
+      // always requires the two-person authorisation (mandatory reason +
+      // both signatures) before any movement is appended. The normal
+      // hand-settlement path (post-hand counts) is NOT gated and does
+      // not pass through this sheet.
+      final authorization = await collectDualAuthorization(
+        context,
+        operationLabel: tr('chip_holding_adjustment'),
+        amountText:
+            '${fmt.formatRaw(recordedValue)} → ${fmt.formatRaw(countedValue)}',
+        reasonHint: tr('adjustment_reason_hint'),
+      );
+      if (authorization == null) {
+        if (mounted) setState(() => _saving = false);
+        return;
+      }
+      final made = await ChipTrackingService.reconcilePlayerHoldingToCount(
+        playerId: holder,
         counted: _parsedCounts(),
         sessionId: widget.sessionId,
+        authorization: authorization,
       );
       if (!mounted) return;
       context.read<ChipBankProvider>().refresh();

@@ -237,7 +237,7 @@ void main() {
       final tables = TableService.tablesFor(s);
 
       // A loses 4,000 to someone (physical count) and leaves with 6,000.
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: pidA,
         counted: {'k1000': 6},
         sessionId: s.id,
@@ -374,12 +374,12 @@ void main() {
 
       // Play: A loses 4,000 to B (captured by physical counts; the
       // pair nets to zero for the bank).
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: pidA,
         counted: {'k1000': 6},
         sessionId: s.id,
       );
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: pidB,
         counted: {'k1000': 12, 'k500': 4},
         sessionId: s.id,
@@ -749,7 +749,7 @@ void main() {
       final tables = TableService.tablesFor(s);
       await _buyIn(s.id, a, 10000, chips: {'k1000': 10});
 
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: pidA,
         counted: {'k1000': 6},
         sessionId: s.id,
@@ -800,12 +800,12 @@ void main() {
       expect(_bank(), 5000);
 
       // Play + rake (the canonical example).
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: pidA,
         counted: {'k1000': 6},
         sessionId: s.id,
       );
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: pidB,
         counted: {'k1000': 12, 'k500': 4},
         sessionId: s.id,

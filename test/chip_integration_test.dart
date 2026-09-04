@@ -20,6 +20,7 @@ import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/chip_bank_service.dart';
+import 'package:poker_ledger/services/dual_verification_service.dart';
 import 'package:poker_ledger/services/chip_tracking_service.dart';
 import 'package:poker_ledger/services/hive_service.dart';
 import 'package:poker_ledger/services/session_service.dart';
@@ -37,6 +38,7 @@ Future<void> _open() async {
   await Hive.openBox<LedgerTransaction>(HiveService.transactionsBox);
   await Hive.openBox(HiveService.settingsBox);
   await Hive.openBox<ChipType>(HiveService.chipsBox);
+  await Hive.openBox(HiveService.transferEventsBox);
   await Hive.openBox<ChipMovement>(HiveService.chipMovementsBox);
   await Hive.openBox<PlayerIdentity>(HiveService.playerIdentitiesBox);
   for (final id in ['A', 'B', 'C']) {
@@ -55,17 +57,25 @@ Future<void> _close() async {
 
 /// Denominations totalling exactly $20,000.
 Future<Map<String, ChipType>> _stockBank() async {
-  final c1000 = await ChipBankService.addChip(value: 1000, quantity: 10);
-  final c500 = await ChipBankService.addChip(value: 500, quantity: 10);
-  final c100 = await ChipBankService.addChip(value: 100, quantity: 30);
-  final c25 = await ChipBankService.addChip(value: 25, quantity: 40);
-  final c5 = await ChipBankService.addChip(value: 5, quantity: 200);
+  final c1000 = await ChipBankService.addChip(authorization: _d1Auth, value: 1000, quantity: 10);
+  final c500 = await ChipBankService.addChip(authorization: _d1Auth, value: 500, quantity: 10);
+  final c100 = await ChipBankService.addChip(authorization: _d1Auth, value: 100, quantity: 30);
+  final c25 = await ChipBankService.addChip(authorization: _d1Auth, value: 25, quantity: 40);
+  final c5 = await ChipBankService.addChip(authorization: _d1Auth, value: 5, quantity: 200);
   return {'1000': c1000, '500': c500, '100': c100, '25': c25, '5': c5};
 }
 
 double _bank() => ChipTrackingService.currentBankValue();
 double _player(String id) =>
     ChipTrackingService.playerHolding(id).totalValue;
+
+const _d1Auth = DualAuthorization(
+  reason: 'test inventory',
+  operatorName: 'Op',
+  operatorSignatureBase64: 'op-sig',
+  secondVerifierName: 'V',
+  secondVerifierSignature: 'v-sig',
+);
 
 void main() {
   setUp(_open);
@@ -343,11 +353,11 @@ void main() {
       final bankBefore = _bank();
 
       // Play happens; the banker counts: A holds 2 x $500, B holds 2.
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: 'A',
         counted: {c['500']!.id: 2},
       );
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: 'B',
         counted: {c['500']!.id: 2},
       );
@@ -361,14 +371,14 @@ void main() {
     test('an empty or negative count is refused', () async {
       final c = await _stockBank();
       expect(
-        () => ChipTrackingService.adjustPlayerHoldingToCount(
+        () => ChipTrackingService.adjustPlayerHoldingForHandSettlement(
           playerId: 'A',
           counted: {},
         ),
         throwsArgumentError,
       );
       expect(
-        () => ChipTrackingService.adjustPlayerHoldingToCount(
+        () => ChipTrackingService.adjustPlayerHoldingForHandSettlement(
           playerId: 'A',
           counted: {c['500']!.id: -1},
         ),
@@ -503,11 +513,11 @@ void main() {
       );
       // A: 3x1000+2x500+10x100 - 5x100 + 1x500, then count 1x1000 less.
       // B: 2x1000+4x500, then count 1x1000 more.
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: 'A',
         counted: {k1000: 2, k500: 3, k100: 5},
       );
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: 'B',
         counted: {k1000: 3, k500: 4},
       );
@@ -604,11 +614,11 @@ void main() {
         chipsOut: {c['500']!.id: 2},
       );
       // Play: count A down 1 x $500 and B up 1 x $500 (P2P removed).
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: 'A',
         counted: {c['500']!.id: 1},
       );
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: 'B',
         counted: {c['500']!.id: 1},
       );

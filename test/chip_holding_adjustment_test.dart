@@ -23,6 +23,7 @@ import 'package:poker_ledger/models/player_identity.dart';
 import 'package:poker_ledger/models/session.dart';
 import 'package:poker_ledger/models/transaction.dart';
 import 'package:poker_ledger/services/chip_bank_service.dart';
+import 'package:poker_ledger/services/dual_verification_service.dart';
 import 'package:poker_ledger/services/chip_tracking_service.dart';
 import 'package:poker_ledger/services/hive_service.dart';
 
@@ -45,6 +46,7 @@ Future<void> _open() async {
   }
   await Hive.openBox<FinancialEvent>(HiveService.financialEventsBox);
   await Hive.openBox<ChipType>(HiveService.chipsBox);
+  await Hive.openBox(HiveService.transferEventsBox);
   await Hive.openBox<ChipMovement>(HiveService.chipMovementsBox);
   ChipTrackingService.installBankResolver();
 }
@@ -58,8 +60,8 @@ Future<void> _close() async {
 /// Denominations: 1,000,000 and 5,000,000 — enough stock for every
 /// scenario below.
 Future<Map<String, ChipType>> _stock() async {
-  final c1 = await ChipBankService.addChip(value: 1000000, quantity: 20);
-  final c5 = await ChipBankService.addChip(value: 5000000, quantity: 10);
+  final c1 = await ChipBankService.addChip(authorization: _d1Auth, value: 1000000, quantity: 20);
+  final c5 = await ChipBankService.addChip(authorization: _d1Auth, value: 5000000, quantity: 10);
   return {'1m': c1, '5m': c5};
 }
 
@@ -87,6 +89,14 @@ bool exchangeAllowed({
   return true;
 }
 
+const _d1Auth = DualAuthorization(
+  reason: 'test inventory',
+  operatorName: 'Op',
+  operatorSignatureBase64: 'op-sig',
+  secondVerifierName: 'V',
+  secondVerifierSignature: 'v-sig',
+);
+
 void main() {
   setUp(_open);
   tearDown(_close);
@@ -113,11 +123,11 @@ void main() {
       // P1 wins P2's 3M during play — captured by physical counts
       // (P2P transfer removed, E7): the re-anchor pair nets to zero
       // for the Bank.
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: 'p1',
         counted: {c['1m']!.id: 5},
       );
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.adjustPlayerHoldingForHandSettlement(
         playerId: 'p2',
         counted: {c['1m']!.id: 0},
       );
@@ -201,7 +211,8 @@ void main() {
         reason: ChipMovementReason.buyIn,
       );
 
-      final made = await ChipTrackingService.adjustPlayerHoldingToCount(
+      final made = await ChipTrackingService.reconcilePlayerHoldingToCount(
+        authorization: _d1Auth,
         playerId: 'p1',
         counted: {c['1m']!.id: 5, c['5m']!.id: 0},
       );
@@ -222,7 +233,8 @@ void main() {
         to: ChipLocation.player('p1'),
         reason: ChipMovementReason.buyIn,
       );
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.reconcilePlayerHoldingToCount(
+        authorization: _d1Auth,
         playerId: 'p1',
         counted: {c['1m']!.id: 5, c['5m']!.id: 0},
       );
@@ -251,7 +263,8 @@ void main() {
         to: ChipLocation.player('p1'),
         reason: ChipMovementReason.buyIn,
       );
-      final made = await ChipTrackingService.adjustPlayerHoldingToCount(
+      final made = await ChipTrackingService.reconcilePlayerHoldingToCount(
+        authorization: _d1Auth,
         playerId: 'p1',
         counted: {c['1m']!.id: 2, c['5m']!.id: 0},
       );
@@ -270,7 +283,8 @@ void main() {
         to: ChipLocation.player('p1'),
         reason: ChipMovementReason.buyIn,
       );
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.reconcilePlayerHoldingToCount(
+        authorization: _d1Auth,
         playerId: 'p1',
         counted: {c['1m']!.id: 5, c['5m']!.id: 0},
       );
@@ -299,7 +313,8 @@ void main() {
         to: ChipLocation.player('p1'),
         reason: ChipMovementReason.buyIn,
       );
-      final made = await ChipTrackingService.adjustPlayerHoldingToCount(
+      final made = await ChipTrackingService.reconcilePlayerHoldingToCount(
+        authorization: _d1Auth,
         playerId: 'p1',
         counted: {c['1m']!.id: 2, c['5m']!.id: 0},
       );
@@ -316,14 +331,16 @@ void main() {
         reason: ChipMovementReason.buyIn,
       );
       await expectLater(
-        ChipTrackingService.adjustPlayerHoldingToCount(
+        ChipTrackingService.reconcilePlayerHoldingToCount(
+          authorization: _d1Auth,
           playerId: 'p1',
           counted: const {},
         ),
         throwsArgumentError,
       );
       await expectLater(
-        ChipTrackingService.adjustPlayerHoldingToCount(
+        ChipTrackingService.reconcilePlayerHoldingToCount(
+          authorization: _d1Auth,
           playerId: 'p1',
           counted: {c['1m']!.id: -1},
         ),
@@ -346,7 +363,8 @@ void main() {
         to: ChipLocation.player('p1'),
         reason: ChipMovementReason.buyIn,
       );
-      await ChipTrackingService.adjustPlayerHoldingToCount(
+      await ChipTrackingService.reconcilePlayerHoldingToCount(
+        authorization: _d1Auth,
         playerId: 'p1',
         counted: {c['1m']!.id: 5, c['5m']!.id: 0},
       );
